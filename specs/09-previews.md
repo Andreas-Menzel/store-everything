@@ -68,8 +68,8 @@ derived/{hh}/{content-hash}/scrub.webp + scrub.vtt
 derived/{hh}/{content-hash}/page-0001.webp …
 ```
 
-Content-hash keying gives derived-data dedup for free: duplicate files share one set of assets. Everything is regenerable; cache-like kinds (PDF pages, on-demand transcodes/renditions) are evicted LRU under a size cap.
+Content-hash keying gives derived-data dedup for free: duplicate files share one set of assets. Everything is regenerable; cache-like kinds (PDF pages, on-demand transcodes/renditions, selection archives — [F-016](../features/F-016-archive-download.md)) are evicted LRU under a size cap. Archives additionally carry a short TTL and are evicted *before* other kinds under pressure — they are keyed by their permission-filtered manifest hash and rebuild on demand.
 
 ## Disk-usage visibility
 
-`GET /stats/storage` reports usage by category — originals, version history, and derived by kind (thumbnails, previews, renditions, caches) — as absolute bytes **and percent**, instance-wide for admins and per-workspace for owners. Sizes come from `DerivedAsset`/version rows (aggregation, not new bookkeeping).
+`GET /stats/storage` reports usage by category — originals, version history, **trash** (content lives in `versions/` but reports as its own category — [F-014](../features/F-014-deletion-and-trash.md)), and derived by kind (thumbnails, previews, renditions, caches incl. archives) — as absolute bytes **and percent**, instance-wide for admins and per-workspace for owners. Sizes come from `DerivedAsset`/version rows (aggregation, not new bookkeeping). For admins the trash figures are aggregates only — never entry listings ([07](07-identity-permissions-sharing.md#deletion-trash-purge)).

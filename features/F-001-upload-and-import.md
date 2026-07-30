@@ -22,7 +22,7 @@ Get files into the system two ways: upload through the API into a chosen workspa
 - **FR-3** Upload responds as soon as the file is safely stored; extraction is queued asynchronously (`202`-style, job reference returned).
 - **FR-4** Import: a workspace can be created over an existing subtree; the scanner registers every file (path, size, mtime, content hash) without moving, renaming, or modifying anything.
 - **FR-5** Import at 10 TB scale is resumable and incremental: restarts continue where they left off; progress (files found / registered / extracted) is queryable via API.
-- **FR-6** Re-scan reconciles external changes: new file → register + ingest; changed content (hash differs) → new version ([F-007](F-007-versioning.md)); missing file → marked missing/deleted, never silently purged from the index.
+- **FR-6** Re-scan reconciles external changes: new file → register + ingest; changed content (hash differs) → new version ([F-007](F-007-versioning.md)); missing file → a trash entry badged "removed outside the app" ([F-014/FR-10](F-014-deletion-and-trash.md)), never silently purged from the index.
 - **FR-7** Name collisions on upload are handled predictably (reject or new-version, per explicit parameter; default: reject with clear error).
 - **FR-8** Every registered file is immediately visible in listings with basic file metadata, with extraction status `pending` — searchability by content follows as extractors complete.
 

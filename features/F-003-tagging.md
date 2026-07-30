@@ -37,7 +37,7 @@ Every file can carry multiple tags. Users tag manually; extractors tag automatic
 
 ## Out of scope
 
-Per-user private tag layers (explicitly decided against — tags belong to the file). Tag-based automation rules. Tag export to sidecar files (tags are app-private for now; export possible later).
+Per-user private tag layers (explicitly decided against — tags belong to the file). Tag-based automation rules. Tag export to sidecar files (tags are app-private for now; export possible later). Folder tags — manual, self-only, same vocabulary — are specified in [F-015/FR-9](F-015-folders.md).
 
 ## Open questions
 

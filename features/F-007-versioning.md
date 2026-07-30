@@ -23,7 +23,7 @@ Files keep their history. A new upload to an existing path, or a content change 
 - **FR-4** Restore = the chosen version's content becomes a *new* current version (history is never rewritten).
 - **FR-5** Derived data (segments, metadata, embeddings) is retained per version → old versions are fully searchable.
 - **FR-6** Search defaults to latest; `versions=all` / time-scoped search returns old-version hits explicitly labeled ([F-002/FR-8](F-002-hybrid-search.md)).
-- **FR-7** Deleting a file offers trash-then-purge semantics; purge removes versions and derived data (audited).
+- **FR-7** Deleting a file follows the trash-then-purge lifecycle specified in [F-014](F-014-deletion-and-trash.md); purge removes version content (**reference-counted** — content-addressed blobs in `versions/` may be shared across files) and derived data (audited).
 - **FR-8** Version retention is policy-driven (count/age/size caps per workspace) — defaults generous, admin-configurable.
 - **FR-9** Restorability is explicit ("option b"): app-mediated changes (API upload; later the sync client) preserve the previous content in `versions/` and are restorable. Direct-on-disk edits are detected by re-scan as a new version whose predecessor keeps its derived data (still searchable) but is marked `restorable: false` — its bytes were overwritten before the app could snapshot them.
 

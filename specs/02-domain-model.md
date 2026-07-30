@@ -9,8 +9,13 @@
 erDiagram
     USER ||--o{ WORKSPACE : owns
     USER ||--o{ PERMISSION : "is granted"
-    WORKSPACE ||--o{ FILE : contains
+    WORKSPACE ||--o{ FOLDER : contains
     WORKSPACE ||--o{ PERMISSION : "scoped to"
+    FOLDER |o--o{ FOLDER : "parent of"
+    FOLDER ||--o{ FILE : contains
+    FOLDER ||--o{ PERMISSION : "scoped to"
+    FOLDER ||--o{ FOLDER_TAG : "is tagged"
+    TAG ||--o{ FOLDER_TAG : "applied as"
     FILE ||--o{ FILE_VERSION : "has versions"
     FILE ||--o{ FILE_TAG : "is tagged"
     FILE ||--o{ PERMISSION : "scoped to"
@@ -40,8 +45,13 @@ The top-level container for files. **A file always belongs to exactly one worksp
 
 > A workspace corresponds to a **top-level folder** and carries a **source type**: `local` (read+write — the folder *is* the storage) or `external` (e.g. GDrive: read-only through the app, fully mirrored onto the server; specified later — Q16). Fixed: ownership (one user) and containment (files live in exactly one). Still open: quotas, per-workspace settings, and where the auto-sort inbox's sorted output lives (Q2, [F-010](../features/F-010-auto-sort-inbox.md)).
 
+### Folder
+A directory in a workspace's tree, mirrored 1:1 from disk — a first-class entity, not a path string ([F-015](../features/F-015-folders.md)). Defined by *(uuid, workspace, parent, name)*; every workspace has an auto-created root folder. The **UUID survives rename and move** (same rule as files), which is what folder-scoped permissions, folder tags (`FOLDER_TAG` — manual-only, extractors never run on folders), and future folder share links attach to. Ancestry is precomputed in a **closure table** (the ADR-0006 pattern) powering subtree permission checks, path-prefix filters, and cycle detection. Folders carry system-computed aggregates (direct/recursive file count, recursive size) maintained asynchronously from the event stream — eventually consistent with an `as_of` stamp ([F-015/FR-8](../features/F-015-folders.md)). External renames are reconciled by a majority-content heuristic that transfers the UUID ([F-015/FR-7](../features/F-015-folders.md)).
+
 ### File
-A logical file at a path inside a workspace. Has a current (latest) version and possibly older versions. Path, name, and hierarchy mirror the real folder structure on disk — the app never invents a structure the user can't see in the filesystem.
+A logical file, addressed as *(parent folder, name)*; its display path is **derived from the folder chain**, never an independently stored string that could drift. Has a current (latest) version and possibly older versions. Names and hierarchy mirror the real folder structure on disk — the app never invents a structure the user can't see in the filesystem.
+
+**Lifecycle state:** `live` or `trashed` ([F-014](../features/F-014-deletion-and-trash.md)). Trashed items are excluded from every default query surface and safeguarded restorably; the trash record carries origin (in-app delete vs. detected missing on disk), actor, timestamp, batch id, and purge deadline. Purge removes the file and everything attached to it — only the event log remains.
 
 **Tags and metadata belong to the file (via its versions), not to the viewing user.** If Alice grants Bob write permission and Bob edits tags, Alice sees the updated tags. There is one shared truth per file.
 
@@ -118,13 +128,14 @@ A special class is the **Rendition** ([ADR-0008](../decisions/ADR-0008-rendition
 The append-only **event log** ([ADR-0007](../decisions/ADR-0007-unified-event-log.md)): every state-changing action (file operations, versions, tag/metadata edits, permission changes, share accesses, logins, extraction runs) is recorded in the same transaction as the change — actor (user, extractor, or system), action, resource, timestamp, details. One log, three consumers: the audit API ([F-011](../features/F-011-audit-trail.md), full fidelity), the `/events` cursor feed (sync clients, agents), and the WebSocket fan-out ([F-012](../features/F-012-live-updates.md), coalesced thin notifications).
 
 ### Permission / ShareLink
-See [07-identity-permissions-sharing.md](07-identity-permissions-sharing.md). `Permission` grants a user a role (`read`/`write`/…) on a workspace, folder, or file. `ShareLink` is a public, token-based download link with optional expiry/password.
+See [07-identity-permissions-sharing.md](07-identity-permissions-sharing.md). `Permission` grants a user a role (`read`/`write`/…) on a workspace, a folder (by UUID — the grant survives rename and move, evaluated via the folder closure), or a file. `ShareLink` is a public, token-based download link with optional expiry/password; links on trashed files are suspended, not revoked ([F-014/FR-11](../features/F-014-deletion-and-trash.md)).
 
 ## Invariants
 
-1. Every file belongs to exactly one workspace; every workspace to exactly one user.
+1. Every file belongs to exactly one folder, every folder to exactly one workspace, every workspace to exactly one user.
 2. Original file content is never modified or lost by the system. The only exception-shaped case — OCR on scanned PDFs — also does **not** modify the original: extracted text is stored as segments, never written back into the PDF.
 3. All derived data is traceable: every `MetadataEntry`, auto `FileTag`, `Segment`, `Embedding`, and `DerivedAsset` references the `ExtractionRun` (extractor id + version + model + generation) that produced it.
 4. `manual` and `confirmed` user input is never altered by reprocessing; `rejected` records suppress re-adding.
 5. Anything derived (plane 2) can be deleted and rebuilt from the source plane + manual records.
 6. Every state-changing action is recorded in the event log in the same transaction (ADR-0007) — nothing changes silently.
+7. Trashed items appear in **no** default query surface — search results, facets, counts, autocomplete, duplicate groups — enforced inside the queries, including vector search. Purge removes every domain row and every stored byte (version blobs reference-counted); the event log is the only remaining trace, and a purged id is indistinguishable from one that never existed ([F-014](../features/F-014-deletion-and-trash.md)).

@@ -24,7 +24,8 @@ Owners grant other users roles (`read`/`write`/`manage`) on workspaces, folder s
 - **FR-5** Share links: unguessable token → download + preview of one file. No search, no metadata/tag browsing, no traversal.
 - **FR-6** Share link options: expiry, password (hashed), revocation, access counter. All link accesses audited.
 - **FR-7** Owners can list all grants and links they've issued (and admins instance-wide).
-- **FR-8** Permission changes take effect immediately (next request) — including search visibility.
+- **FR-8** Permission changes take effect immediately (next request) — including search visibility and archive downloads ([F-016/FR-5](F-016-archive-download.md)).
+- **FR-9** A link whose target is trashed is **suspended**, not revoked: it stops serving on trash, resumes on restore, and is permanently revoked on purge ([F-014/FR-11](F-014-deletion-and-trash.md); suspended-response status code is Q21).
 
 ## API surface
 
@@ -36,7 +37,7 @@ Groups/teams (grants are per-user in v1). Folder-level public links (later). Den
 
 ## Open questions
 
-[Q12 (upload links / file-request links?)](../OPEN-QUESTIONS.md#q12).
+[Q12 (upload links / file-request links?)](../OPEN-QUESTIONS.md#q12) · [Q21 (response code for suspended links)](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 

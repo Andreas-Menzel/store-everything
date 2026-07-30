@@ -25,6 +25,7 @@ Every state-changing action in the system is recorded: when was a file uploaded,
 - **FR-6** User view: activity for their own files/workspaces and files shared to them, scoped to what they can read.
 - **FR-7** Share-link accesses are logged (timestamp, link token) and drive the access counter in [F-008](F-008-sharing-and-public-links.md).
 - **FR-8** Retention policy is admin-configurable; default generous.
+- **FR-9** Records are **self-contained**: `details` carries human-readable identity (file/folder name and path at action time), so history stays meaningful after the resource is purged — after purge, events are the *only* remaining trace ([F-014/FR-7](F-014-deletion-and-trash.md)).
 
 ## API surface
 
@@ -44,3 +45,4 @@ Retention defaults — decide with usage data.
 - A 30-tag bulk action yields 30 retrievable items in the trail.
 - No API call can modify or delete an existing audit record.
 - A change whose transaction rolls back leaves no audit record; a committed change always leaves one.
+- After a file is purged, its lifecycle events (created … trashed … purged) remain queryable and display the file's name and path as of each action.

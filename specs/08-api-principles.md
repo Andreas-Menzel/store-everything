@@ -50,15 +50,21 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 - **Field-level validation** returns *all* problems in one response; each item is `{detail, pointer}` with an RFC 6901 JSON Pointer whose first segment names the location (`body` / `query` / `path` / `header`). Echo the field and the violated rule — **never the submitted value** (nothing sensitive is reflected back).
 - **Nothing internal leaks** — no stack traces, no SQL, no dependency error strings. The request id is the only bridge: the caller quotes `instance`, the operator finds the matching log line ([10](10-deployment-and-operations.md#logging)).
-- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent *or hidden by permissions* (existence is not leaked — [F-008](../features/F-008-sharing-and-public-links.md)) · `409` conflict · `410` expired/revoked share link · `422` validation · `5xx` server fault. Never `200` with an error body.
+- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `5xx` server fault. Never `200` with an error body.
 
 ## Resource sketch (v1 surface, non-exhaustive)
 
 ```
 /api/v1/auth/…                       login, tokens
 /api/v1/users/…                      admin user management
-/api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan
+/api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan;
+                                     DELETE requires confirm:"<name>" → restorable trash batch (F-014)
 /api/v1/workspaces/{ws}/files/…      list/tree by path
+/api/v1/workspaces/{ws}/folders      create folder (F-015)
+/api/v1/workspaces/{ws}/trash        trash listing · POST …/trash/empty (F-014)
+/api/v1/trash/restore                batch restore (batch id / item ids) (F-014)
+/api/v1/folders/{id}                 metadata + aggregates (count/size, as_of);
+                                     /children · /move (incl. cross-workspace) · /tags (F-015)
 /api/v1/files/{id}                   metadata, tags, versions, extraction status
 /api/v1/files/{id}/content           download (range), upload new version
 /api/v1/files/{id}/thumbnail         uniform WebP thumbnail (?size= snapped to fixed set)
@@ -67,9 +73,11 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/files/{id}/segments          extracted text/positions (transcripts, pages)
 /api/v1/files/{id}/tags              add/confirm/reject/remove (provenance-aware)
 /api/v1/files/{id}/move              move/rename (first-class: auto-sort builds on this)
+/api/v1/files/{id}/restore · purge   deletion lifecycle; DELETE /files/{id} → trash (F-014)
 /api/v1/files/{id}/activity          audit trail for one file (F-011)
 /api/v1/search                       hybrid search (06-search.md)
 /api/v1/duplicates                   duplicate groups, permission-scoped (F-013)
+/api/v1/archives                     archive a selection (F-016); {id}/content = Range download
 /api/v1/tags/…                       taxonomy (DAG), aliases, autocomplete; admin approve/reject suggestions
 /api/v1/shares/…                     share links
 /api/v1/extractors/…                 admin: registered extractors, health, queues
@@ -104,6 +112,17 @@ flowchart LR
         TREE["GET /workspaces/{ws}/files?path=…"]
         RESCAN["POST /workspaces/{ws}/rescan"]
         IMPST["GET /workspaces/{ws}/import-status"]
+        WSDEL["DELETE /workspaces/{ws}<br/>(confirm: exact name → trash batch)"]
+        WTRASH["GET /workspaces/{ws}/trash<br/>POST …/trash/empty<br/>POST /trash/restore (batch)"]
+    end
+
+    subgraph FOLDG["Folders"]
+        FOCR["POST /workspaces/{ws}/folders"]
+        FOMETA["GET /folders/{id}<br/>(aggregates: count·size, as_of)"]
+        FOCH["GET /folders/{id}/children<br/>(cursor, sortable)"]
+        FOMV["POST /folders/{id}/move<br/>(rename/move, incl. cross-workspace)"]
+        FOTAG["GET·POST·DELETE /folders/{id}/tags"]
+        FODEL["DELETE /folders/{id} → trash"]
     end
 
     subgraph FG["Files"]
@@ -118,6 +137,7 @@ flowchart LR
         FMOVE["POST /files/{id}/move"]
         FACT["GET /files/{id}/activity<br/>(audit for one file)"]
         FREP["POST /files/{id}/reprocess"]
+        FDEL["DELETE /files/{id} → trash<br/>POST …/restore · POST …/purge"]
     end
 
     subgraph SG["Search & Tags"]
@@ -146,13 +166,20 @@ flowchart LR
         WS["WS /ws<br/>(live thin notifications)"]
     end
 
+    subgraph ARG["Archives"]
+        ARCH["POST /archives<br/>(selection → cached artifact or 202 + job)"]
+        ARCHDL["GET /archives/{id} (descriptor, freshness)<br/>GET …/content (Range/resume,<br/>per-request permission re-check)"]
+    end
+
     API --> AUTHG
     API --> WSG
+    API --> FOLDG
     API --> FG
     API --> SG
     API --> SHG
     API --> OPS
     API --> ASYNC
+    API --> ARG
 ```
 
 ## Design constraints from deferred features

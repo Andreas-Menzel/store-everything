@@ -37,13 +37,13 @@ flowchart LR
 ```
 
 - **Owner**: full control over their workspace and everything in it.
-- **Grants**: an owner can grant another user a role on a workspace, a folder subtree, or a single file:
+- **Grants**: an owner can grant another user a role on a workspace, a folder subtree, or a single file. Folder grants anchor to the folder's **UUID** — they survive rename and move and are evaluated via the folder closure ([F-015](../features/F-015-folders.md)); moving an item into or out of a granted subtree changes effective permissions immediately:
 
 | Role | Capabilities |
 |---|---|
 | `read` | see file, download, see tags/metadata, find it in search |
 | `write` | `read` + upload new versions, edit **tags and metadata**, move/rename within granted scope |
-| `manage` | `write` + grant permissions, delete |
+| `manage` | `write` + grant permissions, delete (to trash), restore, purge ([F-014](../features/F-014-deletion-and-trash.md)) |
 
 - **Shared truth:** tags/metadata belong to the file — when Bob (with `write`) edits tags on Alice's file, Alice sees Bob's changes ([02-domain-model.md](02-domain-model.md#file)). Provenance records *who*: manual tags carry the user id.
 - Effective permission = union of grants (most permissive wins along the path). Fine-grained deny rules are out of scope for v1.
@@ -58,6 +58,15 @@ Search only ever returns files the caller can `read`, enforced inside the query 
 - Scope: **download + view preview only.** No search, no tags/metadata browsing, no listing beyond the shared object.
 - Options: expiry date, optional password, revocation, download counter.
 - Created by anyone with `manage` on the target (owner by default).
+
+## Deletion, trash, purge
+
+Permission rules for the deletion lifecycle ([F-014](../features/F-014-deletion-and-trash.md)):
+
+- Seeing a trash entry follows `read`, evaluated against the entry's original location; restore and purge require `manage` — the same bar as delete.
+- Grants on trashed items are preserved but inert; share links are suspended, not revoked (whether they answer `404` or `410` is Q21), and resume working on restore.
+- **Admins get no content access here either** — consistent with this spec's stance that instance admin ≠ data access: admins see aggregate trash statistics only ([09](09-previews.md#disk-usage-visibility)), never other users' trash entries. The instance-wide emergency empty-trash operation requires typed confirmation and is audited.
+- Workspace deletion requires the exact workspace name as explicit confirmation and produces one restorable trash batch ([F-014/FR-13](../features/F-014-deletion-and-trash.md)).
 
 ## Audit
 

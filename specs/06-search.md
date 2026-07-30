@@ -25,12 +25,18 @@ flowchart TB
 ```
 
 ### Filters (composable with any mode)
-`workspace`, `path prefix`, `file type/MIME`, `tag` (incl. provenance: e.g. only `manual`/`confirmed`), `metadata key/value/range` (dates, numbers, geo), `size`, `owner`, `has-pending-extraction`, `version scope`.
+`workspace`, `path prefix` (resolved to a folder subtree via the folder closure — [F-015](../features/F-015-folders.md)), `file type/MIME`, `tag` (incl. provenance: e.g. only `manual`/`confirmed`), `metadata key/value/range` (dates, numbers, geo), `size`, `owner`, `has-pending-extraction`, `version scope`, `state` (lifecycle scope, below).
 
 Tag filters **expand down the hierarchy by default** ([ADR-0006](../decisions/ADR-0006-hierarchical-tags-dag.md)): `tag:nature` matches files tagged with any descendant (`plant`, `tree`, …) via the precomputed closure table; `exact: true` restricts to the literal tag. Tags with status `suggested` are **excluded** from search, facets, and autocomplete until approved.
 
 ### Version scope
 Default: **latest versions only**. Opt-in: search all versions / versions in a time range ([F-007](../features/F-007-versioning.md)); old-version hits are labeled as such.
+
+### Lifecycle state scope
+Default: **live items only**. Trashed items ([F-014](../features/F-014-deletion-and-trash.md)) are excluded from results, facets, counts, and autocomplete **by construction**: the `live` predicate is applied *inside* every query branch — including inside the pgvector ANN search, because post-filtering vector hits silently reduces recall — exactly like the permission filter, and tested with the same leak-test rigor ([11](11-engineering-standards.md#what-must-be-tested)). Opt-in: `state: trashed` (searching the trash requires the same permission as the trash listing) or `state: all`; trashed hits are labeled.
+
+### Folders as results
+Folders are searchable objects ([F-015/FR-10](../features/F-015-folders.md)): matched by name, manual tags, and metadata — they carry no content segments — and returned as folder-typed results alongside file hits, permission-filtered identically. A folder tag does **not** match the files inside the folder in v1 (query-time inheritance is deferred — Q23).
 
 ## Index design (what makes positions possible)
 
@@ -50,7 +56,7 @@ A hybrid query embeds the query text once per space, searches each space separat
 
 ## Permission-aware by construction
 
-Search results are filtered by the caller's read permissions **inside the query**, not post-hoc: a snippet from an unreadable file is a data leak. Public share-link tokens grant search access to nothing (links are download-scoped). This is a hard requirement driving the single-datastore choice (ADR-0001): permissions and index live in the same transactional store.
+Search results are filtered by the caller's read permissions **inside the query**, not post-hoc: a snippet from an unreadable file is a data leak. Public share-link tokens grant search access to nothing (links are download-scoped). This is a hard requirement driving the single-datastore choice (ADR-0001): permissions and index live in the same transactional store. The lifecycle-state predicate (above) rides the same mechanism — every filter that must never leak is applied inside the query.
 
 ## Result shape (API sketch)
 

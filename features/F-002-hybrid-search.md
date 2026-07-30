@@ -30,10 +30,12 @@ One search API over everything the system knows: exact text/phrases, file names,
 - **FR-10** p95 interactive query latency < 500 ms at target scale on CPU-only hardware; query-side embedding models stay memory-resident.
 - **FR-11** Pagination is cursor-based and stable.
 - **FR-12** Tags with status `suggested` are excluded from search matching, facets, and autocomplete until approved.
+- **FR-13** Lifecycle state scope defaults to `live`: trashed items never appear in results, facets, counts, or autocomplete — enforced inside every query branch, including ANN ([F-014/FR-12](F-014-deletion-and-trash.md), [06](../specs/06-search.md#lifecycle-state-scope)). Opt-in `state: trashed | all` returns labeled hits, permission-checked like the trash listing.
+- **FR-14** Folders are returned as folder-typed results, matched by name, tags, and metadata ([F-015/FR-10](F-015-folders.md)).
 
 ## API surface
 
-`POST /search` (query, mode, filters, version scope, cursor) — see result shape sketch in [06-search](../specs/06-search.md#result-shape-api-sketch).
+`POST /search` (query, mode, filters, version scope, state scope, cursor) — see result shape sketch in [06-search](../specs/06-search.md#result-shape-api-sketch).
 
 ## Out of scope
 
@@ -51,3 +53,4 @@ Query-language UI niceties (saved searches, query builder) — later, as API con
 - User B searching a phrase that only exists in files B cannot read gets zero results, zero facet counts, zero leaks (tested, not assumed).
 - Exact filename search finds a file among millions in interactive time.
 - Searching `tag:nature` finds a file tagged only `tree` (a descendant in the taxonomy); the same query with `exact: true` does not.
+- A trashed file matching the query appears only with `state: trashed`/`all` (labeled), never by default — verified across results, facets, and counts like a permission leak test.

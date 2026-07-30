@@ -40,7 +40,8 @@ v1 spec work focuses on `local`; the workspace model carries the `source` field 
 
 /var/lib/store-everything/    ← app-owned (removable without data loss)
   derived/                    ← previews, keyframes, transcripts, renditions
-  versions/                   ← shadow copies of superseded file versions
+  versions/                   ← shadow copies of superseded file versions and
+                                of trashed files' current versions (F-014)
 postgres volume               ← database
 ```
 
@@ -54,7 +55,7 @@ Users bring an existing folder tree ("we will import the file structure the user
 
 - Point a workspace at an existing subtree → the app scans it, registers every file (path, size, hash, mtime), and queues ingestion. Nothing is moved or renamed.
 - Import is resumable and incremental; at 10 TB the initial scan+ingest runs for a long time and must survive restarts.
-- Re-scan detects on-disk changes made *outside* the app (files added/modified/deleted directly on the NAS) and reconciles: new file → ingest; changed hash → new version; missing → mark deleted/missing (not silently purged). Whether this is watch-based, scheduled, or manual is open — Q3.
+- Re-scan detects on-disk changes made *outside* the app (files added/modified/deleted directly on the NAS) and reconciles: new file → ingest; changed hash → new version; missing → a trash entry badged "removed outside the app" ([F-014/FR-10](../features/F-014-deletion-and-trash.md)) — never silently purged. Whether this is watch-based, scheduled, or manual is open — Q3.
 
 ## Uploads
 
@@ -62,7 +63,7 @@ Uploading through the API writes the file to the target workspace path on the so
 
 ## The auto-sort inbox (deferred feature, keep possible)
 
-A special workspace for quick uploads with no chosen destination: files land in an inbox and are automatically organized — initially by simple rules (year/month folders), later optionally by a local AI model that proposes/executes moves. Whether the sorted destination is inside the same workspace or another one is undecided (Q1). Requirement for now: file *move* operations (within/between workspaces, preserving identity, versions, tags) must be first-class API operations, because auto-sorting is just an API consumer doing moves.
+A special workspace for quick uploads with no chosen destination: files land in an inbox and are automatically organized — initially by simple rules (year/month folders), later optionally by a local AI model that proposes/executes moves. Whether the sorted destination is inside the same workspace or another one is undecided (Q2). Requirement for now: file *move* operations (within/between workspaces, preserving identity, versions, tags) must be first-class API operations, because auto-sorting is just an API consumer doing moves.
 
 ## Versioning vs. "the folder is everything" (known tension)
 
@@ -73,6 +74,15 @@ Version history conflicts mildly with pure portability: the current version of e
 - **Restorability depends on who wrote** ("option b"): when the *app* mediates a change (API upload; later the laptop sync client turning a local save into a new-version call), it moves the old file into `versions/` before writing — cheap, no copy, fully restorable. A file edited *directly on disk* is overwritten before the app can snapshot it: re-scan records the new version, and the predecessor keeps all its previously extracted derived data — still **searchable**, but marked `restorable: false`. No copy-on-ingest, no doubled storage.
 - Deleting the app loses *history*, never *current data*. This is documented, accepted behavior.
 - Retention/quota policy for version history is open — Q4.
+
+## Deletion & trash
+
+In-app deletion is **logically instant, physically deferred** ([F-014](../features/F-014-deletion-and-trash.md)): the item's state flips to `trashed` — gone from every listing and every search immediately — and its current-version content is moved into the content-addressed `versions/` area by a background job. Trash reuses the versioning mechanism, so it needs **no separate storage area** and automatically falls inside the mandatory backup scope (Q13). Consequences:
+
+1. **The source tree only ever contains live files.** Someone browsing the workspace over SMB never sees a file the app considers deleted. (During the safeguarding window the file may briefly remain on disk; re-scan knows to ignore it.)
+2. **Cost honesty:** "move into `versions/`" is a cheap rename only when `{data-root}` and the app volume share a filesystem — otherwise it is a copy. This applies equally to version snapshots; ops guidance is to colocate `versions/` with the source filesystem where possible. Corner case: on a full app volume a cross-filesystem *trash* move can fail while *purge* always works — the error message must say exactly that ([F-014/FR-2](../features/F-014-deletion-and-trash.md)).
+3. **Purge** deletes version blobs reference-counted — content-addressed blobs may be shared across files — and never requires free space ([F-014/FR-7](../features/F-014-deletion-and-trash.md)).
+4. Removing the app loses *trash* the same way it loses *history* (content-addressed blobs in the app-owned area) — the same accepted, documented trade-off as versions. Current live data is never affected.
 
 ## Integrity
 

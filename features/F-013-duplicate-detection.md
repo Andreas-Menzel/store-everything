@@ -17,10 +17,10 @@ Exact duplicates — files with identical content hashes — are surfaced to the
 
 ## Functional requirements
 
-- **FR-1** A duplicate group = files whose *latest versions* share a content hash, computed at query time over files the caller can read — never from a precomputed instance-wide table (permission leak).
+- **FR-1** A duplicate group = **live** files whose *latest versions* share a content hash ([F-014/FR-12](F-014-deletion-and-trash.md)), computed at query time over files the caller can read — never from a precomputed instance-wide table (permission leak).
 - **FR-2** Duplicates page with a **scope filter**: own workspaces (default) / everything readable / specific workspaces. The chosen scope is persisted as a user preference — no separate settings screen.
 - **FR-3** File detail includes the file's visible duplicates (cheap indexed hash lookup).
-- **FR-4** Resolution: per group, pick the keeper; bulk rules over selected groups (keep oldest / newest / the copy in workspace X). Deletions go to **trash**, never hard delete; every action is audited ([F-011](F-011-audit-trail.md)).
+- **FR-4** Resolution: per group, pick the keeper; bulk rules over selected groups (keep oldest / newest / the copy in workspace X). Deletions go to **trash** ([F-014](F-014-deletion-and-trash.md) — one batch per bulk action, restorable in one step), never hard delete; every action is audited ([F-011](F-011-audit-trail.md)).
 - **FR-5** Copies the user can see but not delete (shared read-only) are displayed, marked non-actionable, with the reason stated inline.
 - **FR-6** Groups can be marked *ignored* (per user) to declutter the default view; ignored groups remain retrievable via filter.
 - **FR-7** Cross-owner groups are grouped by ownership and never auto-resolved — resolving those is human coordination, not a bulk action.

@@ -21,5 +21,8 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-011](F-011-audit-trail.md) | Full audit trail | Draft | P1 |
 | [F-012](F-012-live-updates.md) | Live updates (WebSocket) | Draft | P1 |
 | [F-013](F-013-duplicate-detection.md) | Duplicate detection (exact) | Draft | P1 |
+| [F-014](F-014-deletion-and-trash.md) | Deletion & trash | Draft | P1 |
+| [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | Draft | P0 |
+| [F-016](F-016-archive-download.md) | Archive download (folders & selections) | Draft | P1 |
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
