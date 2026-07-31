@@ -2,7 +2,7 @@
 
 **Status:** Draft
 
-Specs 00–10 define *what the system does*; this document defines *how changes are made*: workflow, testing, Definition of Done, commits, versioning, releases. It applies to every code repository of the project — and to this spec repo where meaningful.
+Specs 00–10 define *what the system does*; this document defines *how changes are made*: workflow, code reuse & refactoring, testing, Definition of Done, commits, versioning, releases. It applies to every code repository of the project — and to this spec repo where meaningful.
 
 ## Docs first — read before, update after
 
@@ -17,10 +17,63 @@ For every task, in order — steps are not batched and not skipped:
 
 1. Read the governing docs (above); restate the acceptance criteria you are working toward.
 2. Split the task into small, individually verifiable steps.
-3. **Per step:** implement → self-review the diff → **update the test suite** (add / change / delete tests) → **run the affected tests**. Red stops the line — fix before starting the next step.
+3. **Per step:** implement → self-review the diff (incl. the two standing [reuse questions](#where-to-look)) → **update the test suite** (add / change / delete tests) → **run the affected tests**. Red stops the line — fix before starting the next step.
 4. Before opening the MR: full test suite, linter, and type check green locally.
 5. Update the docs (rule above) in the same change; write Conventional Commits.
 6. Merge only when the [Definition of Done](#definition-of-done) holds: CI green, review threads resolved, checklist honestly ticked (or explicitly N/A).
+
+## Code reuse & shared modules
+
+One concept, one implementation. UI is the canonical case — **one** confirm dialog, **one** bottom sheet, **one** button — but the rule covers all code. The rules are stack-agnostic on purpose; the concrete frontend stack and tooling are open (Q26).
+
+### The rules
+
+1. **One canonical shared layer per repo.** Shared UI primitives (dialogs/modals, bottom sheets, buttons, toasts, form fields) and shared logic (formatters, validators, error handling) live in exactly one discoverable place. Nothing shared lives inside a feature.
+2. **Check before create.** Before writing any new UI element or utility: check the shared layer and its showcase. If something close exists, extend it with a variant — never copy it into a feature.
+3. **Shared modules are domain-free.** No `DeleteFileModal` — a generic `ConfirmDialog` with a `destructive` variant, configured by data (title, message, labels, callbacks). A shared component that knows what a workspace or a tag is has stopped being shared; business logic stays in features.
+4. **Reuse the mechanism, not just the markup.** One `confirm(…)`-style API owns open/close state; one dialog primitive decides modal vs. bottom sheet by viewport. Features never re-implement these mechanics.
+5. **Design tokens under everything.** Spacing, colors, typography, radii, z-index come from one theme — no hardcoded values, including in one-off UI.
+6. **Cross-cutting states are solved once.** Loading/empty/error/disabled states, focus trap, ESC-to-close, scroll lock, keyboard navigation, ARIA — built into the shared layer, never re-solved (or forgotten) per feature.
+7. **Dependencies point one way.** Features import from the shared layer; the shared layer never imports from features.
+8. **Not just UI.** File-size/date formatters, the problem-details handler and pagination envelope ([08](08-api-principles.md#errors-rfc-9457)), WebSocket reconnect ([F-012](../features/F-012-live-updates.md)) are shared modules — and the web UI calls the API **only** through the generated OpenAPI client ([08](08-api-principles.md)); hand-rolled fetches are forbidden.
+
+### When to abstract — four tests
+
+Abstraction is a judgment with tests, not a vibe. Applied the moment similarity is noticed:
+
+| Test | Question | Abstract when |
+|---|---|---|
+| **Divergence** | If the copies drift apart later, is that a bug? | Yes — they share a *reason to change*, not just a shape |
+| **Naming** | Is there an honest, domain-free name? | `ConfirmDialog`, `formatFileSize` — yes. A name that needs the feature in it means resemblance, not a concept |
+| **Parameters** | In the unified API, are the variants data or control flow? | Variants are data (title, tone, callback). Boolean flags selecting internal branches mean two things stapled together |
+| **Count** | How many real uses exist? | A second concrete use, with the tests above passing → extract now. One use → keep it local, except below |
+
+**Abstract at first use** — no waiting — when the further uses aren't speculation:
+
+- **The spec already guarantees them:** every API consumer handles the problem-details envelope; a file app renders file sizes on every screen.
+- **The requirement is cross-cutting by nature:** focus traps, permission-aware rendering, error toasts come from global requirements and were never feature-local to begin with.
+
+The counter-rule carries equal weight: **duplication is cheaper than the wrong abstraction.** No speculative extraction, no config-flag god-components. When in doubt, duplicate and revisit at the second use.
+
+### Where to look
+
+- **Before writing — the shared layer and its showcase.** The mandatory first stop, every time.
+- **Before writing — the feature files.** Docs-first means the reuse landscape is readable before code exists: [F-014](../features/F-014-deletion-and-trash.md) alone specifies several destructive confirmations (delete, purge, empty trash — instance-wide even *typed*), bulk reprocessing ([F-009](../features/F-009-reprocessing.md)) adds another. Scanning `features/` answers "will this have a second use?" with facts, not guesses.
+- **After writing — self-review** (workflow step 3) answers two standing questions: *Did I copy anything into existence? Did I rebuild something the shared layer already had?*
+- **Review** is the human backstop: the [Definition of Done](#definition-of-done) includes the reuse check; CI adds an advisory duplication report.
+
+### Enforcement
+
+Per this document's own rule — configured AND enforced: lint forbids raw UI primitives (`<button>`, `<dialog>`, hardcoded colors/spacing) outside the shared layer and enforces the import direction; a showcase page (Storybook-class) is the living component inventory — and a target for the E2E UI layer; CI runs an advisory copy-paste detector. Concrete tools land with the frontend stack (Q26).
+
+## Refactor over quick fix
+
+Every change is made with the whole project in view. "It works now" is not a bar — done means *fits the system*.
+
+1. **No quick fixes.** A change that fights the current structure — a special case where a concept belongs, a copy where a variant belongs, a workaround where a refactor belongs — is not done, even if green.
+2. **If the clean change needs a refactor, the refactor is in scope.** Reshape first, then build on it — as separate commits (or a preparatory MR), so the refactor stays reviewable and the feature diff stays small. Never a silent drive-by.
+3. **Extraction is part of the task that triggers it.** When the [four tests](#when-to-abstract--four-tests) say "shared concept", creating the shared module belongs to the current task; migrating the existing call sites may follow as its own small MR immediately after — not as a "later" that never comes.
+4. **Known debt is recorded, never implicit.** If a shortcut is consciously taken anyway (deadline, blocked decision), it is written down — an issue or an [OPEN-QUESTIONS](../OPEN-QUESTIONS.md) row — naming what the right change would be. Divergence is never silent, in code as in docs.
 
 ## Testing
 
@@ -34,7 +87,7 @@ For every task, in order — steps are not batched and not skipped:
 | **E2E** | compose up → upload → extract (stub extractor for speed) → search → share; web-UI flows | the full stack |
 
 - **Headless by default.** Every test — including E2E/UI — runs unattended in CI. A check a human has to remember is not a test.
-- **UI mode on demand.** The E2E/UI layer must also run headed, in a "UI mode" (watch the browser act, step through, inspect traces — e.g. Playwright's UI mode; tool choice open until the frontend stack is fixed). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
+- **UI mode on demand.** The E2E/UI layer must also run headed, in a "UI mode" (watch the browser act, step through, inspect traces — e.g. Playwright's UI mode; tool choice open until the frontend stack is fixed — Q26). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
 - Tests are **isolated** (no order dependence) and fast enough that running them beats checking by hand.
 
 ### What must be tested
@@ -61,6 +114,7 @@ A task is done when every line is honestly true — or explicitly marked N/A in 
 
 - [ ] Feature file exists / is updated; acceptance criteria & FRs demonstrably met — **by tests, not by hand**.
 - [ ] Tests added/changed/removed to match the behaviour; full suite green in CI; coverage gate met.
+- [ ] Shared layer checked before anything new was built; extractions follow the [four tests](#when-to-abstract--four-tests); required refactors done in scope — no quick fixes, no unrecorded debt ([reuse](#code-reuse--shared-modules), [refactor over quick fix](#refactor-over-quick-fix)).
 - [ ] All affected docs updated **in this change** (feature file, specs, OpenAPI, README, user-facing docs, OPEN-QUESTIONS).
 - [ ] API changes are additive within the major; schema regenerated; generated clients not stale ([08](08-api-principles.md)).
 - [ ] Schema changes ship as a versioned migration, up **and** down tested, expand–contract safe ([10](10-deployment-and-operations.md#upgrades--migrations)).
@@ -91,3 +145,5 @@ The feature template links this checklist; feature-specific criteria come **on t
 ## CI pipeline (the enforcement list)
 
 All blocking: lint + format check · type check · unit tests · integration tests (real PostgreSQL + pgvector) · migrations up/down · extractor conformance kit (official extractors) · E2E headless · coverage gate (≥ 85 %, ratcheting) · OpenAPI schema in sync + generated clients not stale · commit-format check · secret scan · dependency vulnerability scan · image scan (core + official extractor images) · SBOM generation.
+
+Advisory (non-blocking): copy-paste/duplication report — input to the [reuse check](#code-reuse--shared-modules) in review, not a gate.
