@@ -15,10 +15,11 @@ One paragraph: what the feature does and why it exists.
 
 ## Functional requirements
 
-Numbered, testable, referenceable as `F-NNN/FR-n`.
+Numbered, testable, referenceable as `F-NNN/FR-n` — authoring rules in [Writing FRs](README.md#writing-frs). Ids are append-only (removed FRs stay as tombstones); FRs a plain deterministic test cannot verify declare their method inline.
 
 - **FR-1** …
-- **FR-2** …
+- **FR-2** *(verify: benchmark)* …
+- **FR-3** *(removed — see ADR-00xx)*
 
 ## API surface
 
@@ -34,4 +35,6 @@ Local questions, or links into [OPEN-QUESTIONS.md](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 
-Concrete checks that demonstrate the feature works, phrased so they can become tests. Every FR must be covered by at least one automated test referencing its id (`F-NNN/FR-n`); the general [Definition of Done](../specs/11-engineering-standards.md#definition-of-done) applies on top of the criteria listed here.
+Numbered worked examples (`AC-n`) with concrete inputs and outputs, each naming the FR(s) it demonstrates — together the script for this feature's integration/E2E tests. Every FR must be verified by its declared method with its id in the test marker, enforced by the [traceability matrix](../specs/11-engineering-standards.md#requirement-traceability-the-matrix); the general [Definition of Done](../specs/11-engineering-standards.md#definition-of-done) applies on top of the criteria listed here.
+
+- **AC-1** (FR-1, FR-2) …

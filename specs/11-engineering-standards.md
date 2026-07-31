@@ -81,7 +81,7 @@ Every change is made with the whole project in view. "It works now" is not a bar
 
 | Layer | Scope | Backing services |
 |---|---|---|
-| **Unit** | pure logic: ranking fusion, permission resolution (union along the path), tag-DAG/closure operations, path/hash handling | none — fast, run constantly |
+| **Unit** | pure logic: ranking fusion, permission resolution (union along the path), tag-DAG/closure operations, path/hash handling — example-based **and property-based**: algebraic invariants (closure expansion terminates on any DAG; a permission union never grants more than the union of its grants; pagination never skips or duplicates an item) are tested as properties, not just examples | none — fast, run constantly |
 | **Integration** | API endpoints, queries, migrations, job queue | **real** PostgreSQL + pgvector in throwaway containers — no mocks-that-lie |
 | **Contract** | extractor conformance kit: manifest, job lifecycle, result envelope — runnable against **any** extractor image, incl. third-party ones | the extractor image under test |
 | **E2E** | compose up → upload → extract (stub extractor for speed) → search → share; web-UI flows | the full stack |
@@ -89,21 +89,56 @@ Every change is made with the whole project in view. "It works now" is not a bar
 - **Headless by default.** Every test — including E2E/UI — runs unattended in CI. A check a human has to remember is not a test.
 - **UI mode on demand.** The E2E/UI layer must also run headed, in a "UI mode" (watch the browser act, step through, inspect traces — e.g. Playwright's UI mode; tool choice open until the frontend stack is fixed — Q26). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
 - Tests are **isolated** (no order dependence) and fast enough that running them beats checking by hand.
+- **A flaky test is red.** Quarantining requires an expiry date and a linked issue — visible, never silently retried into green.
+- **Time is injected.** The core reads "now" only through an injectable clock — date facets, versioning, retention, and trash expiry are deterministic under test.
+
+### Verification methods (per FR)
+
+Every FR is verified by a **declared method**; the feature file marks any FR whose method isn't the default (`**FR-10** *(verify: benchmark)* …` — see [Writing FRs](../features/README.md#writing-frs)):
+
+| Method | Meaning | Runs |
+|---|---|---|
+| `test` *(default, unmarked)* | Deterministic automated test. Default home: the **integration layer, through the public API** — API-first makes the API the falsification surface. Unit for pure logic; E2E stays a thin smoke path. | per MR, blocking |
+| `benchmark` | Threshold-scored suite over the ground-truth corpus: quality metrics for statistical FRs (recall@k / NDCG — Q8), latency percentiles on reference hardware (Q27) for performance FRs (e.g. [F-002/FR-10](../features/F-002-hybrid-search.md)). Model versions pinned; trends tracked. | scheduled + pre-release; release-blocking |
+| `fault-injection` | Crash-semantics tests: worker killed mid-job, duplicate result delivery, orchestrator restart ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). | per MR, blocking |
+| `drill` | Exercised procedure: restore — backup → restore into a fresh stack → smoke suite (Q13); upgrade-path — seed data on the previous tagged release → upgrade → smoke ([10](10-deployment-and-operations.md#upgrades--migrations)). | scheduled; release-blocking |
+
+A test satisfies an FR only if it **fails when the FR is violated** — for "never / only / no" guarantees the negative case *is* the required test, not an extra.
+
+### Requirement traceability (the matrix)
+
+FR ids in test markers make requirement coverage checkable; the matrix makes it **checked**:
+
+- Tests carry the ids they verify as structured markers (e.g. `@fr("F-002/FR-7")`; exact mechanism follows the stack, Q10). Domain invariants participate under stable ids (`02/INV-n` ↔ [02 § Invariants](02-domain-model.md#invariants) #n).
+- CI regenerates the matrix on every run — one row per FR/invariant: id · requirement · feature + status · declared method · covering tests (name, layer) · last result · tombstone note. Published as a CI artifact with a summary on the MR; **not committed** (a committed generated file is a staleness bug waiting).
+- **Hard gates (fail the pipeline):** a feature at `Implemented` — or moved there in the MR — with an FR lacking ≥ 1 passing verification of its declared method (`Implemented` is thereby a *computed* status, not a claim) · a test referencing an FR id that doesn't exist or is tombstoned.
+- **Soft gates (warn):** an FR declaring a method whose suite isn't wired up yet · vague-word lint on FR lines ([Writing FRs](../features/README.md#writing-frs)).
+- Tracing runs both ways: forward (FR → tests) proves coverage; backward (test → FR) catches dangling ids. **Not every test carries an FR marker** — bug regressions trace to issues, unit tests of internals to nothing; only FR-marked tests are cross-checked.
+- Needed from the **first feature MR**; specified here language-agnostically (marker convention + script contract), implemented once Q10 resolves.
 
 ### What must be tested
 
 | Area | Requirement |
 |---|---|
-| Feature requirements | **Every FR maps to ≥ 1 automated test**, traceable via its id (`F-003/FR-2`) in the test name/marker. A feature file's acceptance criteria are the script for its integration/E2E tests. A feature is *done* only when its criteria run unattended in CI. |
+| Feature requirements | **Every FR is verified by its declared method** ([above](#verification-methods-per-fr)), traceable via its id (`F-003/FR-2`) in the test marker, enforced by the [matrix](#requirement-traceability-the-matrix). A feature file's acceptance criteria (`AC-n`) are the script for its integration/E2E tests. A feature is *done* only when its criteria run unattended in CI. |
 | Permissions & auth | Exhaustive, incl. **negative cases**: every endpoint rejects unauthenticated calls; object-level checks (Bob cannot reach Alice's file by id); **permission-aware search from day one** ([07](07-identity-permissions-sharing.md#search-and-permissions)); share-link scope isolation ([F-008](../features/F-008-sharing-and-public-links.md)). |
 | Deletion & trash | Same leak-test rigor as permissions: trashed items appear in **no** default surface — results, facets, counts, autocomplete, duplicate groups — including semantic-only queries ([02 § Invariants](02-domain-model.md#invariants) #7, [F-014](../features/F-014-deletion-and-trash.md)); purge leaves zero domain rows and honors version-blob refcounts; archive downloads re-validate permissions on **every** Range request ([F-016/FR-5](../features/F-016-archive-download.md)). |
-| Domain invariants | Each invariant in [02 § Invariants](02-domain-model.md#invariants) has dedicated tests: originals never modified; provenance stamping; `manual`/`confirmed` survive reprocessing; `rejected` suppresses re-adding; event log written in the same transaction. |
+| Domain invariants | Each invariant in [02 § Invariants](02-domain-model.md#invariants) has dedicated tests: originals never modified; provenance stamping; `manual`/`confirmed` survive reprocessing; `rejected` suppresses re-adding; event log written in the same transaction. Invariants carry stable ids (`02/INV-n`) and appear in the traceability matrix like FRs. |
 | API contract | Responses validate against the OpenAPI schema; problem-details envelope and pagination envelope are shape-tested ([08](08-api-principles.md)). |
 | Migrations | Every migration runs **up and down** in CI against a real database ([10](10-deployment-and-operations.md#upgrades--migrations)). |
-| Search ranking | The golden-query benchmark (Q8) runs as a regression suite — ranking changes are measured, never guessed. |
+| Crash & recovery | Fault-injection proves the promised semantics: worker killed mid-job, duplicate result delivery, orchestrator restart — at-least-once delivery, re-queue on SIGTERM, idempotent result writes, cancellation of superseded jobs ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). |
+| Operations | The restore drill (backup → restore into a fresh stack → smoke suite; Q13) and the upgrade-path test (seed data on the previous tagged release → upgrade → smoke) run scheduled / at release — expand–contract proven in practice, not only up/down. |
+| Search quality & performance | The golden-query benchmark (Q8) runs as a regression suite over the ground-truth corpus with declared metrics and thresholds — ranking changes are measured, never guessed. The same runs are the `benchmark` verification for statistical and performance FRs (e.g. [F-002/FR-10](../features/F-002-hybrid-search.md), latency on reference hardware — Q27). |
+
+### Test infrastructure
+
+- **Ground-truth corpus** — a versioned fixture set with a machine-readable manifest of each fixture's truth: PDFs with known phrases on known pages, images with known objects, audio/video with utterances at known timestamps — plus the adversarial set: unicode and case-colliding names (Q25), symlink layouts (Q22), zip-slip archive entries, corrupt / zero-byte / oversized files. One corpus feeds FR tests, the golden-query benchmark, and the conformance kit. Fixtures must be redistributable (Q28).
+- **Reference extractor** — deterministic and instant, shipped with the conformance kit. Triple duty: E2E test double, executable example for third-party extractor authors, and the image the kit validates itself against.
+- **Mutation testing** *(later)* — scheduled and scoped to the security-critical core (authz, permission-aware search, share links) as a machine check on test quality (Q29). Deliberately post-v1.
 
 ### Coverage
 
+- The primary number is **coverage of requirements** — the matrix's share of FRs verified by their declared method; line coverage is the floor beneath it.
 - CI gate: **≥ 85 % line coverage** project-wide. The gate only ratchets up — coverage never decreases.
 - Security-critical code (authz checks, permission-aware search, share links, token handling) is **not** satisfied by a number: exhaustive tests including negative cases, reviewed as such.
 - Coverage is a floor, not a target — tests exist to catch regressions, not to color lines green.
@@ -112,8 +147,8 @@ Every change is made with the whole project in view. "It works now" is not a bar
 
 A task is done when every line is honestly true — or explicitly marked N/A in the MR:
 
-- [ ] Feature file exists / is updated; acceptance criteria & FRs demonstrably met — **by tests, not by hand**.
-- [ ] Tests added/changed/removed to match the behaviour; full suite green in CI; coverage gate met.
+- [ ] Feature file exists / is updated; acceptance criteria & FRs demonstrably met — **by tests, not by hand**; the traceability matrix is green for every touched FR.
+- [ ] Tests added/changed/removed to match the behaviour; full suite green in CI; coverage gate met. New/changed tests **fail when their requirement is violated** (spot-checked in review); "never/only" guarantees have negative tests.
 - [ ] Shared layer checked before anything new was built; extractions follow the [four tests](#when-to-abstract--four-tests); required refactors done in scope — no quick fixes, no unrecorded debt ([reuse](#code-reuse--shared-modules), [refactor over quick fix](#refactor-over-quick-fix)).
 - [ ] All affected docs updated **in this change** (feature file, specs, OpenAPI, README, user-facing docs, OPEN-QUESTIONS).
 - [ ] API changes are additive within the major; schema regenerated; generated clients not stale ([08](08-api-principles.md)).
@@ -144,6 +179,8 @@ The feature template links this checklist; feature-specific criteria come **on t
 
 ## CI pipeline (the enforcement list)
 
-All blocking: lint + format check · type check · unit tests · integration tests (real PostgreSQL + pgvector) · migrations up/down · extractor conformance kit (official extractors) · E2E headless · coverage gate (≥ 85 %, ratcheting) · OpenAPI schema in sync + generated clients not stale · commit-format check · secret scan · dependency vulnerability scan · image scan (core + official extractor images) · SBOM generation.
+All blocking: lint + format check · type check · unit tests · integration tests (real PostgreSQL + pgvector) · migrations up/down · fault-injection suite · **traceability matrix gate** · spec lint (FR format; vague-word warnings) · extractor conformance kit (official extractors) · E2E headless · coverage gate (≥ 85 %, ratcheting) · OpenAPI schema in sync + generated clients not stale · commit-format check · secret scan · dependency vulnerability scan · image scan (core + official extractor images) · SBOM generation.
+
+Scheduled / release-gating rather than per-MR: benchmark suite against its thresholds (Q8, Q27) · upgrade-path test from the previous tagged release · restore drill (once Q13 resolves) · mutation run on the authz core (later, Q29).
 
 Advisory (non-blocking): copy-paste/duplication report — input to the [reuse check](#code-reuse--shared-modules) in review, not a gate.
