@@ -77,6 +77,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/files/{id}/activity          audit trail for one file (F-011)
 /api/v1/search                       hybrid search (06-search.md)
 /api/v1/duplicates                   duplicate groups, permission-scoped (F-013)
+/api/v1/views                        saved views & library pages (F-017): system + personal,
+                                     per-user nav state; executed via POST /search — no own results endpoint
 /api/v1/archives                     archive a selection (F-016); {id}/content = Range download
 /api/v1/tags/…                       taxonomy (DAG), aliases, autocomplete; admin approve/reject suggestions
 /api/v1/shares/…                     share links
@@ -141,7 +143,8 @@ flowchart LR
     end
 
     subgraph SG["Search & Tags"]
-        SEARCH["POST /search<br/>(hybrid, filters, version scope)"]
+        SEARCH["POST /search<br/>(hybrid, filters, sort, version scope)"]
+        VIEWS["GET·POST /views · GET·PATCH·DELETE /views/{id}<br/>(saved views & library pages;<br/>members set hidden·position,<br/>system-view definitions ⚙)"]
         DUPS["GET /duplicates<br/>(groups, bulk resolve)"]
         TAGS["GET /tags?prefix=…<br/>(autocomplete: prefix + similarity)"]
         TAX["GET·POST·PATCH /tags ⚙<br/>(taxonomy DAG, aliases,<br/>suggestions approve·reject)"]

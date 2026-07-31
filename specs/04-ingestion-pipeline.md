@@ -39,6 +39,19 @@ Triggers: API upload completed · workspace import scan · re-scan reconciliatio
 ### 2. Identification
 Compute content hash → create/find `FileVersion`. If a version with identical hash was already fully extracted (e.g. a copy of an existing file), extraction results can be **reused** instead of recomputed — recorded as this file's own derived data, sourced from the cached run.
 
+Identification also assigns the **media class** — a well-known metadata value ([02](02-domain-model.md#metadataentry)) derived from the detected MIME type by this core-owned mapping, present before any extractor runs so type-scoped listings work the moment a file appears ([F-002/FR-15](../features/F-002-hybrid-search.md), [F-017](../features/F-017-views.md)):
+
+| Class | MIME rule |
+|---|---|
+| `image` | `image/*` |
+| `video` | `video/*` |
+| `audio` | `audio/*` |
+| `document` | `text/*` · `application/pdf` · office, OpenDocument, RTF, EPUB families |
+| `archive` | zip, tar, gzip, bzip2, xz, 7z, rar |
+| `other` | everything else, including undetectable MIME |
+
+The exact MIME list ships with the core and is versioned with it; a mapping change on upgrade re-derives stored classes directly in the database — a metadata update, never an extraction re-run.
+
 ### 3. Routing
 The orchestrator matches the file against **registered extractor capabilities** (declared MIME types/extensions + produced output kinds — see [05-extractor-contract.md](05-extractor-contract.md)). Only matching extractors get jobs — a PDF never visits the transcriber. Routing also handles **chaining**: some extractors consume other extractors' outputs, not (only) the original file:
 

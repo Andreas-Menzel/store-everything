@@ -23,6 +23,7 @@ erDiagram
     TAG ||--o{ FILE_TAG : "applied as"
     TAG }o--o{ TAG : "child of (DAG)"
     USER ||--o{ EVENT : "acts — event log"
+    USER |o--o{ VIEW : "saves (ownerless = system view)"
     FILE_VERSION ||--o{ METADATA_ENTRY : "described by"
     FILE_VERSION ||--o{ SEGMENT : "split into"
     FILE_VERSION ||--o{ EXTRACTION_RUN : "processed by"
@@ -96,7 +97,7 @@ A typed key–value fact about a file version. Carries the same provenance stamp
 | `geo` (lat/lon) | `gps` | radius / bounding box → map view |
 | `json` (structured, opaque) | `detected_objects` (boxes, labels, confidences) | stored/retrievable; queryable *projections* are emitted separately (labels → tags) |
 
-**Well-known key registry:** keys like `gps`, `taken_at`, `duration`, `dimensions`, `language` have a core-defined fixed type and unit. Any extractor may emit them; built-in features (map, timeline, duration filters) build on the *keys*, not on specific extractors. Unknown keys are still stored, typed, and searchable — they just don't power built-in UI.
+**Well-known key registry:** keys like `gps`, `taken_at`, `duration`, `dimensions`, `language` have a core-defined fixed type and unit. Any extractor may emit them; built-in features (map, timeline, duration filters) build on the *keys*, not on specific extractors. Unknown keys are still stored, typed, and searchable — they just don't power built-in UI. One key is core-assigned rather than extracted: **`class`** — the coarse media class (`image | video | audio | document | archive | other`), derived from the detected MIME type at identification ([04](04-ingestion-pipeline.md#2-identification)) so it exists before any extractor runs; the default library pages ([F-017](../features/F-017-views.md)) build on it.
 
 Structured detections (objects, scenes) are stored as `json` metadata *and* surfaced as `auto` tags for searchability.
 
@@ -129,6 +130,9 @@ The append-only **event log** ([ADR-0007](../decisions/ADR-0007-unified-event-lo
 
 ### Permission / ShareLink
 See [07-identity-permissions-sharing.md](07-identity-permissions-sharing.md). `Permission` grants a user a role (`read`/`write`/…) on a workspace, a folder (by UUID — the grant survives rename and move, evaluated via the folder closure), or a file. `ShareLink` is a public, token-based download link with optional expiry/password; links on trashed files are suspended, not revoked ([F-014/FR-11](../features/F-014-deletion-and-trash.md)).
+
+### View
+A named, stored search request plus presentation hints ([F-017](../features/F-017-views.md)): owner (null for instance-provided **system views** — the seeded library pages), `name`, `request` (validated against the `POST /search` schema and executable verbatim), `layout` (`grid | list | map | timeline`). Views hold configuration only, never results — execution is an ordinary permission-filtered search, so a view grants nothing ([F-017/FR-5](../features/F-017-views.md)). Per-user navigation state (`hidden`, `position`) is stored per *(user, navigation entry)* and also covers the dedicated pages (browse, trash, duplicates), which are not views ([F-017 § What is a view](../features/F-017-views.md#what-is-a-view--and-what-is-not)).
 
 ## Invariants
 

@@ -24,6 +24,7 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-014](F-014-deletion-and-trash.md) | Deletion & trash | Draft | P1 |
 | [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | Draft | P0 |
 | [F-016](F-016-archive-download.md) | Archive download (folders & selections) | Draft | P1 |
+| [F-017](F-017-views.md) | Views (saved searches & library pages) | Draft | P1 |
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
 

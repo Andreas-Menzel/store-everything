@@ -19,7 +19,7 @@ One search API over everything the system knows: exact text/phrases, file names,
 ## Functional requirements
 
 - **FR-1** Exact mode: exact phrase over extracted text, exact/substring file-name search, exact metadata key/value, tag filters (hierarchy-expanding by default with `exact` opt-out — [ADR-0006](../decisions/ADR-0006-hierarchical-tags-dag.md)). Deterministic.
-- **FR-2** Typed metadata filters support equality and ranges: datetime, number, geo(later), string.
+- **FR-2** Typed metadata filters support equality and ranges: datetime, number, string. Geo predicates: FR-17.
 - **FR-3** Semantic mode: query is embedded per targeted space (`text-v1`, `clip-v1`) and matched via ANN; spaces are never cross-compared.
 - **FR-4** Hybrid mode (default): keyword + semantic branches fused (RRF); exact-phrase hits rank above purely-semantic hits.
 - **FR-5** Results are grouped per file with per-segment matches carrying anchors (page / timestamp / line / region) and highlighted snippets.
@@ -32,14 +32,18 @@ One search API over everything the system knows: exact text/phrases, file names,
 - **FR-12** Tags with status `suggested` are excluded from search matching, facets, and autocomplete until approved.
 - **FR-13** Lifecycle state scope defaults to `live`: trashed items never appear in results, facets, counts, or autocomplete — enforced inside every query branch, including ANN ([F-014/FR-12](F-014-deletion-and-trash.md), [06](../specs/06-search.md#lifecycle-state-scope)). Opt-in `state: trashed | all` returns labeled hits, permission-checked like the trash listing.
 - **FR-14** Folders are returned as folder-typed results, matched by name, tags, and metadata ([F-015/FR-10](F-015-folders.md)).
+- **FR-15** Every file version carries exactly one core-assigned media `class` ∈ `image | video | audio | document | archive | other` ([04](../specs/04-ingestion-pipeline.md#2-identification)), filterable and returned as a facet — available the moment the file is listed, before any extraction ([F-001/FR-8](F-001-upload-and-import.md)).
+- **FR-16** **Listing mode:** a request with no query text (filters only) is valid; results are ordered by an explicit `sort` — `name`, `size`, `mtime`, `ingested` (version registration time), or a range-typed well-known metadata key (`taken_at`, `duration`) — ascending or descending, entries missing the key ordered last, ties broken by file id; cursor pagination (FR-11) is stable under every sort. Folder-typed results join a listing only when the request filters on folder-matchable fields (name, tag, metadata) — a bare listing returns files. All permission, version, and lifecycle rules apply unchanged.
+- **FR-17** Geo filters: bounding-box and radius predicates over geo-typed metadata (well-known key `gps` — [02](../specs/02-domain-model.md#metadataentry)) combine with every mode and filter, enforced inside each query branch like FR-7 and FR-13.
+- **FR-18** **Geo grid aggregation:** a request may ask for aggregation over a bounding box at a zoom level; the response buckets matching files into grid cells, each with a count and one representative file id, returning individual results instead for cells at or below an item threshold (default 25, request-overridable up to a documented cap). Cell counts obey FR-7 and FR-13 exactly like facet counts: an unreadable or trashed file is absent from every cell and every count. This is what the [F-017](F-017-views.md) map layout executes.
 
 ## API surface
 
-`POST /search` (query, mode, filters, version scope, state scope, cursor) — see result shape sketch in [06-search](../specs/06-search.md#result-shape-api-sketch).
+`POST /search` (query, mode, filters, sort, version scope, state scope, geo aggregation, cursor) — see result shape sketch in [06-search](../specs/06-search.md#result-shape-api-sketch). Views ([F-017](F-017-views.md)) store these requests verbatim and re-execute them through this same endpoint.
 
 ## Out of scope
 
-Query-language UI niceties (saved searches, query builder) — later, as API consumers. Cross-instance search. Relevance-feedback learning.
+Query-builder UI (a client concern) — saved searches themselves are specified in [F-017](F-017-views.md). Cross-instance search. Relevance-feedback learning.
 
 ## Open questions
 
@@ -54,3 +58,6 @@ Query-language UI niceties (saved searches, query builder) — later, as API con
 - Exact filename search finds a file among millions in interactive time.
 - Searching `tag:nature` finds a file tagged only `tree` (a descendant in the taxonomy); the same query with `exact: true` does not.
 - A trashed file matching the query appears only with `state: trashed`/`all` (labeled), never by default — verified across results, facets, and counts like a permission leak test.
+- `class: video` with no query text and `sort: mtime desc` lists every readable video newest-first in stable cursor order — including videos whose extraction is still pending.
+- A radius filter (`gps` within 5 km of a point) combined with `class: image` and a tag filter returns only files satisfying all three.
+- A bounding-box aggregation over a city returns grid cells whose counts cover only readable, live files; for a caller without access to any of them the same request returns no cells (leak test).
