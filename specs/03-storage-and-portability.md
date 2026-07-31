@@ -35,6 +35,10 @@ v1 spec work focuses on `local`; the workspace model carries the `source` field 
   users/{user}/
     workspaces/{workspace}/
       .workspace/             ← marker: workspace UUID, source type/config
+        staging/              ← write staging (uploads, app-mediated writes):
+                                same filesystem as data/ → atomic rename into
+                                place; skipped by scans, janitor-cleaned
+                                (12-reliability.md, Q31)
       data/                   ← the actual file tree (local content, or the
                                 mirror of an external source)
 
@@ -60,6 +64,8 @@ Users bring an existing folder tree ("we will import the file structure the user
 ## Uploads
 
 Uploading through the API writes the file to the target workspace path on the source storage — an upload and a file copied onto the NAS by hand converge to the same state after reconciliation. Uploads support large files (resumable/chunked; 10 TB scale includes multi-GB videos).
+
+Upload mechanics are crash-safe per [12](12-reliability.md#filesystem-write-protocol): chunks accumulate in the workspace's `.workspace/staging/` area — the same filesystem as the destination, so finalizing is an atomic rename — with received bytes tracked in a durable upload-session row; an interrupted upload resumes from the last acknowledged offset, an abandoned one expires and is janitor-collected. Finalize verifies the content hash, renames into place, and creates the `FileVersion` plus extraction jobs in one transaction.
 
 ## The auto-sort inbox (deferred feature, keep possible)
 
@@ -88,3 +94,4 @@ In-app deletion is **logically instant, physically deferred** ([F-014](../featur
 
 - Every version gets a content hash at ingest; re-scan can verify (bit-rot detection on demand).
 - Hash equality is used to skip redundant re-extraction (same bytes → reuse extraction results, still recorded per file).
+- The admin `verify` audit ([12](12-reliability.md#verification)) extends this to the app-owned areas: every referenced blob exists (with hash spot-checks), every unreferenced blob is younger than the janitor's grace window, version-blob refcounts add up.

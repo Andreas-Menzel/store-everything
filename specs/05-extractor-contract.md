@@ -61,9 +61,9 @@ stateDiagram-v2
     succeeded --> [*]
 ```
 
-A job request contains: job id, idempotency key, file reference(s), file version id + content hash, MIME type, generation, and extractor-specific params. Whether dispatch is push (core → extractor HTTP call) or poll (extractor pulls from queue) is Q5, together with chaining declaration details.
+A job request contains: job id, idempotency key, **attempt** (the delivery's fencing token — [12](12-reliability.md#leases--fencing)), file reference(s), file version id + content hash, MIME type, generation, and extractor-specific params. Whether dispatch is push (core → extractor HTTP call) or poll (extractor pulls from queue) is Q5, together with chaining declaration details — noting that poll composes more naturally with the lease/heartbeat/fencing model than push.
 
-Restarts are routine, not failures: delivery is **at-least-once** — on orchestrator shutdown (SIGTERM: upgrade, restart) unfinished jobs are re-queued, and result submission is deduplicated via the job's idempotency key, so a job that completes twice persists once. Extractors receive cancellation for superseded jobs.
+Restarts are routine, not failures: delivery is **at-least-once** ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)) — a lost orchestrator or extractor just means the job's lease expires and it is re-dispatched. Progress updates double as **heartbeats** (they keep the lease alive) and as the **cancellation channel** (the response tells the extractor to stop: user cancel, supersession by a newer generation). Result submission carries (job id, attempt) and is applied in one guarded transaction: a re-run converges on the same rows via the idempotency key, and a submission from a superseded attempt or generation is rejected — a job that completes twice persists once, a zombie's late result persists never. Large result payloads submit two-phase: derived assets staged by content hash first, then one envelope referencing them (wire details: Q5).
 
 ## Result envelope
 

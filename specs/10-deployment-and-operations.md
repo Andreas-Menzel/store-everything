@@ -67,7 +67,16 @@ Rules:
 - Every schema change ships as a **versioned migration** committed with the code — never hand-run DDL against a live database.
 - Migrations are **expand–contract**: the *previous* app version must run against the migrated schema, because rollback is "redeploy the previous image".
 - Both directions (`up` **and** `down`) are tested in CI ([11](11-engineering-standards.md#testing)).
+- Migrations are **crash-safe**: transactional where PostgreSQL allows (one migration = one transaction); non-transactional steps (`CREATE INDEX CONCURRENTLY`, …) must be internally idempotent (`IF NOT EXISTS`-style guards) so a run killed halfway converges on retry. A **single-runner lock** keeps two containers racing at startup from double-applying ([12](12-reliability.md#startup-deploys-shutdown)).
 - *When* migrations execute (automatically at startup with a pre-flight dump vs. an explicit separate step) is open — Q20.
+
+## Crash resistance (ops view)
+
+The app is **crash-only** ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md)): stopping it at any moment — `docker compose down`, `kill -9`, power loss — is safe, and interrupted work resumes after restart. Operationally that means:
+
+- **PostgreSQL durability is non-negotiable:** `fsync = on` and `synchronous_commit = on` (the defaults) stay on; WAL lives on reliable storage. Every guarantee in [12](12-reliability.md) stands on the database not lying about commits.
+- **`stop_grace_period` is sized for checkpoint-and-release (seconds), never for job duration.** A graceful stop just releases leases so the successor resumes instantly; a hard kill merely waits out lease expiry.
+- **Crash resistance is not backup** (Q13): leases and idempotent recovery survive *process* death, not *disk* death.
 
 ## Disk space
 

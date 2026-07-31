@@ -1,7 +1,7 @@
 # 01 — Architecture Overview
 
 **Status:** Draft
-**Related ADRs:** [ADR-0001](../decisions/ADR-0001-postgresql-single-datastore.md), [ADR-0002](../decisions/ADR-0002-extractor-containers-fixed-api.md), [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md), [ADR-0005](../decisions/ADR-0005-single-server-docker-network.md), [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md)
+**Related ADRs:** [ADR-0001](../decisions/ADR-0001-postgresql-single-datastore.md), [ADR-0002](../decisions/ADR-0002-extractor-containers-fixed-api.md), [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md), [ADR-0005](../decisions/ADR-0005-single-server-docker-network.md), [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md), [ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)
 
 ## Components
 
@@ -66,13 +66,14 @@ flowchart TB
 3. **Everything async that touches content.** Extraction jobs run minutes-to-hours on CPU-only hardware. Upload/import never blocks on analysis; search facets appear as extraction completes ("this facet is pending", never "ingestion failed").
 4. **Deployment target:** everything on one server in one Docker Compose setup, extractors on a shared Docker network (ADR-0005), behind an **existing external Traefik** — only the API container attaches to its network (ADR-0009, [10](10-deployment-and-operations.md)). The extractor contract must not *assume* co-location (file access is by reference), so moving extractors to other hosts later is a configuration change, not a redesign.
 5. **GPU optional.** Extractors declare whether they can use a GPU; the same container must run (slower) on CPU-only hosts.
+6. **Crash-only.** Any process may be killed at any instant without corruption, lost work, or duplicated effects: effectful operations are recorded durably before they start, every effect is idempotent, and recovery is the normal execution path — graceful shutdown is an optimization, never a correctness requirement ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12-reliability.md](12-reliability.md)).
 
 ## Technology direction (proposed, not final)
 
 | Concern | Proposal | Why |
 |---|---|---|
 | Datastore | PostgreSQL + pgvector | One dependency, transactional consistency between permissions and index (ADR-0001) |
-| Job queue | PostgreSQL `SKIP LOCKED` | No extra broker; queue state in the same transaction as domain state |
+| Job queue | PostgreSQL `SKIP LOCKED` claims + leases/fencing | No extra broker; queue state in the same transaction as domain state; crash-safe ownership ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md#leases--fencing)) |
 | Text embedding | Local sentence-embedding model (CPU-capable) | Semantic doc search |
 | Image/text shared space | CLIP-class local model | "Photo of my dog at the beach" → image match |
 | Transcription | Whisper-class local model | Video/voice/MP3 → text with timestamps |

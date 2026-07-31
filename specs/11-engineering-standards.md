@@ -85,6 +85,7 @@ Every change is made with the whole project in view. "It works now" is not a bar
 | **Integration** | API endpoints, queries, migrations, job queue | **real** PostgreSQL + pgvector in throwaway containers — no mocks-that-lie |
 | **Contract** | extractor conformance kit: manifest, job lifecycle, result envelope — runnable against **any** extractor image, incl. third-party ones | the extractor image under test |
 | **E2E** | compose up → upload → extract (stub extractor for speed) → search → share; web-UI flows | the full stack |
+| **Fault-injection** | kill the process at fault points around every filesystem mutation and state transition, restart, assert convergence: terminal state reached, no debris past grace windows, no duplicated effects or events ([12](12-reliability.md#verification)) — the home of the `fault-injection` verification method | real PostgreSQL + scratch filesystem |
 
 - **Headless by default.** Every test — including E2E/UI — runs unattended in CI. A check a human has to remember is not a test.
 - **UI mode on demand.** The E2E/UI layer must also run headed, in a "UI mode" (watch the browser act, step through, inspect traces — e.g. Playwright's UI mode; tool choice open until the frontend stack is fixed — Q26). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
@@ -100,7 +101,7 @@ Every FR is verified by a **declared method**; the feature file marks any FR who
 |---|---|---|
 | `test` *(default, unmarked)* | Deterministic automated test. Default home: the **integration layer, through the public API** — API-first makes the API the falsification surface. Unit for pure logic; E2E stays a thin smoke path. | per MR, blocking |
 | `benchmark` | Threshold-scored suite over the ground-truth corpus: quality metrics for statistical FRs (recall@k / NDCG — Q8), latency percentiles on reference hardware (Q27) for performance FRs (e.g. [F-002/FR-10](../features/F-002-hybrid-search.md)). Model versions pinned; trends tracked. | scheduled + pre-release; release-blocking |
-| `fault-injection` | Crash-semantics tests: worker killed mid-job, duplicate result delivery, orchestrator restart ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). | per MR, blocking |
+| `fault-injection` | Crash-semantics tests: worker killed mid-job, duplicate result delivery, orchestrator restart — generalized by the crash-only harness to every effectful operation ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle), [12](12-reliability.md#verification)). | per MR, blocking |
 | `drill` | Exercised procedure: restore — backup → restore into a fresh stack → smoke suite (Q13); upgrade-path — seed data on the previous tagged release → upgrade → smoke ([10](10-deployment-and-operations.md#upgrades--migrations)). | scheduled; release-blocking |
 
 A test satisfies an FR only if it **fails when the FR is violated** — for "never / only / no" guarantees the negative case *is* the required test, not an extra.
@@ -126,7 +127,7 @@ FR ids in test markers make requirement coverage checkable; the matrix makes it 
 | Domain invariants | Each invariant in [02 § Invariants](02-domain-model.md#invariants) has dedicated tests: originals never modified; provenance stamping; `manual`/`confirmed` survive reprocessing; `rejected` suppresses re-adding; event log written in the same transaction. Invariants carry stable ids (`02/INV-n`) and appear in the traceability matrix like FRs. |
 | API contract | Responses validate against the OpenAPI schema; problem-details envelope and pagination envelope are shape-tested ([08](08-api-principles.md)). |
 | Migrations | Every migration runs **up and down** in CI against a real database ([10](10-deployment-and-operations.md#upgrades--migrations)). |
-| Crash & recovery | Fault-injection proves the promised semantics: worker killed mid-job, duplicate result delivery, orchestrator restart — at-least-once delivery, re-queue on SIGTERM, idempotent result writes, cancellation of superseded jobs ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). |
+| Crash & recovery | Fault-injection proves the promised semantics: worker killed mid-job, duplicate result delivery, orchestrator restart, zombie write-back after lease expiry — at-least-once delivery, lease reclaim + fencing, idempotent result writes, cancellation of superseded jobs ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). Every operation type in the [12 § inventory](12-reliability.md#operation-inventory) has kill-and-restart coverage via the fault-injection harness ([F-001](../features/F-001-upload-and-import.md)'s "kill the importer mid-run" criterion, generalized); the `verify` audit ([12](12-reliability.md#verification)) runs clean after every such test. |
 | Operations | The restore drill (backup → restore into a fresh stack → smoke suite; Q13) and the upgrade-path test (seed data on the previous tagged release → upgrade → smoke) run scheduled / at release — expand–contract proven in practice, not only up/down. |
 | Search quality & performance | The golden-query benchmark (Q8) runs as a regression suite over the ground-truth corpus with declared metrics and thresholds — ranking changes are measured, never guessed. The same runs are the `benchmark` verification for statistical and performance FRs (e.g. [F-002/FR-10](../features/F-002-hybrid-search.md), latency on reference hardware — Q27). |
 
@@ -175,7 +176,7 @@ The feature template links this checklist; feature-specific criteria come **on t
 
 - Pin and lock everything; commit the lockfile — reproducible builds, always.
 - A new dependency (or a swap of an established one) needs a deliberate, recorded justification.
-- 12-factor throughout: config from the environment; stateless processes (state lives in PostgreSQL); logs to stdout ([10](10-deployment-and-operations.md#logging)); graceful shutdown on SIGTERM — which for hours-long extraction jobs means re-queue, at-least-once delivery, idempotent result writes ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)).
+- 12-factor throughout: config from the environment; stateless processes (state lives in PostgreSQL); logs to stdout ([10](10-deployment-and-operations.md#logging)); graceful shutdown on SIGTERM — which for hours-long extraction jobs means re-queue, at-least-once delivery, idempotent result writes ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). SIGTERM handling is an optimization only — `kill -9` must be exactly as safe ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md)).
 
 ## CI pipeline (the enforcement list)
 
