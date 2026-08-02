@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** —
 **Related specs:** [07-identity-permissions-sharing](../specs/07-identity-permissions-sharing.md), [ADR-0007](../decisions/ADR-0007-unified-event-log.md)
 

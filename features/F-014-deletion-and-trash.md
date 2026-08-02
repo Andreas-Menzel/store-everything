@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-001, F-007, F-015
 **Related specs:** [02-domain-model](../specs/02-domain-model.md#file) (lifecycle state), [03-storage-and-portability](../specs/03-storage-and-portability.md#deletion--trash), [06-search](../specs/06-search.md#lifecycle-state-scope), [07-identity-permissions-sharing](../specs/07-identity-permissions-sharing.md#deletion-trash-purge), [10-deployment-and-operations](../specs/10-deployment-and-operations.md#disk-space), [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md), [ADR-0007](../decisions/ADR-0007-unified-event-log.md)
 

@@ -36,4 +36,5 @@ Rules that bite when writing FRs (full list in [features/README.md](features/REA
 - **Negative space is its own FR** — what must never happen (permission leaks, modified originals) gets its own requirement and negative test.
 - **Ids are append-only** — removed FRs stay as tombstones; changing meaning = new FR + tombstone. Cross-feature references cite exact ids (`F-014/FR-12`).
 - FRs not verifiable by a plain deterministic test declare a method inline: `*(verify: benchmark)*`, `*(verify: fault-injection)*`, `*(verify: drill)*`.
+- **Client applicability is declared** — every feature carries `Clients:` (mirrored in the index); narrower than `all` needs a one-line platform-capability reason, and the tag never restricts API access (UI-surface obligation only).
 - Feature statuses: `Draft` → `Review` → `Approved` → `Implemented` (+ `Deferred`). `Implemented` is **computed** by the traceability matrix, never claimed.

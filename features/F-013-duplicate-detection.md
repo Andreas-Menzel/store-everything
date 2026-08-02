@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-001 (content hashes)
 **Related specs:** [02-domain-model](../specs/02-domain-model.md#fileversion)
 

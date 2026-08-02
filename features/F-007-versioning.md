@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-001
 **Related specs:** [03-storage-and-portability](../specs/03-storage-and-portability.md#versioning-vs-the-folder-is-everything-known-tension), [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md)
 

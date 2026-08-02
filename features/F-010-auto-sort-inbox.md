@@ -2,6 +2,7 @@
 
 **Status:** Deferred (design sketch — v1 only guarantees the primitives)
 **Priority:** P2
+**Clients:** all
 **Depends on:** F-001, F-002; move API ([08-api-principles](../specs/08-api-principles.md))
 **Related specs:** [03-storage-and-portability](../specs/03-storage-and-portability.md#the-auto-sort-inbox-deferred-feature-keep-possible)
 

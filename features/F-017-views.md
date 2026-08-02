@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** [F-002](F-002-hybrid-search.md) (a view stores a search request), [F-015](F-015-folders.md) (folder results navigate into browse), [F-005](F-005-image-analysis.md) (`gps` metadata feeds the map)
 **Related specs:** [06-search](../specs/06-search.md#views-stored-requests), [02-domain-model](../specs/02-domain-model.md#view), [04-ingestion-pipeline](../specs/04-ingestion-pipeline.md#2-identification) (media class), [08-api-principles](../specs/08-api-principles.md)
 

@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P0
+**Clients:** all
 **Depends on:** F-003, F-004, F-005, F-006 (each adds searchable facets)
 **Related specs:** [06-search](../specs/06-search.md), [02-domain-model](../specs/02-domain-model.md)
 

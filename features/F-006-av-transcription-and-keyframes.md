@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-001, F-005
 **Related specs:** [04-ingestion-pipeline](../specs/04-ingestion-pipeline.md)
 

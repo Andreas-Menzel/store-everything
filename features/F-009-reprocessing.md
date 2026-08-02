@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-003, F-004, F-005, F-006
 **Related specs:** [04-ingestion-pipeline](../specs/04-ingestion-pipeline.md#reprocessing-generations), [ADR-0004](../decisions/ADR-0004-tag-provenance-and-reprocessing.md)
 

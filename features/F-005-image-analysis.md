@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P0
+**Clients:** all
 **Depends on:** F-001, F-003
 **Related specs:** [04-ingestion-pipeline](../specs/04-ingestion-pipeline.md), [05-extractor-contract](../specs/05-extractor-contract.md)
 

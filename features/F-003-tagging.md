@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P0
+**Clients:** all
 **Depends on:** —
 **Related specs:** [02-domain-model](../specs/02-domain-model.md#tag--filetag), [ADR-0004](../decisions/ADR-0004-tag-provenance-and-reprocessing.md)
 

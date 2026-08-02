@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P0
+**Clients:** all
 **Depends on:** F-001
 **Related specs:** [02-domain-model](../specs/02-domain-model.md#folder), [03-storage-and-portability](../specs/03-storage-and-portability.md), [06-search](../specs/06-search.md), [07-identity-permissions-sharing](../specs/07-identity-permissions-sharing.md#ownership-and-permissions), [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md), [ADR-0006](../decisions/ADR-0006-hierarchical-tags-dag.md) (closure-table pattern)
 

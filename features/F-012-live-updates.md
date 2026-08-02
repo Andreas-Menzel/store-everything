@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-011 (shared event log)
 **Related specs:** [08-api-principles](../specs/08-api-principles.md), [ADR-0007](../decisions/ADR-0007-unified-event-log.md)
 

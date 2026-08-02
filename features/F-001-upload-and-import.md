@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P0
+**Clients:** all
 **Depends on:** —
 **Related specs:** [03-storage-and-portability](../specs/03-storage-and-portability.md), [04-ingestion-pipeline](../specs/04-ingestion-pipeline.md)
 

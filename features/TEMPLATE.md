@@ -2,6 +2,7 @@
 
 **Status:** Draft | Review | Approved | Implemented | Deferred
 **Priority:** P0 | P1 | P2
+**Clients:** all · or a subset of web, Android, iOS — with a one-line reason when not `all` ([rule 9](README.md#writing-frs))
 **Depends on:** F-XXX, …
 **Related specs:** …
 

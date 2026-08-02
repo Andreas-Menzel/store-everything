@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Priority:** P1
+**Clients:** all
 **Depends on:** F-001
 **Related specs:** [07-identity-permissions-sharing](../specs/07-identity-permissions-sharing.md)
 
