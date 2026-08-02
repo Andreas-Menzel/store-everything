@@ -24,7 +24,7 @@ The authoritative workflow, testing rules, Definition of Done, and CI gates live
 
 | Location | Content | Hard rules |
 |---|---|---|
-| `specs/00-…-11-….md` | Numbered system specs: vision, architecture, domain model, storage, ingestion, extractor contract, search, identity/permissions, API principles, previews, deployment, engineering standards | Cross-reference by relative link; update in the same change as any behavior change |
+| `specs/00-…-13-….md` | Numbered system specs: vision, architecture, domain model, storage, ingestion, extractor contract, search, identity/permissions, API principles, previews, deployment, engineering standards, reliability, mobile clients | Cross-reference by relative link; update in the same change as any behavior change |
 | `features/F-NNN-slug.md` | One file per user-facing feature, from `features/TEMPLATE.md`; FRs referenced as `F-002/FR-4` | FR authoring rules in [features/README.md](features/README.md#writing-frs); keep the index table in `features/README.md` in sync |
 | `decisions/ADR-NNNN-slug.md` | Architecture decision records | **Immutable once accepted** — changing a decision means a new ADR that supersedes the old one; keep the index in `decisions/README.md` in sync |
 | `OPEN-QUESTIONS.md` | Deferred decisions Q1, Q2, … | Numbers are stable, never reused or renumbered; resolved questions keep their row, marked ✅ with a link to the deciding ADR/spec |

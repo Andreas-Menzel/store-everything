@@ -55,7 +55,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 ## Resource sketch (v1 surface, non-exhaustive)
 
 ```
-/api/v1/auth/…                       login, tokens
+/api/v1/auth/…                       login, tokens; device pairing: POST /auth/pairing-codes
+                                     (create one-time code) · POST /auth/pairing (exchange, public — F-019)
 /api/v1/users/…                      admin user management
 /api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan;
                                      DELETE requires confirm:"<name>" → restorable trash batch (F-014)
@@ -75,6 +76,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/files/{id}/move              move/rename (first-class: auto-sort builds on this)
 /api/v1/files/{id}/restore · purge   deletion lifecycle; DELETE /files/{id} → trash (F-014)
 /api/v1/files/{id}/activity          audit trail for one file (F-011)
+/api/v1/files/hash-check             batch content-hash existence check, scoped to the
+                                     caller's owned live files (F-021)
 /api/v1/search                       hybrid search (06-search.md)
 /api/v1/duplicates                   duplicate groups, permission-scoped (F-013)
 /api/v1/views                        saved views & library pages (F-017): system + personal,
@@ -96,7 +99,7 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 ## Endpoint map (visual)
 
-⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `GET /shares/{token}`, `/healthz`, `/readyz` — any other public endpoint is a spec bug.
+⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `GET /shares/{token}`, `POST /auth/pairing` (one-time code is the credential — [07](07-identity-permissions-sharing.md#tokens--credentials), [F-019/FR-3](../features/F-019-mobile-connection.md)), `/healthz`, `/readyz` — any other public endpoint is a spec bug.
 
 ```mermaid
 flowchart LR
@@ -105,6 +108,7 @@ flowchart LR
     subgraph AUTHG["Auth & Users"]
         LOGIN["POST /auth/login"]
         TOKENS["GET·POST·DELETE /auth/tokens<br/>(scoped personal access tokens)"]
+        PAIR["POST /auth/pairing-codes<br/>POST /auth/pairing 🌐<br/>(one-time QR device pairing, F-019)"]
         USERS["GET·POST·PATCH /users ⚙"]
     end
 
@@ -140,6 +144,7 @@ flowchart LR
         FACT["GET /files/{id}/activity<br/>(audit for one file)"]
         FREP["POST /files/{id}/reprocess"]
         FDEL["DELETE /files/{id} → trash<br/>POST …/restore · POST …/purge"]
+        FHASH["POST /files/hash-check<br/>(batch existence by content hash, F-021)"]
     end
 
     subgraph SG["Search & Tags"]
@@ -189,6 +194,6 @@ flowchart LR
 
 Don't build now, don't preclude either:
 
-- **Mobile sync**: change feed + content hashes + resumable transfer are the primitives a sync client needs — all in v1 surface.
+- **Mobile sync**: change feed + content hashes + resumable transfer are the primitives a sync client needs — all in v1 surface. The mobile apps now consume them ([F-021](../features/F-021-mobile-auto-upload.md), [13-mobile-clients](13-mobile-clients.md)); *desktop* sync clients remain the deferred consumer. The upload wire format should be chosen with the iOS system upload extension in mind (IETF resumable-uploads compatibility — Q38).
 - **Local AI agent**: scoped tokens + full API coverage means an agent can do anything a user can, with least privilege.
 - **WebDAV / S3 compatibility**: protocol adapters mounted beside `/api/v1`, translating to the same core operations. Requires stable paths + move semantics (already first-class).

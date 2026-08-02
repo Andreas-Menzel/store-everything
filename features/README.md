@@ -25,6 +25,14 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | Draft | P0 |
 | [F-016](F-016-archive-download.md) | Archive download (folders & selections) | Draft | P1 |
 | [F-017](F-017-views.md) | Views (saved searches & library pages) | Draft | P1 |
+| F-018 | *(id reserved — people & faces, proposal in review, no file yet)* | — | — |
+| [F-019](F-019-mobile-connection.md) | Mobile: connection & device sessions | Draft | P1 |
+| [F-020](F-020-mobile-library.md) | Mobile: library, timeline & viewer | Draft | P1 |
+| [F-021](F-021-mobile-auto-upload.md) | Mobile: auto-upload (one-way device backup) | Draft | P1 |
+| [F-022](F-022-device-storage-reclaim.md) | Mobile: device storage reclaim | Draft | P1 |
+| [F-023](F-023-os-file-manager-integration.md) | Mobile: OS file-manager integration | Draft | P2 |
+| [F-024](F-024-offline-files-and-downloads.md) | Mobile: offline files & downloads | Draft | P1 |
+| [F-025](F-025-client-parity.md) | Mobile: native app parity (full web feature set) | Draft | P1 |
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
 

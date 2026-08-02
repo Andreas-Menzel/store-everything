@@ -32,7 +32,7 @@ Get files into the system two ways: upload through the API into a chosen workspa
 
 ## Out of scope
 
-Sync clients, WebDAV, mobile upload (deferred; see [08-api-principles](../specs/08-api-principles.md) for the primitives that keep them possible). Auto-sorting ([F-010](F-010-auto-sort-inbox.md)).
+Desktop sync clients, WebDAV (deferred; see [08-api-principles](../specs/08-api-principles.md) for the primitives that keep them possible). Mobile auto-upload is now specified in [F-021](F-021-mobile-auto-upload.md) and consumes this feature's upload sessions unchanged. Auto-sorting ([F-010](F-010-auto-sort-inbox.md)).
 
 ## Open questions
 

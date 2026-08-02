@@ -7,7 +7,7 @@
 
 ## Summary
 
-A **view** is a named, stored search request plus presentation hints (layout, navigation position), surfaced as a page. One mechanism serves both user-created pages ("images that contain a person") and the built-in library tabs — **Images, Videos, Audio, Documents, Map, Recent** — which are *system views* seeded at install and managed by admins. A view is a stored *query*, never a snapshot: execution is an ordinary `POST /search` under the caller's permissions, so results are always current and a view can never leak or grant anything. Type pages ride the core-assigned media `class` ([F-002/FR-15](F-002-hybrid-search.md), [04](../specs/04-ingestion-pipeline.md#2-identification)); the map page rides geo filters and grid aggregation ([F-002/FR-17, FR-18](F-002-hybrid-search.md)).
+A **view** is a named, stored search request plus presentation hints (layout, navigation position), surfaced as a page. One mechanism serves both user-created pages ("images that contain a person") and the built-in library tabs — **Timeline, Images, Videos, Audio, Documents, Map, Recent** — which are *system views* seeded at install and managed by admins. A view is a stored *query*, never a snapshot: execution is an ordinary `POST /search` under the caller's permissions, so results are always current and a view can never leak or grant anything. Type pages ride the core-assigned media `class` ([F-002/FR-15](F-002-hybrid-search.md), [04](../specs/04-ingestion-pipeline.md#2-identification)); the map page rides geo filters and grid aggregation ([F-002/FR-17, FR-18](F-002-hybrid-search.md)).
 
 ## What is a view — and what is not
 
@@ -49,14 +49,17 @@ A page is a view iff (1) its rows are search results (files, or folders-as-match
 
 | Name | Request | Sort | Layout |
 |---|---|---|---|
+| Timeline | `class ∈ {image, video}`, excluding non-primary asset-group components ([13](../specs/13-mobile-clients.md#paired-captures-asset-groups)) | `taken_at` desc (missing → last) | timeline |
 | Images | `class = image` | `taken_at` desc (missing → last) | grid |
-| Videos | `class = video` | `mtime` desc | grid |
+| Videos | `class = video`, excluding `group_role = motion-video` | `mtime` desc | grid |
 | Audio | `class = audio` | `mtime` desc | list |
 | Documents | `class = document` | `mtime` desc | list |
 | Map | `gps` within world bounds + grid aggregation (client pans/zooms the bbox) | — | map |
 | Recent | no filter | `ingested` desc | list |
 
 Exact naming/composition of this set is product tuning at release; the *mechanism* (seeded, admin-owned, per-user hideable) is the requirement.
+
+Like the map layout executes the geo aggregation ([F-002/FR-17–18](F-002-hybrid-search.md)), the **timeline layout executes the date histogram and compact projection** ([F-002/FR-19–20](F-002-hybrid-search.md)): clients derive scroll geometry and scrubber labels from the histogram and render grid cells from the projection. As with map (FR-9), this lives in the *request and its execution*, never in the layout value.
 
 ## API surface
 
@@ -88,7 +91,7 @@ Execution has no endpoint of its own: clients run the stored request through `PO
 
 - **AC-1** (FR-1, FR-3, FR-4) Creating `{name: "Dog photos", request: {query: "dog at the beach", filters: {class: "image"}}, layout: "grid"}` succeeds; `GET /views/{id}` returns the request exactly as submitted; `POST /search` accepts it unmodified. Trashing a matching photo removes it from the next execution.
 - **AC-2** (FR-5) Users A and B execute the system view *Documents*: each receives only files they may read; B gets zero results, facets, and counts from A's private workspace — tested with the [F-002/FR-7](F-002-hybrid-search.md) leak-test rigor.
-- **AC-3** (FR-6) A fresh instance has exactly the six defaults. An admin renames *Images* to *Bilder*; a later upgrade re-seed keeps *Bilder* and restores any missing default. A member's `PATCH` of a system view's `request` returns `403`.
+- **AC-3** (FR-6) A fresh instance has exactly the seven defaults. An admin renames *Images* to *Bilder*; a later upgrade re-seed keeps *Bilder* and restores any missing default. A member's `PATCH` of a system view's `request` returns `403`.
 - **AC-4** (FR-7) User A hides *Videos* and moves *Map* to the first position; user B's `GET /views` is unchanged; A's reflects both changes.
 - **AC-5** (FR-2) Creating a view whose request contains an unknown field returns `422` with a JSON Pointer to the field; all invalid clauses are reported in one response.
 - **AC-6** (FR-8) A view filtering on workspace X keeps validating while X is trashed; after X is purged, execution returns the problem shape pointing at the workspace clause and `GET /views` shows the view `valid: false`.

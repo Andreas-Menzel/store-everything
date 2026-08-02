@@ -36,8 +36,8 @@ Both must work on ordinary self-hosted hardware, with all analysis running local
 
 ## Deferred (explicitly wanted later, API must not preclude)
 
-- Android/iOS apps with automatic photo/file sync.
-- Sync clients / WebDAV / S3-compatible access.
+- Android/iOS apps with automatic photo/file sync — **now specified** ([F-019 – F-025](../features/README.md), [13-mobile-clients](13-mobile-clients.md)); no longer deferred.
+- Desktop sync clients / WebDAV / S3-compatible access.
 - External-source workspaces (GDrive, … — read-only, fully mirrored onto the server; Q16).
 - A locally running AI agent as an API consumer.
 - AI-driven auto-sorting of an "inbox" workspace beyond simple year/month rules.
