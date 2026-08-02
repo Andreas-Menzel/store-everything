@@ -21,6 +21,7 @@ A page is a view iff (1) its rows are search results (files, or folders-as-match
 | Browse | dedicated page ([F-015](F-015-folders.md)) | rows are *locations*: one tree level including empty folders, aggregates, structure operations; parameterized by the folder you stand in, not stored |
 | Trash | dedicated page ([F-014/FR-3](F-014-deletion-and-trash.md)) | rows are trash *entries* (origin, batch id, purge deadline, restorability) with restore/purge actions; admins see aggregates only. Content search over trash is not this page — it already exists as the opt-in `state: trashed` scope ([F-002/FR-13](F-002-hybrid-search.md)) |
 | Duplicates | dedicated page ([F-013](F-013-duplicate-detection.md)) | rows are hash *groups* with bulk-resolution actions |
+| Shared with me | dedicated page ([F-008/FR-10–11](F-008-sharing-and-public-links.md)) | rows are received grant *roots* (owner, role — [07 § visibility roots](../specs/07-identity-permissions-sharing.md#visibility-roots-what-a-grantee-sees)): locations like browse, not search results |
 
 **Navigation contract:** a folder-typed hit ([F-002/FR-14](F-002-hybrid-search.md)) in any view navigates to browse at that folder; a file hit opens the file at the matched position where an anchor exists.
 
@@ -42,7 +43,7 @@ A page is a view iff (1) its rows are search results (files, or folders-as-match
 - **FR-4** Views store configuration, never results: reading or listing views executes no search, and results exist only through `POST /search` at request time. A matching file that is trashed, or whose read grant is revoked, after the view was saved does not appear in the next execution.
 - **FR-5** *(negative space)* Views confer no access: creating, possessing, or executing any view — including system views — never yields a result, facet, count, or map cell the same caller would not receive from `POST /search` directly ([F-002/FR-7](F-002-hybrid-search.md)). Two callers executing the same system view each receive exactly their own permitted results.
 - **FR-6** **System views** are seeded at first startup from the default set below. Admins may add, edit, hide instance-wide, and restore-to-default; members can neither modify nor delete them (only FR-7 state). Re-seeding on upgrade restores missing defaults but never overwrites an admin-modified one. The stored request of a system view is readable by every member — an admin-authored query is instance-public by design.
-- **FR-7** **Per-user navigation state:** every navigation entry — views *and* the dedicated pages (browse, trash, duplicates) — carries per-user `hidden` and `position`, persisted server-side (the [F-013/FR-2](F-013-duplicate-detection.md) preference pattern: no separate settings screen). Changing them alters no other user's navigation, and hiding an entry changes nothing about what any request may query.
+- **FR-7** **Per-user navigation state:** every navigation entry — views *and* the dedicated pages (browse, trash, duplicates, shared with me — [F-008/FR-11](F-008-sharing-and-public-links.md)) — carries per-user `hidden` and `position`, persisted server-side (the [F-013/FR-2](F-013-duplicate-detection.md) preference pattern: no separate settings screen). Changing them alters no other user's navigation, and hiding an entry changes nothing about what any request may query.
 - **FR-8** A stored request that no longer validates (e.g. it filters on a since-purged workspace) fails execution with the FR-2 problem shape naming the offending clause — clauses are never silently dropped. `GET /views` marks such views `valid: false`.
 - **FR-9** `layout` is persisted and returned verbatim and never alters search semantics: the same `request` yields the same `POST /search` response regardless of layout. The map page's geo scoping lives in its *request* (a bounding-box predicate), not in the layout value.
 
@@ -66,7 +67,8 @@ Like the map layout executes the geo aggregation ([F-002/FR-17–18](F-002-hybri
 
 ```
 GET    /views          navigation entries: system views + own views + reserved entries for the
-                       dedicated pages (browse, trash, duplicates), per-user state applied, validity flags
+                       dedicated pages (browse, trash, duplicates, shared with me), per-user state
+                       applied, validity flags
 POST   /views          create personal view
 GET    /views/{id}     definition incl. stored request (verbatim)
 PATCH  /views/{id}     own view: any field · system view / reserved entry: members set only

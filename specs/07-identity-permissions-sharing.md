@@ -49,6 +49,15 @@ flowchart LR
 - **Shared truth:** tags/metadata belong to the file — when Bob (with `write`) edits tags on Alice's file, Alice sees Bob's changes ([02-domain-model.md](02-domain-model.md#file)). Provenance records *who*: manual tags carry the user id.
 - Effective permission = union of grants (most permissive wins along the path). Fine-grained deny rules are out of scope for v1.
 
+### Visibility roots (what a grantee sees)
+
+Ancestor names are content — a folder called `Divorce 2026` reveals as much as a document. Therefore, for every resource a caller can read, their **visibility root** is the topmost ancestor they can read, and everything above it **does not exist for that caller**: no names, no ids, no path segments, no counts, no events; a direct request for an unreadable ancestor returns `404` like any hidden resource ([08 § errors](08-api-principles.md#errors-rfc-9457)).
+
+- A granted folder is presented as its own root — its plain name plus the granting owner — under **Shared with me** ([F-008/FR-10–11](../features/F-008-sharing-and-public-links.md)); a granted single file appears there with no parent reference at all. An owner is the degenerate case: their visibility root is the workspace root, so owners always see full workspace-relative paths.
+- **Every path the API returns is rendered per caller at read time from folder ids** ([F-015/FR-12](../features/F-015-folders.md)); events and audit records store ids, never baked path strings. Search results follow the same rule ([06 § result shape](06-search.md#result-shape-api-sketch)); archive manifests already do ([F-016/FR-2](../features/F-016-archive-download.md)). Users' own file-activity views render caller-relative; the instance-wide admin audit ([F-011](../features/F-011-audit-trail.md)) is the one surface that renders full paths — it is admin-scoped by design.
+- Admins get **no bypass** on regular data surfaces — consistent with this spec's stance that instance admin ≠ data access.
+- The leak bar is [F-002/FR-7](../features/F-002-hybrid-search.md) rigor, written as its own negative requirement: [F-015/FR-13](../features/F-015-folders.md).
+
 ## Search and permissions
 
 Search only ever returns files the caller can `read`, enforced inside the query ([06-search.md](06-search.md#permission-aware-by-construction)). This is non-negotiable and must be covered by tests from day one.

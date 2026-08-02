@@ -18,7 +18,8 @@ The HTTP API is the product's only interface. Rules:
 | Style | Resource-oriented REST, JSON; verbs only where operations aren't CRUD (`/search`, `/files/{id}/reprocess`, `/files/{id}/move`) |
 | Search method | `POST /search` in v1, spec'd as *safe/idempotent*; the IETF `QUERY` method can be added as an alias once framework/proxy/tooling support matures — no breaking change |
 | Auth | Token-based: personal access tokens + short-lived session tokens; scoped (e.g. read-only) so agents/integrations get least privilege. **Deny by default**: every endpoint declares its auth requirement — a missing declaration means *closed*, not open. Credentials travel in the `Authorization` header, never in URLs. Lifecycle, storage, and abuse protection: [07](07-identity-permissions-sharing.md#tokens--credentials) |
-| Pagination | Cursor-based everywhere lists can grow (files, search results, audit log), one envelope: `{ "data": […], "next_cursor": "…" \| null }` — an unbounded list is never returned |
+| Pagination | Cursor-based everywhere lists can grow (files, search results, audit log), one envelope: `{ "data": […], "next_cursor": "…" \| null }` — an unbounded list is never returned. Cursors are keyset-anchored (sort key + id tiebreak — [F-002/FR-16](../features/F-002-hybrid-search.md)): they stay valid under concurrent inserts and deletes; clients de-duplicate by id at page seams ([14](14-client-sync-and-caching.md#prefetch)) |
+| Caching | Strong `ETag` on cacheable JSON reads (folder metadata/children, file metadata, views); `If-None-Match` match → `304`, empty body ([F-026/FR-25](../features/F-026-offline-cache-and-prefetch.md)). `Cache-Control` classes: JSON `private, no-cache` (storable, revalidate-always) · version-pinned derived assets `private, max-age=31536000, immutable` ([09 § thumbnails](09-previews.md#thumbnails), [F-026/FR-26](../features/F-026-offline-cache-and-prefetch.md)) · `no-store` on trash, audit, and share-viewer responses ([F-026/FR-19](../features/F-026-offline-cache-and-prefetch.md)). Client-side cache/invalidation contract: [14](14-client-sync-and-caching.md) |
 | Long-running work | Async job resources: `POST` returns `202` + job id; `GET /jobs/{id}` for status/progress; ingestion/reprocessing statuses queryable per file and instance-wide. Jobs survive restarts; lifecycle mechanics (leases, retries, dead-letter): [12](12-reliability.md) |
 | Events | Change feed (`/events` cursor endpoint) backed by the unified event log ([ADR-0007](../decisions/ADR-0007-unified-event-log.md)), plus a WebSocket channel pushing **thin, coalesced notifications** — clients refetch via the normal API ([F-012](../features/F-012-live-updates.md)). Webhooks possible later |
 | Errors | RFC 9457 `application/problem+json`, one envelope everywhere — see [Errors](#errors-rfc-9457) below |
@@ -51,6 +52,7 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 - **Field-level validation** returns *all* problems in one response; each item is `{detail, pointer}` with an RFC 6901 JSON Pointer whose first segment names the location (`body` / `query` / `path` / `header`). Echo the field and the violated rule — **never the submitted value** (nothing sensitive is reflected back).
 - **Nothing internal leaks** — no stack traces, no SQL, no dependency error strings. The request id is the only bridge: the caller quotes `instance`, the operator finds the matching log line ([10](10-deployment-and-operations.md#logging)).
 - **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `5xx` server fault. Never `200` with an error body.
+- **Auth failures are typed for cache policy**: a `401`'s problem `type` distinguishes re-authenticatable failures (token expired/revoked) from **terminal account states** (`account_disabled`, `account_deleted`), because clients react differently — lock-and-keep vs. immediate local wipe ([F-026/FR-11–13](../features/F-026-offline-cache-and-prefetch.md), [14 § auth-state policy](14-client-sync-and-caching.md#auth-state-policy-why-lock-then-wipe)). Terminal types reveal only what the failed login itself proves; they carry no further account data.
 
 ## Resource sketch (v1 surface, non-exhaustive)
 
@@ -84,6 +86,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
                                      per-user nav state; executed via POST /search — no own results endpoint
 /api/v1/archives                     archive a selection (F-016); {id}/content = Range download
 /api/v1/tags/…                       taxonomy (DAG), aliases, autocomplete; admin approve/reject suggestions
+/api/v1/shared-with-me               received grant roots: topmost visible folders/files granted by
+                                     others, with owner + role (F-008, 07 § visibility roots)
 /api/v1/shares/…                     share links
 /api/v1/extractors/…                 admin: registered extractors, health, queues
 /api/v1/reprocess                    admin: trigger reprocessing (scoped)
@@ -157,6 +161,7 @@ flowchart LR
 
     subgraph SHG["Permissions & Sharing"]
         PERMS["GET·POST·DELETE /permissions"]
+        SHME["GET /shared-with-me<br/>(received grant roots — F-008)"]
         SHARES["GET·POST·DELETE /shares"]
         PUB["GET /shares/{token} 🌐<br/>(download + preview only)"]
     end

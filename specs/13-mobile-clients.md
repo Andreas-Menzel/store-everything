@@ -76,6 +76,8 @@ Platform-agnostic mechanism for multi-file captures — Apple Live Photos (photo
 
 ## Caching, downloads, integrity
 
+The cache/offline/prefetch contract shared by *all* clients — layers, stale-while-revalidate rendering, invalidation via doorbell + `/events` catch-up, auth-state policy, eviction — is [14-client-sync-and-caching](14-client-sync-and-caching.md) ([F-026](../features/F-026-offline-cache-and-prefetch.md)); this section holds the device-side rules on top of it.
+
 - **Thumbnails are immutable per (file version, size)** ([09](09-previews.md#thumbnails)) — clients cache them indefinitely with no revalidation, under a size-capped LRU. Grid rendering never blocks on thumbnails: listings carry dimensions + a placeholder hash ([F-002/FR-20](../features/F-002-hybrid-search.md), [09](09-previews.md#thumbnails)).
 - **Downloads are hash-verified** against the version's content hash before being marked downloaded; refreshes replace bytes atomically (verify new, then swap). Pinned items are never auto-evicted; caches are.
 - **Read-only hand-out (v1):** files handed to other apps (open-with/share) are read-only — a third-party app can never silently mutate the app-managed copy. Write-back into the cloud is [F-023](../features/F-023-os-file-manager-integration.md)'s job, where a save becomes an ordinary new version.

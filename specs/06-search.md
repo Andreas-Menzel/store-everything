@@ -99,6 +99,8 @@ Search results are filtered by the caller's read permissions **inside the query*
 
 `why` (which signals matched, incl. tag provenance + confidence) keeps auto-derived results distinguishable and debuggable — the user can tell "found by manual tag" from "found by 0.62-confidence detection".
 
+**Paths are caller-relative.** The `path` of every file- and folder-typed result is rendered from the caller's visibility root ([07 § visibility roots](07-identity-permissions-sharing.md#visibility-roots-what-a-grantee-sees), [F-015/FR-12](../features/F-015-folders.md)); the `workspace` field appears only when the caller can read the workspace itself (owners, workspace-wide grantees) and is omitted for subtree grantees. A result never discloses ancestry above the caller's visibility root — the same leak bar as the permission filter ([F-015/FR-13](../features/F-015-folders.md)).
+
 ## Performance targets
 
 | Aspect | Target |

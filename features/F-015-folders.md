@@ -31,6 +31,8 @@ Folders are first-class domain objects, not path strings. Each folder has a **UU
 - **FR-9** **Tags on folders — manual, self-only (v1):** users with `write` tag folders from the same global vocabulary; extractors never run on folders, so folder tags have no confidence/generation machinery. A folder tag describes the folder itself and does **not** match contained files in tag searches; query-time inheritance to contents is deliberately deferred (Q23).
 - **FR-10** **Folders are searchable objects:** matched by name, tags, and metadata (they have no content segments), returned as folder-typed results ([F-002/FR-14](F-002-hybrid-search.md)), permission-filtered like everything else. Manual metadata entries on folders are supported.
 - **FR-11** **Events:** `folder.created/renamed/moved/trashed/restored/purged` in the unified event log (audit, live updates, change feed).
+- **FR-12** **Caller-relative paths (visibility roots):** every path the API returns is derived from the caller's **visibility root** — the topmost ancestor folder the caller can read ([07 § visibility roots](../specs/07-identity-permissions-sharing.md#visibility-roots-what-a-grantee-sees)). Ancestor references above that root are omitted from responses (a grant-root folder's `parent`, the parent folder of a file granted individually); requesting an unreadable ancestor returns `404`. For owners the visibility root is the workspace root.
+- **FR-13** *(negative space)* No response to a caller contains the name, id, path segment, aggregate count, or event of any folder above that caller's visibility root — verified with [F-002/FR-7](F-002-hybrid-search.md) leak-test rigor.
 
 ## API surface
 
@@ -54,3 +56,5 @@ Folder share links (deferred in [F-008](F-008-sharing-and-public-links.md); this
 - After uploading 1 000 files into a deep folder, ancestor counts/sizes converge within the documented window and match ground truth exactly; the janitor detects an artificially corrupted aggregate.
 - A folder tagged `tax` is returned as a folder-typed search hit for `tag:tax`; a file inside it is *not* matched by that tag (v1 semantics).
 - Listing a folder with 100k children paginates stably by cursor.
+- (FR-12) Alice grants Bob `read` on `/Private/Clients/Acme` (three levels deep): every path Bob receives for the subtree is rooted at `Acme`; the folder's metadata carries no parent reference; Bob's `GET` of the parent folder's id returns `404`. Alice's own responses still show full workspace-relative paths.
+- (FR-13) A byte-level scan of all of Bob's responses across listing, detail, search, events, and activity surfaces finds no occurrence of `Private`, `Clients`, or their folder ids — the leak test runs the full surface, not one endpoint.
