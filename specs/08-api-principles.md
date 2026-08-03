@@ -80,8 +80,11 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/files/{id}/activity          audit trail for one file (F-011)
 /api/v1/files/hash-check             batch content-hash existence check, scoped to the
                                      caller's owned live files (F-021)
-/api/v1/search                       hybrid search (06-search.md)
+/api/v1/search                       hybrid search (06-search.md); persons filter/facet (F-018, deferred)
 /api/v1/duplicates                   duplicate groups, permission-scoped (F-013)
+/api/v1/people                       persons (F-018, deferred): visible-person listing; rename, hide,
+                                     merge, delete, account links (owner); {id}/thumbnail = cover crop
+/api/v1/files/{id}/faces             face instances + person appearances; assign/confirm/reject (F-018)
 /api/v1/views                        saved views & library pages (F-017): system + personal,
                                      per-user nav state; executed via POST /search — no own results endpoint
 /api/v1/archives                     archive a selection (F-016); {id}/content = Range download
@@ -149,12 +152,14 @@ flowchart LR
         FREP["POST /files/{id}/reprocess"]
         FDEL["DELETE /files/{id} → trash<br/>POST …/restore · POST …/purge"]
         FHASH["POST /files/hash-check<br/>(batch existence by content hash, F-021)"]
+        FFACE["GET /files/{id}/faces<br/>(instances + appearances; curation — F-018, deferred)"]
     end
 
     subgraph SG["Search & Tags"]
         SEARCH["POST /search<br/>(hybrid, filters, sort, version scope)"]
         VIEWS["GET·POST /views · GET·PATCH·DELETE /views/{id}<br/>(saved views & library pages;<br/>members set hidden·position,<br/>system-view definitions ⚙)"]
         DUPS["GET /duplicates<br/>(groups, bulk resolve)"]
+        PEOPLE["GET /people · GET·PATCH·DELETE /people/{id}<br/>POST /people/{id}/merge · GET …/thumbnail<br/>(persons — F-018, deferred)"]
         TAGS["GET /tags?prefix=…<br/>(autocomplete: prefix + similarity)"]
         TAX["GET·POST·PATCH /tags ⚙<br/>(taxonomy DAG, aliases,<br/>suggestions approve·reject)"]
     end

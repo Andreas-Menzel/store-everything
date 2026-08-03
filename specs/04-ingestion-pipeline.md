@@ -62,10 +62,12 @@ flowchart LR
     PT -->|"no/low text layer"| OCR["tesseract-ocr"]
     T -->|image| VIS["image-vision<br/>objects + scene"]
     T -->|image| IOCR["tesseract-ocr"]
+    T -->|image| FACE["face-detect<br/>(opt-in gate — F-018)"]
     T -->|audio/video| TR["av-transcribe<br/>timestamps"]
     T -->|video| KF["video-keyframes"]
     KF --> VIS2["image-vision<br/>per keyframe"]
     KF --> KOCR["tesseract-ocr<br/>per keyframe"]
+    KF --> FACE2["face-detect<br/>per keyframe (opt-in)"]
     T -->|any| PRE["preview-gen"]
     T -->|any| META["basic metadata<br/>(EXIF, size, duration…)"]
     PT & OCR & TR --> EMB["text embeddings"]
@@ -76,6 +78,7 @@ Notes:
 - **PDF is a decision tree, not one tool**: born-digital PDFs use the text layer (faster, more accurate); Tesseract handles scans/photographed pages, decided per document (or per page).
 - **Every image gets OCR and vision analysis** — including video keyframes, so on-screen text and visible objects in videos become searchable at their timestamp.
 - How chaining is declared in the contract (input = original vs. derived asset kind) is part of Q5.
+- **Face detection is gate-checked at routing**: `face-detect` jobs are created only for files whose workspace is effectively enabled ([F-018/FR-3](../features/F-018-people.md)). Completed face results trigger **identity resolution** — a *core-owned* incremental follow-up job (never an extractor — [ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)) that groups face instances into per-owner persons under the same crash-only queue rules ([12](12-reliability.md)), idempotent so re-runs converge.
 
 ### 4. Execution
 Jobs are queued in PostgreSQL and executed under the crash-only model ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md); mechanics in [12](12-reliability.md#leases--fencing)). `SKIP LOCKED` is only the *claim* instant — ownership is a **lease** (`leased_by`, `lease_expires_at`, `attempt`) extended by heartbeats; an expired lease makes the job claimable by anyone, and that reclaim branch *is* the recovery story — there is no separate startup-recovery pass. **Attempts count on claim, not on failure**: a poison job that OOM-kills its worker dead-letters after `max_attempts` even though it never reported an error. Every write-back (heartbeat, result) carries the claim's `attempt` as a **fencing token**, so a worker that lost its lease is rejected instead of clobbering the re-run. Idempotency keys are deterministic — `hash(file_version, extractor id+version, model version, generation, params)` — so re-detecting the same work converges on the pending job instead of duplicating it. Per-extractor concurrency limits, timeouts, retries with backoff + jitter, and the dead-letter state are API-visible. An offline extractor degrades to "facet pending" — never "ingestion failed". Cost classes let the scheduler keep cheap extractors (metadata, previews) fast while heavy ones (transcription) chew through their backlog. Restarts are routine: on SIGTERM the orchestrator stops claiming and releases its leases so a successor re-claims instantly (**at-least-once**, deduplicated on write — [05](05-extractor-contract.md#job-lifecycle)); `kill -9` is equally safe, just slower to detect. An upgrade mid-transcription costs a re-run, never consistency.
@@ -100,7 +103,7 @@ The queue is priority-scheduled so the app always feels fast: cheap, user-visibl
 |---|---|---|
 | **P0 — interactive** | user-triggered on-demand jobs: PDF page render being viewed, "Generate" for a heavy rendition | someone is waiting right now |
 | **P1 — presence** | basic metadata, thumbnails, image previews, waveforms, scrub sheets | new files must appear browsable immediately |
-| **P2 — searchability** | text extraction, OCR, embeddings, transcription | the product is search |
+| **P2 — searchability** | text extraction, OCR, embeddings, transcription, face detection & identity resolution ([F-018](../features/F-018-people.md), opt-in) | the product is search |
 | **P3 — heavy derived** | video preview transcodes, pre-generated heavy renditions | idle-time only |
 | **P4 — reprocessing** | generation reruns | never outranks fresh content |
 

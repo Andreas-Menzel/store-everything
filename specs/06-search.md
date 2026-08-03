@@ -25,9 +25,11 @@ flowchart TB
 ```
 
 ### Filters (composable with any mode)
-`workspace`, `path prefix` (resolved to a folder subtree via the folder closure — [F-015](../features/F-015-folders.md)), `class` (core-assigned media class — [04](04-ingestion-pipeline.md#2-identification), [F-002/FR-15](../features/F-002-hybrid-search.md)), `file type/MIME`, `tag` (incl. provenance: e.g. only `manual`/`confirmed`), `metadata key/value/range` (dates, numbers; geo predicates below), `size`, `owner`, `has-pending-extraction`, `version scope`, `state` (lifecycle scope, below).
+`workspace`, `path prefix` (resolved to a folder subtree via the folder closure — [F-015](../features/F-015-folders.md)), `class` (core-assigned media class — [04](04-ingestion-pipeline.md#2-identification), [F-002/FR-15](../features/F-002-hybrid-search.md)), `file type/MIME`, `tag` (incl. provenance: e.g. only `manual`/`confirmed`), `persons` (person ids or `me` — [F-018/FR-24](../features/F-018-people.md), deferred), `metadata key/value/range` (dates, numbers; geo predicates below), `size`, `owner`, `has-pending-extraction`, `version scope`, `state` (lifecycle scope, below).
 
 Tag filters **expand down the hierarchy by default** ([ADR-0006](../decisions/ADR-0006-hierarchical-tags-dag.md)): `tag:nature` matches files tagged with any descendant (`plant`, `tree`, …) via the precomputed closure table; `exact: true` restricts to the literal tag. Tags with status `suggested` are **excluded** from search, facets, and autocomplete until approved.
+
+**Person filters** ([F-018](../features/F-018-people.md) — deferred) match files carrying non-`rejected` person appearances (all listed entries must hold; `me` = the caller's account-linked persons), enforced inside every query branch like the permission and lifecycle predicates. A person id the caller cannot observe behaves exactly like a nonexistent one ([F-018/FR-26](../features/F-018-people.md)). The `persons` facet lists **named, non-hidden** persons only; its counts obey the same in-query rules as every facet count.
 
 ### Version scope
 Default: **latest versions only**. Opt-in: search all versions / versions in a time range ([F-007](../features/F-007-versioning.md)); old-version hits are labeled as such.
@@ -61,10 +63,12 @@ The searchable unit is the **Segment** ([02-domain-model.md](02-domain-model.md#
 
 Query flow: match *segments* → group by file → rank files (fusing each file's best segment scores) → return files with their matching segments as positions. One strong match should beat fifty weak ones; exact-phrase hits rank above fuzzy hits in hybrid mode. Precise scoring is an implementation detail to tune, not to spec.
 
-### Two embedding spaces, never mixed
+### Embedding spaces, never mixed
 - `text-v1`: sentence-embedding space for document/transcript semantics.
 - `clip-v1`: shared text–image space for visual semantics.
-A hybrid query embeds the query text once per space, searches each space separately, and fuses ranked lists (RRF). Vectors from different spaces are never compared directly.
+- `face-v1`: face-identity space ([F-018](../features/F-018-people.md) — deferred). **Matching-only**: used for face↔face similarity in identity resolution, never a target of query-text embedding — no text query produces a face-space match ([F-018/FR-9](../features/F-018-people.md)).
+
+A hybrid query embeds the query text once per *text-targetable* space, searches each space separately, and fuses ranked lists (RRF). Vectors from different spaces are never compared directly.
 
 ## Permission-aware by construction
 

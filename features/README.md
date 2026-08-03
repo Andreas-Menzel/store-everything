@@ -25,7 +25,7 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | all | Draft | P0 |
 | [F-016](F-016-archive-download.md) | Archive download (folders & selections) | all | Draft | P1 |
 | [F-017](F-017-views.md) | Views (saved searches & library pages) | all | Draft | P1 |
-| F-018 | *(id reserved — people & faces, proposal in review, no file yet)* | — | — | — |
+| [F-018](F-018-people.md) | People (faces, persons, naming & account links) | all | Deferred | P2 |
 | [F-019](F-019-mobile-connection.md) | Mobile: connection & device sessions | Android, iOS | Draft | P1 |
 | [F-020](F-020-mobile-library.md) | Mobile: library, timeline & viewer | Android, iOS | Draft | P1 |
 | [F-021](F-021-mobile-auto-upload.md) | Mobile: auto-upload (one-way device backup) | Android, iOS | Draft | P1 |

@@ -29,6 +29,13 @@ erDiagram
     FILE_VERSION ||--o{ EXTRACTION_RUN : "processed by"
     FILE_VERSION ||--o{ DERIVED_ASSET : "rendered as"
     SEGMENT ||--o{ EMBEDDING : "vectorized as"
+    USER ||--o{ PERSON : "owns (face identity — F-018)"
+    PERSON }o--o| USER : "optionally linked account"
+    FILE ||--o{ PERSON_APPEARANCE : carries
+    PERSON ||--o{ PERSON_APPEARANCE : "asserted by"
+    FILE_VERSION ||--o{ FACE_INSTANCE : "faces detected in"
+    EXTRACTION_RUN ||--o{ FACE_INSTANCE : produced
+    PERSON_APPEARANCE }o--o{ FACE_INSTANCE : "evidenced by"
     EXTRACTION_RUN ||--o{ METADATA_ENTRY : produced
     EXTRACTION_RUN ||--o{ SEGMENT : produced
     EXTRACTION_RUN ||--o{ FILE_TAG : produced
@@ -115,7 +122,14 @@ The positional unit of search ([06-search.md](06-search.md)). A file version's s
 Segments carry the extracted text (for FTS) and are the unit that embeddings attach to. This is what lets search answer *"pages 1, 3 and 7"* and *"at 04:12"*.
 
 ### Embedding
-A vector for a segment (or whole file) in a named **embedding space** (`text-v1`, `clip-v1`, …). Different spaces are never compared to each other; a query is embedded once per targeted space and results are fused (see 06).
+A vector for a segment, a face instance ([F-018](../features/F-018-people.md)), or a whole file in a named **embedding space** (`text-v1`, `clip-v1`, `face-v1`, …). Different spaces are never compared to each other; a query is embedded once per targeted space and results are fused (see 06). `face-v1` is matching-only — never a target of query-text embedding ([06](06-search.md#embedding-spaces-never-mixed)).
+
+### Person / FaceInstance / PersonAppearance ([F-018](../features/F-018-people.md) — deferred)
+Face recognition data, existing only under the [F-018](../features/F-018-people.md) enablement gates — no row is created or exposed for workspaces where person recognition is not effectively enabled ([F-018/FR-3](../features/F-018-people.md)).
+
+- **FaceInstance** — machine evidence, per file version: normalized bounding box, detection-quality score, `face-v1` embedding computed from the face region only, face-crop derived asset, timestamp for keyframe-sourced instances. Generation-scoped like segments/embeddings: reprocessing swaps a file's instances atomically ([F-018/FR-16](../features/F-018-people.md)).
+- **Person** — a face identity **owned by a user** (the owner of the workspaces the faces came from — never instance-global, never cross-owner; [ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)): nullable display name (unnamed = auto-created cluster), hidden flag, cover face, optional **linked instance account** (the only cross-owner join, [F-018/FR-31](../features/F-018-people.md)).
+- **PersonAppearance** — the assertion "this person is in this file", per (file, person), carrying the [ADR-0004](../decisions/ADR-0004-tag-provenance-and-reprocessing.md) provenance state machine (`manual | auto | confirmed | rejected`, confidence, source stamp) exactly like `FileTag`; linked to supporting face instances for anchors, valid without any (anchor-less manual assertions, re-anchoring fallback — [F-018/FR-16, FR-23](../features/F-018-people.md)).
 
 ### Extractor / ExtractionRun
 `Extractor` is a registered plugin container: id, version, model version, capabilities (MIME types in, output kinds out), cost class, GPU usage. `ExtractionRun` is one execution of one extractor over one file version, with status, timings, errors, and a **generation number**. Reprocessing creates a new generation; the previous generation's outputs are kept until the new one is complete and can be rolled back to (ADR-0004).
@@ -138,9 +152,11 @@ A named, stored search request plus presentation hints ([F-017](../features/F-01
 
 1. Every file belongs to exactly one folder, every folder to exactly one workspace, every workspace to exactly one user.
 2. Original file content is never modified or lost by the system. The only exception-shaped case — OCR on scanned PDFs — also does **not** modify the original: extracted text is stored as segments, never written back into the PDF.
-3. All derived data is traceable: every `MetadataEntry`, auto `FileTag`, `Segment`, `Embedding`, and `DerivedAsset` references the `ExtractionRun` (extractor id + version + model + generation) that produced it.
+3. All derived data is traceable: every `MetadataEntry`, auto `FileTag`, `Segment`, `Embedding`, `FaceInstance`, and `DerivedAsset` references the `ExtractionRun` (extractor id + version + model + generation) that produced it.
 4. `manual` and `confirmed` user input is never altered by reprocessing; `rejected` records suppress re-adding.
 5. Anything derived (plane 2) can be deleted and rebuilt from the source plane + manual records.
 6. Every state-changing action is recorded in the event log in the same transaction (ADR-0007) — nothing changes silently.
 7. Trashed items appear in **no** default query surface — search results, facets, counts, autocomplete, duplicate groups — enforced inside the queries, including vector search. Purge removes every domain row and every stored byte (version blobs reference-counted); the event log is the only remaining trace, and a purged id is indistinguishable from one that never existed ([F-014](../features/F-014-deletion-and-trash.md)).
 8. **App-written bytes outlive the rows that reference them.** The app never commits a row referencing content it has not durably written (bytes first, then the row) and never removes stored bytes before every referencing row is gone (rows first, then the bytes) — orphans are always harmless files awaiting GC, never dangling references ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md#filesystem-write-protocol)). Content that vanishes *outside* the app (deleted directly on the NAS) is the reconciled exception, surfaced as `restorable: false` ([03](03-storage-and-portability.md#versioning-vs-the-folder-is-everything-known-tension), [F-014/FR-10](../features/F-014-deletion-and-trash.md)).
+9. Face data exists only under enablement: no `FaceInstance`, face embedding, face crop, or `PersonAppearance` is created for — or exposed from — files in workspaces where person recognition is not effectively enabled ([F-018/FR-3](../features/F-018-people.md)); the owner-triggered purge removes every such row and stored byte, leaving only the event log ([F-018/FR-6](../features/F-018-people.md)).
+10. A `PersonAppearance` only ever references a `Person` owned by the file's **current** workspace owner, and identity resolution never links face instances across owners ([F-018/FR-14, FR-17](../features/F-018-people.md), [ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)).

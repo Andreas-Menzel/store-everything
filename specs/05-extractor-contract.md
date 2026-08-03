@@ -27,7 +27,7 @@ model:
 accepts:
   mime_types: ["image/*"]
   derived_kinds: ["keyframe"] # can also consume other extractors' outputs (chaining)
-produces: [metadata, tags, embeddings]   # of: metadata | text_segments | tags | embeddings | derived_assets | renditions
+produces: [metadata, tags, embeddings]   # of: metadata | text_segments | tags | embeddings | derived_assets | renditions | faces
 renditions: []                # if producing renditions: [{kind, format, label}] (ADR-0008)
 embedding_spaces: ["clip-v1"] # if producing embeddings
 cost_class: heavy             # light | medium | heavy — scheduler hint
@@ -77,12 +77,13 @@ One structured result per job; all content is optional, per the extractor's `pro
 | `embeddings` | `{space, segment_ref, vector}` list |
 | `derived_assets` | previews/thumbnails, keyframes (with timestamps), transcript files, waveforms — uploaded to the derived store |
 | `renditions` | downloadable **alternative forms of the whole file** — searchable PDF (embedded OCR layer), subtitled video, `.srt` ([ADR-0008](../decisions/ADR-0008-renditions.md)). Originals are never replaced. |
+| `faces` | `{bbox (normalized), quality (0–1), embedding {space, vector}, crop (derived-asset ref), timestamp?}` list — face detections ([F-018](../features/F-018-people.md), additive within `v1.x`). Face embeddings ride inside each entry (they attach to face instances, not segments). Grouping instances into persons — identity resolution — is **core-owned, never extractor-owned** ([ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)). |
 
 Every persisted row is stamped by the core with: extractor id, extractor version, model version, extraction run, generation.
 
 ## Built-in extractors (default installation, all local)
 
-The app must be usable for **all common file types out of the box** — plugins extend, they are not required for baseline usefulness.
+The app must be usable for **all common file types out of the box** — plugins extend, they are not required for baseline usefulness. One deliberate exception to "runs by default": `face-detect` ships installed but **inactive** until the [F-018](../features/F-018-people.md) enablement gates are set — biometric analysis is never on silently ([ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)).
 
 | Extractor | Accepts | Produces | Notes |
 |---|---|---|---|
@@ -91,6 +92,7 @@ The app must be usable for **all common file types out of the box** — plugins 
 | `tesseract-ocr` | images, scanned PDFs, keyframes | text_segments, renditions | OCR on all images incl. video keyframes; emits `searchable-pdf` rendition for scanned documents |
 | `text-plain` | text, markdown, office docs, code | text_segments | line/section anchors |
 | `image-vision` | images, keyframes | metadata (objects+boxes, scene), tags, embeddings (`clip-v1`) | local model, CPU-capable, GPU-optional |
+| `face-detect` | images, keyframes | faces (`face-v1`), metadata (`face_count`) | **ships inactive** — [F-018](../features/F-018-people.md) instance + per-workspace opt-in; local model, CPU-capable, GPU-optional |
 | `av-transcribe` | audio (voice, MP3, …), video | text_segments (timestamp anchors), metadata (language), renditions | Whisper-class, local; emits `.srt`/`.vtt` subtitle rendition |
 | `video-keyframes` | video | derived_assets (keyframes w/ timestamps, scrub sheet) | feeds image-vision + OCR via chaining; scrub sheet per [09-previews.md](09-previews.md) |
 | `text-embed` | text_segments (chained) | embeddings (`text-v1`) | semantic doc search |

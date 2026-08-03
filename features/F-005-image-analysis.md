@@ -33,7 +33,7 @@ Results via `GET /files/{id}` (metadata, tags), `GET /files/{id}/segments` (OCR)
 
 ## Out of scope
 
-Face recognition / person identification (privacy-sensitive; if ever added, it's an explicit opt-in plugin). Duplicate-photo detection UX (hashes exist; the feature comes later).
+Face recognition / person identification — privacy-sensitive, therefore its own explicitly opt-in feature: [F-018](F-018-people.md) (ships disabled; instance + per-workspace enablement gates — [ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)). Duplicate-photo detection UX (hashes exist; the feature comes later).
 
 ## Open questions
 

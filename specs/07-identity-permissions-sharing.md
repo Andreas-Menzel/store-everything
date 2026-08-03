@@ -62,6 +62,17 @@ Ancestor names are content — a folder called `Divorce 2026` reveals as much as
 
 Search only ever returns files the caller can `read`, enforced inside the query ([06-search.md](06-search.md#permission-aware-by-construction)). This is non-negotiable and must be covered by tests from day one.
 
+## Persons & face data ([F-018](../features/F-018-people.md) — deferred)
+
+Biometric identity gets stricter rules than tags and metadata (rationale: [ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)):
+
+- **Owner-scoped, never global.** Persons belong to the user whose workspaces the faces came from; identity resolution never matches faces across owners ([F-018/FR-14](../features/F-018-people.md)). The only cross-owner join is an explicit account link.
+- **Visibility derives from file readability.** A caller observes a person iff they own it or can read ≥ 1 live file (in an effectively enabled workspace) carrying its appearance; any other person id answers `404`, indistinguishable from never-existed ([F-018/FR-26](../features/F-018-people.md)) — the visibility-roots bar, applied to persons. Person thumbnails are served only from files the caller can read ([F-018/FR-30](../features/F-018-people.md)).
+- **Rights split like tags.** Person entity operations (name, hide, merge, delete, account link) are owner-only; `write` on a file curates that file's appearances (assign/confirm/reject) against the owner's existing, caller-visible persons — collaborators apply, they never mint ([F-018/FR-21–22](../features/F-018-people.md), the [F-003](../features/F-003-tagging.md) pattern).
+- **Enablement and erasure are owner decisions.** Admins set the instance default (`disabled | default_off | default_on`) but have **no access to person data and no override of workspace settings** — instance admin ≠ data access, here most of all ([F-018/FR-1–7](../features/F-018-people.md)).
+- **Account links are always visible to the linked account.** The person owner links; the linked user can list every link to their account and remove any of them; both directions are audited ([F-018/FR-31](../features/F-018-people.md); consent flow beyond self-unlink: [Q53](../OPEN-QUESTIONS.md)).
+- **Share links expose zero person data** ([F-018/FR-28](../features/F-018-people.md)) — their scope stays download + preview only.
+
 ## Public share links ([F-008](../features/F-008-sharing-and-public-links.md))
 
 - Token-based public URL for a file (later: folder), no account required.

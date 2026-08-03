@@ -16,6 +16,7 @@ Significant decisions, one file each, numbered and immutable once accepted. To c
 | [ADR-0008](ADR-0008-renditions.md) | Renditions: enriched alternative file forms as derived assets | Accepted |
 | [ADR-0009](ADR-0009-external-traefik-edge.md) | Edge via an existing external Traefik instance | Accepted |
 | [ADR-0010](ADR-0010-crash-only-execution-model.md) | Crash-only execution: durable operations, leases + fencing, idempotent effects | Accepted |
+| [ADR-0011](ADR-0011-person-recognition-architecture.md) | Person recognition: opt-in face extractor, core-owned per-owner identity resolution | Accepted |
 
 ## Template
 
