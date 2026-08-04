@@ -16,7 +16,7 @@ For any feature or change, in this order — steps are not batched or skipped:
 4. **Propose in chat first, then get explicit approval.** Present the full design proposal in the conversation before changing any files. The user must approve new/updated spec docs before any code is written. Decisions deferred during discussion become rows in `OPEN-QUESTIONS.md`.
 5. **Implement in reasonable phases.** Each phase is verified before the next begins: all requirements hold, all tests pass. Red stops the line.
 6. **Tests bracket every change.** Before and after changing code, review the test suite: update tests where behavior changes, add tests where it makes sense.
-7. **Update every affected document in the same change** — feature file, specs, OpenAPI schema, README, `OPEN-QUESTIONS.md`. Stale docs are worse than none.
+7. **Update every affected document in the same change** — feature file, specs, OpenAPI schema, README, `OPEN-QUESTIONS.md`, `ROADMAP.md`. Stale docs are worse than none.
 
 The authoritative workflow, testing rules, Definition of Done, and CI gates live in [specs/11-engineering-standards.md](specs/11-engineering-standards.md).
 
@@ -28,6 +28,7 @@ The authoritative workflow, testing rules, Definition of Done, and CI gates live
 | `features/F-NNN-slug.md` | One file per user-facing feature, from `features/TEMPLATE.md`; FRs referenced as `F-002/FR-4` | FR authoring rules in [features/README.md](features/README.md#writing-frs); keep the index table in `features/README.md` in sync |
 | `decisions/ADR-NNNN-slug.md` | Architecture decision records | **Immutable once accepted** — changing a decision means a new ADR that supersedes the old one; keep the index in `decisions/README.md` in sync |
 | `OPEN-QUESTIONS.md` | Deferred decisions Q1, Q2, … | Numbers are stable, never reused or renumbered; resolved questions keep their row, marked ✅ with a link to the deciding ADR/spec |
+| `ROADMAP.md` | Implementation order: phases with build order, per-phase reading lists (features/specs/ADRs), decision gates, exit criteria | Every new or re-scoped feature is assigned to a phase or the post-v1 pool **in the same change**; never records status — feature statuses live in `features/README.md`, question statuses in `OPEN-QUESTIONS.md` |
 
 Rules that bite when writing FRs (full list in [features/README.md](features/README.md#writing-frs)):
 

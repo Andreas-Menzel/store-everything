@@ -17,4 +17,4 @@ To make that possible, every uploaded file is analyzed by **pluggable extractors
 
 ## Status
 
-**Planning phase — no code yet.** This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), and open questions (`OPEN-QUESTIONS.md`).
+**Planning phase — no code yet.** This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), and the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built.

@@ -8,7 +8,7 @@ Specs 00–10 define *what the system does*; this document defines *how changes 
 
 1. **Before any change, read the governing documents**: the feature file (`features/F-NNN-…`), the affected `specs/`, related ADRs, and [OPEN-QUESTIONS.md](../OPEN-QUESTIONS.md). No implementation against documents you haven't read.
 2. **Features are specified before they are implemented.** Every feature exists as a feature file — summary, numbered FRs, acceptance criteria — *before* code is written. No feature file, no implementation.
-3. **After any change, update every affected document in the same change** — feature files, specs, OpenAPI schema, README map, user-facing docs. When a feature changes, its feature file changes with it. Stale docs are worse than none.
+3. **After any change, update every affected document in the same change** — feature files, specs, OpenAPI schema, README map, user-facing docs, the roadmap ([ROADMAP.md](../ROADMAP.md)). When a feature changes, its feature file changes with it. Stale docs are worse than none.
 4. **Divergence is never silent.** If the implementation must deviate from a spec, the same change updates the spec — or records the open point in OPEN-QUESTIONS / a new ADR. Decisions are written down where they happen.
 
 ## Development workflow (the mandatory loop)
@@ -151,7 +151,7 @@ A task is done when every line is honestly true — or explicitly marked N/A in 
 - [ ] Feature file exists / is updated; acceptance criteria & FRs demonstrably met — **by tests, not by hand**; the traceability matrix is green for every touched FR.
 - [ ] Tests added/changed/removed to match the behaviour; full suite green in CI; coverage gate met. New/changed tests **fail when their requirement is violated** (spot-checked in review); "never/only" guarantees have negative tests.
 - [ ] Shared layer checked before anything new was built; extractions follow the [four tests](#when-to-abstract--four-tests); required refactors done in scope — no quick fixes, no unrecorded debt ([reuse](#code-reuse--shared-modules), [refactor over quick fix](#refactor-over-quick-fix)).
-- [ ] All affected docs updated **in this change** (feature file, specs, OpenAPI, README, user-facing docs, OPEN-QUESTIONS).
+- [ ] All affected docs updated **in this change** (feature file, specs, OpenAPI, README, user-facing docs, OPEN-QUESTIONS, [ROADMAP](../ROADMAP.md)).
 - [ ] API changes are additive within the major; schema regenerated; generated clients not stale ([08](08-api-principles.md)).
 - [ ] Schema changes ship as a versioned migration, up **and** down tested, expand–contract safe ([10](10-deployment-and-operations.md#upgrades--migrations)).
 - [ ] New/changed dependency has a recorded justification; lockfile committed.

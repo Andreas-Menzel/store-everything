@@ -37,6 +37,8 @@ A feature is **specified here before it is implemented** — no feature file, no
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
 
+Priorities say what matters; *when* lives in [ROADMAP.md](../ROADMAP.md) — every feature is assigned to a phase (or the post-v1 pool) there, in the same change that creates or re-scopes it.
+
 Clients: **all** = web + Android + iOS must surface it · anything narrower names the clients — semantics and obligations in [Writing FRs rule 9](#writing-frs).
 
 ## Writing FRs
