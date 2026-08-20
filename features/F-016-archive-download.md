@@ -40,7 +40,7 @@ Formats beyond zip (parameter reserved). Compression tuning. Archiving search re
 
 ## Open questions
 
-None feature-local — TTL, size cap, and concurrency defaults are ops tuning (Q15 precedent). Symlink handling inside archived trees follows [Q22](../OPEN-QUESTIONS.md).
+None feature-local — TTL, size cap, and concurrency defaults are ops tuning (Q15 precedent). Symlink handling inside archived trees follows [ADR-0019](../decisions/ADR-0019-source-tree-semantics.md): links are never followed and never registered, so an archive contains only real files — there is nothing for a manifest to resolve.
 
 ## Acceptance criteria
 

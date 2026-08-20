@@ -36,8 +36,10 @@ sequenceDiagram
 ### 1. Detection
 Triggers: API upload completed · workspace import scan · re-scan reconciliation (file changed on disk) · explicit reprocess request. All converge on: *this file version needs (re)processing.*
 
+External changes reach detection through one guaranteed path and two accelerators ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md), [03 § change detection](03-storage-and-portability.md#change-detection)): a **durable per-workspace scan schedule** (default hourly stat-scan — size and mtime compared, content hash computed only for suspects) is the correctness backstop; **manual rescan** covers a workspace or a single subtree; a **filesystem watcher**, where the platform delivers events, debounces them into targeted subtree scans. The watcher is a lossy doorbell ([12](12-reliability.md#durable-schedules-lossy-doorbells)) — its absence or overflow costs latency, never correctness, which is what keeps behavior identical on mounts that deliver no events at all.
+
 ### 2. Identification
-Compute content hash → create/find `FileVersion`. If a version with identical hash was already fully extracted (e.g. a copy of an existing file), extraction results can be **reused** instead of recomputed — recorded as this file's own derived data, sourced from the cached run.
+Compute the content hash (SHA-256 — [02](02-domain-model.md#fileversion)) → create/find `FileVersion`. If a version with identical hash was already fully extracted (e.g. a copy of an existing file), extraction results can be **reused** instead of recomputed — recorded as this file's own derived data, sourced from the cached run.
 
 Identification also assigns the **media class** — a well-known metadata value ([02](02-domain-model.md#metadataentry)) derived from the detected MIME type by this core-owned mapping, present before any extractor runs so type-scoped listings work the moment a file appears ([F-002/FR-15](../features/F-002-hybrid-search.md), [F-017](../features/F-017-views.md)):
 
