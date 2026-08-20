@@ -1,0 +1,27 @@
+{
+  "case_collisions": [
+    {
+      "names": [
+        "README.txt",
+        "readme.txt"
+      ],
+      "asserts": "Two entries differing only by case must not be merged silently (Q25)."
+    },
+    {
+      "names": [
+        "Photo.JPG",
+        "photo.jpg"
+      ],
+      "asserts": "Case-only differences in extensions collide on case-insensitive volumes."
+    }
+  ],
+  "unicode_normalisation": [
+    {
+      "names": [
+        "Grüße.txt",
+        "Grüße.txt"
+      ],
+      "asserts": "NFC and NFD spellings of the same name are one file on APFS, two on ext4."
+    }
+  ]
+}

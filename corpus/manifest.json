@@ -1,0 +1,88 @@
+{
+  "$comment": [
+    "The ground-truth corpus (ADR-0015, 11-engineering-standards.md § test infrastructure).",
+    "Every fixture states where it came from, under which licence, and what truth it backs.",
+    "`sha256` and `bytes` are filled in by `make corpus`; licence and `asserts` are written",
+    "by a human, because both are claims someone has to stand behind.",
+    "Corpus v0 covers what phase 0 can trust without an extractor. Positioned documents",
+    "arrive with phase 2, images and audio/video with phase 3."
+  ],
+  "budget": {
+    "total_bytes": 20971520,
+    "max_file_bytes": 5242880
+  },
+  "fixtures": [
+    {
+      "path": "text/known-phrases.txt",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Five UTF-8 lines. Line 3 is 'The quick brown fox jumps over the lazy dog.'; line 4 is German; the phrase 'xylophone marmalade' occurs exactly once, on line 5.",
+      "sha256": "8969014aa52a6170644e7d7ce676bc447f977a0ba43e456544cec1fb3b6abb94",
+      "bytes": 252
+    },
+    {
+      "path": "text/sample.md",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Markdown with two headings ('Fixture heading', 'Second heading') and a two-item list; 'xylophone marmalade' occurs exactly once.",
+      "sha256": "a98489d3a33c23abf86ab0f97f9bda976c7ab8888816b855f348362d8647fbba",
+      "bytes": 165
+    },
+    {
+      "path": "adversarial/zero-byte.bin",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Empty file: ingestion must register it without dividing by its size or failing extraction.",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "adversarial/truncated.png",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "PNG signature followed by an incomplete IHDR chunk: decoders must report a failed extraction, never crash the worker.",
+      "sha256": "e506e2cfd9f9c82f4698bf0a6cdf610c2d951c8db20f372bbd1c77b528948a64",
+      "bytes": 24
+    },
+    {
+      "path": "adversarial/oversized-dimensions.png",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Valid header declaring 100000x100000 pixels: a decoder must refuse it on declared size rather than allocating ~40 GB.",
+      "sha256": "4fdde33442353f1e6b6e95009b284411e70b5e0f9a02600dade5524794a8076b",
+      "bytes": 33
+    },
+    {
+      "path": "adversarial/zip-slip.zip",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Archive containing '../escaped.txt' and 'nested/../../escaped-too.txt': extraction must never write outside its destination directory.",
+      "sha256": "2608985813e7baea72bb9a4823c13174a634d4fb4c0588ff6de21dabda51e317",
+      "bytes": 412
+    },
+    {
+      "path": "adversarial/mislabeled-extension.png",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Plain text carrying a .png extension: routing must follow sniffed content, not the file name.",
+      "sha256": "c65a0583ebfcfd869da4da09e0221fd33ef07cb0449710c2e18967b35eca57a9",
+      "bytes": 31
+    },
+    {
+      "path": "adversarial/hostile-names.json",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Name pairs that collide under case-folding (Q25) or unicode normalisation. Data rather than files: committing both members of a pair would break checkout on case-insensitive volumes, so tests materialise them at runtime and skip where the filesystem cannot hold them.",
+      "sha256": "5b676b39479b05baeaab81dbafda7185c36c2c6d0576bcb0c1f603db2e65b080",
+      "bytes": 584
+    }
+  ]
+}
