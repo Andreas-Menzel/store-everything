@@ -172,6 +172,14 @@ $UV run pytest tests/test_gate_probe.py -q --fr-report="$report" >/dev/null 2>&1
 expect_failure "traceability matrix" $UV run python -m tools.traceability --report "$report"
 rm -f "$fixture" "$report"
 
+# ----------------------------------------------------------------- corpus manifest
+# A fixture nobody documented is a fixture nobody can trust.
+fixture="corpus/fixtures/text/_gate-undocumented.txt"
+track "$fixture"
+printf 'undocumented fixture\n' > "$fixture"
+expect_failure "corpus manifest" $UV run python -m tools.corpus
+rm -f "$fixture"
+
 # --------------------------------------------------------------- commit format
 if require_tool uvx "commit format"; then
   expect_failure "commit format" uvx --from commitizen cz check --message "broke the convention"

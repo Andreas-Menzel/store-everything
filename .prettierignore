@@ -1,5 +1,7 @@
-# Generated: rewritten by `make openapi`, never edited by hand.
+# Generated: rewritten by `make openapi` / `make corpus`, never edited by hand.
+# Reformatting a fixture would break the hash recorded for it in the manifest.
 openapi.json
+corpus/fixtures/
 packages/api-client/src/generated/
 
 # Build output and caches

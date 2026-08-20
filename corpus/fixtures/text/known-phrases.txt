@@ -1,0 +1,5 @@
+Store Everything corpus fixture.
+This line is the second line of the file.
+The quick brown fox jumps over the lazy dog.
+Ein Satz auf Deutsch, damit die Sprachtrennung etwas zu tun hat.
+The final line mentions a distinctive phrase: xylophone marmalade.

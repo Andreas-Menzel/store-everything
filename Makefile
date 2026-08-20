@@ -4,7 +4,10 @@ PNPM := pnpm
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint format typecheck test test-unit e2e check openapi build storybook migrate run clean
+# Every target is a task, never a file — `corpus` in particular collides with the
+# directory of the same name, and make would otherwise consider it already built.
+.PHONY: help install lint format typecheck test test-unit e2e corpus spec-lint matrix \
+	check licenses notice audit verify-gates openapi build storybook migrate run clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -39,6 +42,10 @@ test-unit: ## Run only the tests that need no container
 
 e2e: ## Run the browser tests headless
 	$(PNPM) --filter @store-everything/web run e2e
+
+corpus: ## Regenerate the corpus fixtures, manifest hashes and attribution
+	$(UV) run python ../corpus/generate.py
+	$(UV) run python -m tools.corpus --refresh --attribution ../corpus/ATTRIBUTION.md
 
 spec-lint: ## Check the specification documents against their authoring rules
 	$(UV) run python -m tools.spec_lint
