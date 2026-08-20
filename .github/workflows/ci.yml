@@ -56,7 +56,32 @@ jobs:
       # Integration tests start a real PostgreSQL via testcontainers; migrations are
       # exercised up *and* down there, and the coverage floor is enforced by pytest.
       - name: Tests
-        run: uv run --directory server pytest --cov
+        run: uv run --directory server pytest --cov --fr-report=../traceability-report.json
+      # `Implemented` is computed here, never claimed in a feature file. The matrix
+      # is a CI artefact on purpose: a generated file in the repository goes stale.
+      - name: Requirement traceability
+        run: |
+          uv run --directory server python -m tools.traceability \
+            --report ../traceability-report.json --output ../traceability-matrix.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: traceability-matrix
+          path: traceability-matrix.md
+
+  docs:
+    name: Specification lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --directory server --all-groups --locked
+      # Structural rules only — ids, methods, cross-references, index agreement. Vague
+      # wording warns, because a human must choose the number that replaces the word.
+      - name: Specification documents
+        run: uv run --directory server python -m tools.spec_lint
 
   web:
     name: Web client

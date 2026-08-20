@@ -83,13 +83,20 @@ reportUnknownParameterType = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The FR plugin lives in tools/, which is not an installed package; pytest must be able
+# to import it before it loads plugins.
+pythonpath = ["."]
 asyncio_mode = "strict"
-addopts = "--strict-markers --strict-config"
+addopts = "--strict-markers --strict-config -p tools.fr_plugin"
 markers = [
     # Requirement traceability (11-engineering-standards.md § requirement traceability).
     # Consumed by the matrix generator; no feature FRs exist yet in phase 0.
     "fr(id): the feature requirement this test verifies, e.g. fr('F-002/FR-7')",
     "integration: needs a real PostgreSQL (started as a throwaway container)",
+    # Declare a non-default verification method (11 § verification methods per FR).
+    "benchmark: verifies its FR by threshold-scored benchmark, not a deterministic test",
+    "fault_injection: verifies its FR by crash injection",
+    "drill: verifies its FR by an exercised procedure (restore, upgrade)",
 ]
 
 [tool.coverage.run]
