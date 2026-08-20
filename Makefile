@@ -30,7 +30,7 @@ typecheck: ## Static type check
 	$(PNPM) run typecheck
 
 test: ## Run the unit and integration suites (needs Docker for the database)
-	$(UV) run pytest --cov
+	$(UV) run pytest --cov --fr-report=../traceability-report.json
 	$(PNPM) run test
 
 test-unit: ## Run only the tests that need no container
@@ -40,7 +40,14 @@ test-unit: ## Run only the tests that need no container
 e2e: ## Run the browser tests headless
 	$(PNPM) --filter @store-everything/web run e2e
 
-check: lint typecheck test e2e ## Everything the pipeline will check
+spec-lint: ## Check the specification documents against their authoring rules
+	$(UV) run python -m tools.spec_lint
+
+matrix: ## Build the requirement traceability matrix from the last test run
+	$(UV) run python -m tools.traceability \
+		--report ../traceability-report.json --output ../traceability-matrix.md
+
+check: lint spec-lint typecheck test matrix e2e ## Everything the pipeline will check
 
 licenses: ## Check dependency licences against the policy
 	$(UV) run python -m tools.check_licenses

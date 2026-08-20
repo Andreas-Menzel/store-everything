@@ -134,6 +134,44 @@ printf 'export const answer: number = "forty-two";\n' > "$fixture"
 expect_failure "vue-tsc" $PNPM --filter @store-everything/web run typecheck
 rm -f "$fixture"
 
+# ------------------------------------------------------------------- spec lint
+# Malformed ids break traceability silently, so the lint treats them as errors.
+fixture="features/F-999-gate-probe.md"
+track "$fixture"
+cat > "$fixture" <<'PROBE_MD'
+# F-999 — Gate Probe
+
+**Status:** Draft
+**Priority:** P2
+**Clients:** all
+**Depends on:** —
+
+## Functional requirements
+
+- **FR-1** One.
+- **FR-1** One again, with the same id.
+PROBE_MD
+expect_failure "spec lint" $UV run python -m tools.spec_lint
+rm -f "$fixture"
+
+# ------------------------------------------------------- traceability matrix gate
+# A test marking a requirement that does not exist guards nothing at all.
+fixture="server/tests/test_gate_probe.py"
+track "$fixture"
+report="$(mktemp -t gate-fr-XXXXXX.json)"
+track "$report"
+cat > "$fixture" <<'PROBE_PY'
+import pytest
+
+
+@pytest.mark.fr("F-999/FR-404")
+def test_marks_a_requirement_that_does_not_exist() -> None:
+    assert True
+PROBE_PY
+$UV run pytest tests/test_gate_probe.py -q --fr-report="$report" >/dev/null 2>&1
+expect_failure "traceability matrix" $UV run python -m tools.traceability --report "$report"
+rm -f "$fixture" "$report"
+
 # --------------------------------------------------------------- commit format
 if require_tool uvx "commit format"; then
   expect_failure "commit format" uvx --from commitizen cz check --message "broke the convention"

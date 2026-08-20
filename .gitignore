@@ -30,6 +30,7 @@ test-results/
 
 # Generated reports (never committed — 11-engineering-standards.md)
 traceability-matrix.*
+traceability-report.*
 sbom.*
 THIRD-PARTY-LICENSES*
 
