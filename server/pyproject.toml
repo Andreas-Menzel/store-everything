@@ -1,6 +1,6 @@
 [project]
 name = "store-everything"
-version = "0.0.0"
+version = "0.1.0"
 description = "Store Everything — core API service and ingestion orchestrator"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
