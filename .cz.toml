@@ -1,0 +1,19 @@
+# Releases are derived, never hand-made (11-engineering-standards.md § versioning).
+# `make release` reads the Conventional Commits since the last tag, works out the bump,
+# rewrites CHANGELOG.md, updates the version everywhere it is recorded, and creates the
+# annotated tag. Manual tags and hand-edited changelogs are forbidden; CI publishes
+# images from tags only.
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.0.0"
+tag_format = "v$version"
+version_scheme = "semver"
+# Below 1.0.0 a breaking change bumps the minor, so the major stays 0 until v1.0.
+major_version_zero = true
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+version_files = [
+    "server/pyproject.toml:^version",
+    "package.json:\"version\"",
+]

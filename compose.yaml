@@ -1,0 +1,113 @@
+# Production deployment (ADR-0005, ADR-0009, 10-deployment-and-operations.md).
+#
+# Only the API joins the external Traefik network; PostgreSQL stays internal with no
+# ingress. TLS, HSTS and the HTTP→HTTPS redirect belong to Traefik — this stack serves
+# plain HTTP on the internal network only.
+#
+#   docker compose up -d                      # start
+#   docker compose run --rm migrations        # apply schema migrations
+#
+# For a development machine without a proxy, add the override:
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d
+
+name: store-everything
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      # PostgreSQL 18 nests its data directory so that `pg_upgrade --link` works; the
+      # pre-18 path (/var/lib/postgresql/data) makes the container refuse to start.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP on purpose: during initdb the server accepts only the unix socket, so a
+      # socket probe reports ready while connections from the API would still be refused.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [internal]
+
+  api:
+    image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SE_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SE_APP_ENV: production
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_HOST: 0.0.0.0
+      SE_API_DOCS_ENABLED: ${SE_API_DOCS_ENABLED:-true}
+      SE_CORS_ALLOW_ORIGINS: ${SE_CORS_ALLOW_ORIGINS:-}
+      # Only the proxy's address on the shared network is trusted; a spoofed client IP
+      # would poison rate limiting and the audit trail (ADR-0009).
+      SE_FORWARDED_ALLOW_IPS: ${SE_FORWARDED_ALLOW_IPS:-}
+    healthcheck:
+      # Readiness, not liveness: an instance whose migrations are pending must not be
+      # sent traffic (10-deployment-and-operations.md § health & readiness).
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/readyz')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    # Sized for checkpoint-and-release, never for job duration: a graceful stop only
+    # releases leases so a successor resumes at once (ADR-0010).
+    stop_grace_period: 30s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [internal, edge]
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.store-everything.rule: Host(`${PUBLIC_HOST:?set PUBLIC_HOST in .env}`)
+      traefik.http.routers.store-everything.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.store-everything.tls: 'true'
+      traefik.http.routers.store-everything.tls.certresolver: ${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      traefik.http.services.store-everything.loadbalancer.server.port: '8000'
+
+  # Never starts on its own: when migrations run on upgrade is still open (Q20), so
+  # applying them stays an explicit act.
+  #   docker compose run --rm migrations
+  migrations:
+    image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
+    build:
+      context: ./server
+    profiles: [tools]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SE_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SE_APP_ENV: production
+    command: ['alembic', 'upgrade', 'head']
+    restart: 'no'
+    networks: [internal]
+
+# The orchestrator and the extractor containers join this file in phases 1 and 2, when
+# there is something for them to run.
+
+volumes:
+  postgres-data:
+
+networks:
+  internal:
+    driver: bridge
+  edge:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
