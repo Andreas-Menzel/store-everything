@@ -1,0 +1,10 @@
+packages:
+  - web
+  - packages/*
+
+# Build scripts are blocked by default; each entry here is a deliberate approval.
+allowBuilds:
+  # Selects the Vue 2 or Vue 3 build of the shim pinia and @tanstack/vue-query depend on.
+  vue-demi: true
+  # Links the platform-native binary; Storybook and Vite cannot bundle without it.
+  esbuild: true

@@ -22,6 +22,7 @@ build/
 node_modules/
 .pnpm-store/
 web/dist/
+web/coverage/
 storybook-static/
 playwright-report/
 test-results/

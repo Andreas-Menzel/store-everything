@@ -94,7 +94,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 5. **[F-001](features/F-001-upload-and-import.md) — upload & import**: resumable upload protocol (per Q38), workspace import/adoption, re-scan detecting external add/modify/delete.
 6. **[F-015](features/F-015-folders.md) — folders**: UUID identity surviving rename/move, reconciliation, aggregates; **move/rename as first-class operations** (this is deferred [F-010](features/F-010-auto-sort-inbox.md)'s v1 obligation FR-1; FR-3's workspace-model flexibility is a design constraint here too).
 7. **[F-007](features/F-007-versioning.md) — write path only** *(staged)*: a new upload to an existing path or a changed file on re-scan preserves the previous content in `versions/` — no data-loss window, ever. Version browsing/restore/search and retention land in phase 4.
-8. **Web UI shell** (Vue 3 SPA — [ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)): login, browse, upload, download.
+8. **Web UI shell** (Vue 3 SPA — [ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)): login, browse, upload, download — plus the **authenticated interactive API docs page** ([08](specs/08-api-principles.md)), which waits for login to exist because the schema endpoint is never public.
 
 **Read first**
 - **Features:** [F-001](features/F-001-upload-and-import.md) · [F-015](features/F-015-folders.md) · [F-007](features/F-007-versioning.md) (write-path part) · [F-011](features/F-011-audit-trail.md) (log part) · [F-010](features/F-010-auto-sort-inbox.md) (v1 obligations only)

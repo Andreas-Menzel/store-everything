@@ -1,35 +1,56 @@
 SERVER := server
 UV := uv --directory $(SERVER)
+PNPM := pnpm
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint format typecheck test test-unit check migrate run clean
+.PHONY: help install lint format typecheck test test-unit e2e check openapi build storybook migrate run clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install all dependencies from the lockfile
+install: ## Install all dependencies from the lockfiles
 	$(UV) sync --all-groups
+	$(PNPM) install
 
 lint: ## Check lint rules and formatting
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
+	$(PNPM) run lint
+	$(PNPM) run format:check
 
 format: ## Apply safe lint fixes and formatting
 	$(UV) run ruff check --fix .
 	$(UV) run ruff format .
+	$(PNPM) run format
 
 typecheck: ## Static type check
 	$(UV) run pyright
+	$(PNPM) run typecheck
 
-test: ## Run the full suite with coverage (needs Docker for integration tests)
+test: ## Run the unit and integration suites (needs Docker for the database)
 	$(UV) run pytest --cov
+	$(PNPM) run test
 
 test-unit: ## Run only the tests that need no container
 	$(UV) run pytest -m "not integration"
+	$(PNPM) run test
 
-check: lint typecheck test ## Everything the pipeline will check
+e2e: ## Run the browser tests headless
+	$(PNPM) --filter @store-everything/web run e2e
+
+check: lint typecheck test e2e ## Everything the pipeline will check
+
+openapi: ## Regenerate the contract and the typed client from the code
+	$(UV) run python -m tools.export_openapi
+	$(PNPM) run generate:api
+
+build: ## Production build of the web app
+	$(PNPM) run build
+
+storybook: ## Serve the component showcase
+	$(PNPM) --filter @store-everything/web run storybook
 
 migrate: ## Apply database migrations
 	$(UV) run alembic upgrade head
@@ -39,5 +60,6 @@ run: ## Serve the API locally
 
 clean: ## Remove caches and build artefacts
 	rm -rf $(SERVER)/.pytest_cache $(SERVER)/.ruff_cache $(SERVER)/.coverage \
-		$(SERVER)/htmlcov $(SERVER)/dist $(SERVER)/build
+		$(SERVER)/htmlcov $(SERVER)/dist $(SERVER)/build \
+		web/dist web/coverage web/storybook-static web/playwright-report web/test-results
 	find $(SERVER) -name '__pycache__' -type d -prune -exec rm -rf {} +

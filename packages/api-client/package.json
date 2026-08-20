@@ -1,0 +1,20 @@
+{
+  "name": "@store-everything/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed client generated from the committed OpenAPI document. Never edit by hand.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"generated package: no tests\" && exit 0",
+    "lint": "echo \"generated package: no lint\" && exit 0"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.99.0",
+    "typescript": "^5.9.3"
+  }
+}

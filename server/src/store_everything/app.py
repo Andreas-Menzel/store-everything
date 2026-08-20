@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from store_everything import __version__
@@ -22,6 +23,16 @@ from store_everything.problems import install_exception_handlers
 _logger = logging.getLogger(__name__)
 
 _SUMMARY = "Self-hosted personal cloud where search is the product."
+
+
+def _operation_id(route: APIRoute) -> str:
+    """Name operations after their handler.
+
+    FastAPI's default (`healthz_healthz_get`) becomes the function name in every
+    generated client, so the contract fixes readable ids instead. Uniqueness is asserted
+    by the test suite, because a collision would produce an invalid document.
+    """
+    return route.name
 
 
 @asynccontextmanager
@@ -45,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         summary=_SUMMARY,
         version=__version__,
         lifespan=_lifespan,
+        generate_unique_id_function=_operation_id,
         # The built-in docs routes are public; ours are mounted under /api/v1 behind
         # authentication instead (08-api-principles.md).
         docs_url=None,

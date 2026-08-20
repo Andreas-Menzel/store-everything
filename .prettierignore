@@ -1,0 +1,18 @@
+# Generated: rewritten by `make openapi`, never edited by hand.
+openapi.json
+packages/api-client/src/generated/
+
+# Build output and caches
+dist/
+coverage/
+storybook-static/
+playwright-report/
+test-results/
+pnpm-lock.yaml
+
+# Owned by other toolchains
+server/
+LICENSE
+
+# Documentation is hand-formatted; reflowing it would bury real changes in noise.
+*.md
