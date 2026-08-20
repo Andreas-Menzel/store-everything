@@ -15,6 +15,11 @@ REPO_ROOT="$PWD"
 UV="uv --directory server"
 PNPM="${PNPM:-pnpm}"
 
+# Locally a missing tool may be skipped: nobody needs every scanner installed to check
+# the other gates. In CI it must not be — a gate that can quietly vanish is exactly what
+# this script exists to prevent — so the pipeline sets REQUIRE_ALL_GATES=1.
+REQUIRE_ALL_GATES="${REQUIRE_ALL_GATES:-0}"
+
 failures=0
 skipped=0
 fixtures=()
@@ -45,8 +50,14 @@ require_tool() {
   if command -v "$1" >/dev/null 2>&1; then
     return 0
   fi
-  printf '  \033[33mskip\033[0m  %s — %s is not installed here\n' "$2" "$1"
-  skipped=$((skipped + 1))
+  if [ "$REQUIRE_ALL_GATES" = "1" ]; then
+    printf '  \033[31mFAIL\033[0m  %s — %s is not installed, and skipping is not allowed here\n' \
+      "$2" "$1"
+    failures=$((failures + 1))
+  else
+    printf '  \033[33mskip\033[0m  %s — %s is not installed here\n' "$2" "$1"
+    skipped=$((skipped + 1))
+  fi
   return 1
 }
 

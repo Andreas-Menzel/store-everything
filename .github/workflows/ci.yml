@@ -13,6 +13,11 @@ concurrency:
 permissions:
   contents: read
 
+# Scanner pinning is deliberately split. Trivy and Syft float on `latest`, because a
+# vulnerability scanner should fail us on findings published after this file was written
+# — so this pipeline can legitimately go red without any change of ours. gitleaks is
+# pinned, because the gate self-test asserts what it detects, and a scanner that silently
+# changes its detections would make that test flaky. Bumping it is a deliberate edit.
 env:
   NODE_VERSION: '24'
   GITLEAKS_VERSION: '8.30.1'
@@ -137,7 +142,11 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /usr/local/bin gitleaks
       # Every gate must reject a deliberately violating sample, or it is decoration.
+      # REQUIRE_ALL_GATES turns "tool not installed" from a skip into a failure: in CI a
+      # gate that quietly vanishes is the very thing this job exists to catch.
       - name: Gates reject violating samples
+        env:
+          REQUIRE_ALL_GATES: '1'
         run: ./tools/verify-gates.sh
 
   security:
