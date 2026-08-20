@@ -31,6 +31,15 @@ ENV PATH="/app/.venv/bin:$PATH" \
     SE_HOST=0.0.0.0 \
     SE_PORT=8000
 
+# The runtime never installs packages: the virtualenv is built in the builder stage and
+# copied in whole. Removing pip takes its vendored dependency tree with it — the only
+# source of CVEs in this image, none of it reachable from the app — and removes one way
+# to mutate a running container.
+RUN rm -rf /usr/local/lib/python3.*/site-packages/pip \
+           /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
+           /usr/local/lib/python3.*/ensurepip \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
+
 # Runs unprivileged: the service needs no root capability, and the source tree it
 # will later write to is mounted with explicit ownership.
 RUN useradd --create-home --uid 10001 app

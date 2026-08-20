@@ -31,6 +31,7 @@ Rules:
 3. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
 4. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
 5. Local development runs without a proxy (localhost bind, plain HTTP).
+6. **The runtime image contains no package installer.** The virtualenv is built at image-build time and copied in; `pip` and `ensurepip` are removed. A running container therefore cannot install code, and the image does not inherit pip's vendored dependency tree — which is otherwise its only source of CVEs. Enforced in CI ([11](11-engineering-standards.md#ci-pipeline-the-enforcement-list)).
 
 ## Edge vs. app responsibilities
 
