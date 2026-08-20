@@ -1,0 +1,39 @@
+{
+  "$comment": [
+    "Licence policy for dependencies we distribute (ADR-0016). Development-only tooling",
+    "is out of scope — it never ships. Adding an entry here is a deliberate, reviewed",
+    "decision: it asserts the licence is compatible with distributing this AGPL-3.0 work.",
+    "Enforced by `make licenses`."
+  ],
+  "allowed": [
+    "MIT",
+    "MIT License",
+    "MIT AND PSF-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD License",
+    "ISC",
+    "Apache-2.0",
+    "Apache Software License",
+    "Apache Software License; MIT License",
+    "Python Software Foundation License",
+    "PSF-2.0",
+    "MPL-2.0",
+    "LGPL-3.0-only"
+  ],
+  "rationale": {
+    "LGPL-3.0-only": "psycopg and its helpers. The LGPL explicitly permits use by, and distribution with, a (A)GPL-3.0 work; we link it unmodified and ship its source availability notice.",
+    "MPL-2.0": "lightningcss (via Tailwind). File-level copyleft: MPL-2.0 §3.3 permits distribution as part of a larger AGPL-3.0 work provided the MPL-covered files stay under the MPL.",
+    "Apache Software License; MIT License": "uvloop declares both; either alone is compatible."
+  },
+  "packageExceptions": {
+    "python:colorama": {
+      "license": "BSD-3-Clause",
+      "reason": "Windows-only conditional dependency (sys_platform == 'win32'), so its metadata is absent on the Linux and macOS hosts that run this check. Declared here to keep the verdict identical on every platform."
+    },
+    "python:tzdata": {
+      "license": "Apache-2.0",
+      "reason": "Windows-only conditional dependency; same reasoning as colorama."
+    }
+  }
+}

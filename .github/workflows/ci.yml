@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you nothing; cancel it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  GITLEAKS_VERSION: '8.30.1'
+
+jobs:
+  commits:
+    name: Commit format
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Conventional Commits
+        run: >
+          uvx --from commitizen cz check
+          --rev-range ${{ github.event.pull_request.base.sha }}..${{ github.sha }}
+
+  server:
+    name: Core service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --directory server --all-groups --locked
+      - name: Lint
+        run: |
+          uv run --directory server ruff check .
+          uv run --directory server ruff format --check .
+      - name: Types
+        run: uv run --directory server pyright
+      # Integration tests start a real PostgreSQL via testcontainers; migrations are
+      # exercised up *and* down there, and the coverage floor is enforced by pytest.
+      - name: Tests
+        run: uv run --directory server pytest --cov
+
+  web:
+    name: Web client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: |
+          pnpm run lint
+          pnpm run format:check
+      - name: Types
+        run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm run test
+      - name: Build
+        run: pnpm run build
+      - name: Install browser
+        run: pnpm --filter @store-everything/web exec playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: pnpm --filter @store-everything/web run e2e
+      - name: Component showcase builds
+        run: pnpm --filter @store-everything/web run build-storybook
+
+  contract:
+    name: Contract and licences
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: |
+          uv sync --directory server --all-groups --locked
+          pnpm install --frozen-lockfile
+      # The schema and the client are committed, so a change to either must arrive with
+      # the change that causes it (08-api-principles.md).
+      - name: Contract and generated client are current
+        run: |
+          make openapi
+          git diff --exit-code -- openapi.json packages/api-client/src/generated \
+            || { echo '::error::openapi.json or the generated client is stale. Run: make openapi'; exit 1; }
+      - name: Dependency licences
+        run: uv run --directory server python -m tools.check_licenses
+      - name: Third-party notice generates
+        run: uv run --directory server python -m tools.check_licenses --notice ../THIRD-PARTY-LICENSES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-party-licenses
+          path: THIRD-PARTY-LICENSES.md
+
+  gates:
+    name: Gate self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: |
+          uv sync --directory server --all-groups --locked
+          pnpm install --frozen-lockfile
+      - name: Install gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+      # Every gate must reject a deliberately violating sample, or it is decoration.
+      - name: Gates reject violating samples
+        run: ./tools/verify-gates.sh
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Install gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+      - name: Secret scan
+        run: gitleaks dir . --no-banner --redact
+      - name: Python dependency vulnerabilities
+        run: |
+          uv export --directory server --no-dev --no-emit-project --no-hashes --no-annotate \
+            --format requirements-txt > /tmp/prod-requirements.txt
+          uvx pip-audit --requirement /tmp/prod-requirements.txt
+      - name: JavaScript dependency vulnerabilities
+        run: pnpm audit --prod --audit-level moderate
+
+  image:
+    name: Image build and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t store-everything-core:ci server/
+      # Publishing happens from tags only (11-engineering-standards.md § versioning).
+      - name: Vulnerability scan
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
+            --ignore-unfixed --no-progress store-everything-core:ci
+      - name: Software bill of materials
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/syft:latest store-everything-core:ci -o spdx-json > sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json

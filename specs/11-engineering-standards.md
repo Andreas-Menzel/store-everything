@@ -184,4 +184,6 @@ All blocking: lint + format check · type check · unit tests · integration tes
 
 Scheduled / release-gating rather than per-PR: benchmark suite against its thresholds (Q8, Q27) · upgrade-path test from the previous tagged release · restore drill (once Q13 resolves) · mutation run on the authz core (later, Q29).
 
+**The gates are themselves tested.** A check that has never been observed to fail is a claim, not a gate: `tools/verify-gates.sh` feeds every gate a deliberately violating sample — an unused import, a mis-formatted file, a type error, a drifted schema, a forbidden `fetch` in a feature, a disallowed dependency licence, a malformed commit message, a planted secret — and fails if any gate accepts it. It runs in CI beside the gates it verifies.
+
 Advisory (non-blocking): copy-paste/duplication report — input to the [reuse check](#code-reuse--shared-modules) in review, not a gate.

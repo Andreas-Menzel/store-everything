@@ -42,6 +42,21 @@ e2e: ## Run the browser tests headless
 
 check: lint typecheck test e2e ## Everything the pipeline will check
 
+licenses: ## Check dependency licences against the policy
+	$(UV) run python -m tools.check_licenses
+
+notice: ## Generate the third-party licence notice
+	$(UV) run python -m tools.check_licenses --notice ../THIRD-PARTY-LICENSES.md
+
+audit: ## Scan dependencies for known vulnerabilities
+	$(UV) export --no-dev --no-emit-project --no-hashes --no-annotate \
+		--format requirements-txt > /tmp/store-everything-requirements.txt
+	uvx pip-audit --requirement /tmp/store-everything-requirements.txt
+	$(PNPM) audit --prod --audit-level moderate
+
+verify-gates: ## Prove every pipeline gate rejects a violating sample
+	./tools/verify-gates.sh
+
 openapi: ## Regenerate the contract and the typed client from the code
 	$(UV) run python -m tools.export_openapi
 	$(PNPM) run generate:api
