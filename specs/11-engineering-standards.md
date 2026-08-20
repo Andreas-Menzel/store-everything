@@ -155,6 +155,7 @@ A task is done when every line is honestly true — or explicitly marked N/A in 
 - [ ] API changes are additive within the major; schema regenerated; generated clients not stale ([08](08-api-principles.md)).
 - [ ] Schema changes ship as a versioned migration, up **and** down tested, expand–contract safe ([10](10-deployment-and-operations.md#upgrades--migrations)).
 - [ ] New/changed dependency has a recorded justification; lockfile committed.
+- [ ] A new or changed **CI gate ships with the violating sample that proves it fails** (`tools/verify-gates.sh`) — otherwise it is a claim, not a gate.
 - [ ] Conventional Commits; PR small and focused, linked to its issue; all threads resolved.
 
 The feature template links this checklist; feature-specific criteria come **on top of** it, never instead of it.
@@ -162,6 +163,7 @@ The feature template links this checklist; feature-specific criteria come **on t
 ## Git & commits
 
 - Trunk is `main`, protected: no direct pushes, PR + green pipeline required. Work happens on short-lived `feature/*` / `fix/*` / `chore/*` branches (< ~2 days), deleted on merge. (Deliberately simpler than a two-trunk flow: a self-hosted product has tagged releases, not a staging trunk.)
+- **A PR is one reviewable step, not one commit and not one phase.** Several commits per PR is normal; a [roadmap](../ROADMAP.md) phase spans several PRs and is closed by a tag, never by a single merge. A PR whose diff cannot be reviewed in one sitting should have been two.
 - **Conventional Commits are required:** `type(scope): subject` with types `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert`; breaking changes marked `feat!:` or a `BREAKING CHANGE:` footer; issues referenced in footers (`Refs: #123` / `Resolves: #123`).
 - **Configured AND enforced:** commit format, lint, types, tests, coverage — every declared convention is a CI gate. An unenforced convention is a suggestion that rots.
 
