@@ -21,7 +21,7 @@ PostgreSQL with pgvector as the single datastore ([ADR-0001](decisions/ADR-0001-
 
 ## Status
 
-**Phase 0 — foundations & toolchain.** The specification is essentially complete, the stack decisions are made, and the core service exists as a deployable skeleton: health and readiness probes, migrations, structured logging, the problem+json error envelope, and a deny-by-default API surface. **No product feature is implemented yet** — files, search, and accounts start in phase 1.
+**Phase 0 complete (v0.1.0); phase 1 — files & identity — is next.** The deployable skeleton is in place: health and readiness probes, migrations, structured logging, the problem+json error envelope, a deny-by-default API surface, and a pipeline whose every gate is proven able to fail. **No product feature is implemented yet** — files, search, and accounts start in phase 1.
 
 This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built — the core service in [`server/`](server/README.md), the web UI in [`web/`](web/README.md), and the API contract in `openapi.json`, from which the typed client in `packages/api-client` is generated.
 
