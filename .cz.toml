@@ -6,7 +6,7 @@
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
+version = "0.0.0"
 tag_format = "v$version"
 version_scheme = "semver"
 # Below 1.0.0 a breaking change bumps the minor, so the major stays 0 until v1.0.
