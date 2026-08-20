@@ -94,7 +94,7 @@ What each platform honestly supports for "upload soon after capture" — feature
 
 Byte-exactness requirements: Android needs `ACCESS_MEDIA_LOCATION` + `MediaStore.setRequireOriginal` (otherwise the OS strips GPS EXIF — silently different bytes); iOS originals come from `PHAssetResource` (never the rendered-image APIs), with iCloud-optimized originals fetched on demand.
 
-**Server coupling:** the iOS upload extension drives the server directly using the IETF resumable-upload protocol — whether our upload wire format ([F-001/FR-2](../features/F-001-upload-and-import.md), [03](03-storage-and-portability.md#uploads)) adopts it is **Q38**, to be decided before F-001 is implemented.
+**Server coupling:** the iOS upload extension drives the server directly using the IETF resumable-upload protocol, which is exactly what our upload wire format speaks ([F-001/FR-2](../features/F-001-upload-and-import.md), [03 § uploads](03-storage-and-portability.md#uploads), [ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)) — including the `OPTIONS` preflight answered with `Upload-Limit` and the `104` interim response the extension treats as the authoritative signal.
 
 ## Security
 

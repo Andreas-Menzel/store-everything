@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -57,6 +57,32 @@ class Settings(BaseSettings):
     (ADR-0009, 10-deployment-and-operations.md), so this is opt-in per deployment.
     """
 
+    # ------------------------------------------------------------------ identity
+
+    bootstrap_admin_email: str = ""
+    """With `bootstrap_admin_password`, creates the first admin on an instance that has
+    **zero** users (07-identity-permissions-sharing.md § users). Ignored once any account
+    exists, so leaving it set is not a standing back door."""
+
+    bootstrap_admin_password: SecretStr | None = None
+
+    session_idle_expiry_days: int = Field(default=14, gt=0)
+    """Rolling idle lifetime of a web session: use extends it, absence lapses it."""
+
+    session_cookie_secure: bool = True
+    """Only ever false for local development over plain HTTP. The cookie name follows:
+    the `__Host-` prefix is invalid without `Secure`, so a browser would reject it."""
+
+    login_max_attempts: int = Field(default=10, gt=0)
+    """Failed logins per identity and per client address inside the lockout window before
+    further attempts are refused (07 § abuse protection)."""
+
+    login_lockout_minutes: int = Field(default=15, gt=0)
+
+    rate_limit_per_minute: int = Field(default=300, gt=0)
+    """Per-credential (or per-address, unauthenticated) request ceiling for `/api/v1`.
+    Volumetric abuse is the edge's job; this is the app-level backstop."""
+
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -79,6 +105,15 @@ class Settings(BaseSettings):
     @property
     def trust_proxy_headers(self) -> bool:
         return bool(self.forwarded_allow_ips.strip())
+
+    @property
+    def session_cookie_name(self) -> str:
+        """The `__Host-` prefix pins a cookie to one origin and forbids a `Domain`
+        attribute — but it is only valid alongside `Secure`, and a browser rejects the
+        prefixed name without it. Development over plain HTTP therefore gets the plain
+        name; production gets the hardened one.
+        """
+        return "__Host-se_session" if self.session_cookie_secure else "se_session"
 
 
 def load_settings() -> Settings:

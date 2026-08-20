@@ -23,7 +23,7 @@ The HTTP API is the product's only interface. Rules:
 | Long-running work | Async job resources: `POST` returns `202` + job id; `GET /jobs/{id}` for status/progress; ingestion/reprocessing statuses queryable per file and instance-wide. Jobs survive restarts; lifecycle mechanics (leases, retries, dead-letter): [12](12-reliability.md) |
 | Events | Change feed (`/events` cursor endpoint) backed by the unified event log ([ADR-0007](../decisions/ADR-0007-unified-event-log.md)), plus a WebSocket channel pushing **thin, coalesced notifications** — clients refetch via the normal API ([F-012](../features/F-012-live-updates.md)). Webhooks possible later |
 | Errors | RFC 9457 `application/problem+json`, one envelope everywhere — see [Errors](#errors-rfc-9457) below |
-| Uploads | Chunked/resumable for large files (multi-GB videos) |
+| Uploads | The **IETF resumable-upload protocol**, implemented in-app and the only upload path ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)): creation carrying `Upload-Complete`, interim `104` + `Location`, `HEAD` offset probe, `PATCH` append (`application/partial-upload`), `DELETE` cancel, `OPTIONS` advertising `Upload-Limit`. Interop versions 9/8/6 from one dialect table; an unknown version is served as an ordinary upload. Requires an edge that forwards `1xx` and does not buffer request bodies ([10](10-deployment-and-operations.md#edge-vs-app-responsibilities)) |
 | Downloads | Range requests supported (streaming video, extractor byte-range access) |
 | Correlation | Every response carries `X-Request-Id`; errors repeat it as `instance`; every log line attaches it ([10](10-deployment-and-operations.md#logging)) |
 | Payloads | `snake_case` JSON; typed request/response models, validated at the boundary; **unknown fields rejected**. (The extractor contract deliberately differs: the core *tolerates* unknown result fields for forward compatibility — [05](05-extractor-contract.md#compatibility-rules)) |
@@ -51,18 +51,26 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 - **Field-level validation** returns *all* problems in one response; each item is `{detail, pointer}` with an RFC 6901 JSON Pointer whose first segment names the location (`body` / `query` / `path` / `header`). Echo the field and the violated rule — **never the submitted value** (nothing sensitive is reflected back).
 - **Nothing internal leaks** — no stack traces, no SQL, no dependency error strings. The request id is the only bridge: the caller quotes `instance`, the operator finds the matching log line ([10](10-deployment-and-operations.md#logging)).
-- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `5xx` server fault. Never `200` with an error body.
+- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `429` rate-limited, always with `Retry-After` so a client knows when to return ([07 § abuse protection](07-identity-permissions-sharing.md#abuse-protection)) · `5xx` server fault. Never `200` with an error body.
 - **Auth failures are typed for cache policy**: a `401`'s problem `type` distinguishes re-authenticatable failures (token expired/revoked) from **terminal account states** (`account_disabled`, `account_deleted`), because clients react differently — lock-and-keep vs. immediate local wipe ([F-026/FR-11–13](../features/F-026-offline-cache-and-prefetch.md), [14 § auth-state policy](14-client-sync-and-caching.md#auth-state-policy-why-lock-then-wipe)). Terminal types reveal only what the failed login itself proves; they carry no further account data.
 
 ## Resource sketch (v1 surface, non-exhaustive)
 
 ```
-/api/v1/auth/…                       login, tokens; device pairing: POST /auth/pairing-codes
-                                     (create one-time code) · POST /auth/pairing (exchange, public — F-019)
-/api/v1/users/…                      admin user management
+/api/v1/auth/…                       POST /auth/login (public, rate-limited) · GET /auth/me ·
+                                     POST /auth/logout · GET·DELETE /auth/sessions ·
+                                     GET·POST·DELETE /auth/tokens; device pairing:
+                                     POST /auth/pairing-codes (create one-time code) ·
+                                     POST /auth/pairing (exchange, public — F-019)
+/api/v1/users/…                      admin user management (list, create, read, patch;
+                                     no delete in v1 — an account owns data, so removing
+                                     one belongs with deletion & trash, F-014)
 /api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan;
                                      DELETE requires confirm:"<name>" → restorable trash batch (F-014)
-/api/v1/workspaces/{ws}/files/…      list/tree by path
+/api/v1/workspaces/{ws}/files/…      list/tree by path; POST = upload creation
+                                     (OPTIONS advertises Upload-Limit — ADR-0017)
+/api/v1/uploads/{id}                 upload resource: HEAD (offset) · PATCH (append)
+                                     · DELETE (cancel) — the Location of a creation
 /api/v1/workspaces/{ws}/folders      create folder (F-015)
 /api/v1/workspaces/{ws}/trash        trash listing · POST …/trash/empty (F-014)
 /api/v1/trash/restore                batch restore (batch id / item ids) (F-014)
@@ -106,14 +114,16 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 ## Endpoint map (visual)
 
-⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `GET /shares/{token}`, `POST /auth/pairing` (one-time code is the credential — [07](07-identity-permissions-sharing.md#tokens--credentials), [F-019/FR-3](../features/F-019-mobile-connection.md)), `/healthz`, `/readyz` — any other public endpoint is a spec bug.
+⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `POST /auth/login` (it is how a caller *obtains* a credential, so it cannot require one — shielded by rate limiting instead, [07](07-identity-permissions-sharing.md#abuse-protection)), `GET /shares/{token}`, `POST /auth/pairing` (one-time code is the credential — [07](07-identity-permissions-sharing.md#tokens--credentials), [F-019/FR-3](../features/F-019-mobile-connection.md)), `/healthz`, `/readyz` — any other public endpoint is a spec bug, and the test suite asserts the whole set by request rather than trusting review.
 
 ```mermaid
 flowchart LR
     API(("api/v1"))
 
     subgraph AUTHG["Auth & Users"]
-        LOGIN["POST /auth/login"]
+        LOGIN["POST /auth/login 🌐<br/>(rate-limited; sets the session cookie)"]
+        ME["GET /auth/me<br/>POST /auth/logout"]
+        SESSIONS["GET·DELETE /auth/sessions<br/>(own sessions, revocable)"]
         TOKENS["GET·POST·DELETE /auth/tokens<br/>(scoped personal access tokens)"]
         PAIR["POST /auth/pairing-codes<br/>POST /auth/pairing 🌐<br/>(one-time QR device pairing, F-019)"]
         USERS["GET·POST·PATCH /users ⚙"]
@@ -121,7 +131,8 @@ flowchart LR
 
     subgraph WSG["Workspaces"]
         WSCRUD["GET·POST /workspaces<br/>(POST supports import_path)"]
-        UP["POST /workspaces/{ws}/files<br/>(chunked, resumable upload)"]
+        UP["POST /workspaces/{ws}/files<br/>OPTIONS (Upload-Limit)<br/>(upload creation — ADR-0017)"]
+        UPRES["HEAD·PATCH·DELETE /uploads/{id}<br/>(offset · append · cancel)"]
         TREE["GET /workspaces/{ws}/files?path=…"]
         RESCAN["POST /workspaces/{ws}/rescan"]
         IMPST["GET /workspaces/{ws}/import-status"]
@@ -204,6 +215,6 @@ flowchart LR
 
 Don't build now, don't preclude either:
 
-- **Mobile sync**: change feed + content hashes + resumable transfer are the primitives a sync client needs — all in v1 surface. The mobile apps now consume them ([F-021](../features/F-021-mobile-auto-upload.md), [13-mobile-clients](13-mobile-clients.md)); *desktop* sync clients remain the deferred consumer. The upload wire format should be chosen with the iOS system upload extension in mind (IETF resumable-uploads compatibility — Q38).
+- **Mobile sync**: change feed + content hashes + resumable transfer are the primitives a sync client needs — all in v1 surface. The mobile apps now consume them ([F-021](../features/F-021-mobile-auto-upload.md), [13-mobile-clients](13-mobile-clients.md)); *desktop* sync clients remain the deferred consumer. The upload wire format is the IETF resumable-upload protocol precisely so the iOS system upload extension can drive the server directly ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)).
 - **Local AI agent**: scoped tokens + full API coverage means an agent can do anything a user can, with least privilege.
 - **WebDAV / S3 compatibility**: protocol adapters mounted beside `/api/v1`, translating to the same core operations. Requires stable paths + move semantics (already first-class).

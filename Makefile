@@ -7,7 +7,7 @@ PNPM := pnpm
 # Every target is a task, never a file — `corpus` in particular collides with the
 # directory of the same name, and make would otherwise consider it already built.
 .PHONY: help install lint format typecheck test test-unit e2e corpus spec-lint matrix \
-	check licenses notice audit verify-gates openapi build storybook migrate run clean \
+	check check-staged licenses notice audit verify-gates openapi build storybook migrate run clean \
 	release release-preview up down compose-migrate
 
 help: ## Show this help
@@ -56,6 +56,27 @@ matrix: ## Build the requirement traceability matrix from the last test run
 		--report ../traceability-report.json --output ../traceability-matrix.md
 
 check: lint spec-lint typecheck test matrix e2e ## Everything the pipeline will check
+
+# `check` runs against the working tree, which is not what gets pushed. This runs the
+# pipeline's own steps against the *staged* tree, exported to a scratch directory with a
+# cold environment built from the committed lockfile — the difference that once let a
+# commit missing every staged modification (and a lockfile entry) reach CI green locally.
+STAGED_TREE := $(CURDIR)/.check-staged
+check-staged: ## Run the pipeline against the staged tree, in a clean cold checkout
+	@rm -rf $(STAGED_TREE)
+	@mkdir -p $(STAGED_TREE)
+	@git checkout-index -a -f --prefix=$(STAGED_TREE)/
+	@echo "--> cold install from the staged lockfile"
+	@cd $(STAGED_TREE) && uv sync --directory server --all-groups --locked
+	@cd $(STAGED_TREE) && uv run --directory server ruff check .
+	@cd $(STAGED_TREE) && uv run --directory server ruff format --check .
+	@cd $(STAGED_TREE) && uv run --directory server pyright
+	@cd $(STAGED_TREE) && uv run --directory server pytest -q --cov \
+		--fr-report=../traceability-report.json
+	@cd $(STAGED_TREE) && uv run --directory server python -m tools.spec_lint
+	@cd $(STAGED_TREE) && uv run --directory server python -m tools.check_licenses
+	@rm -rf $(STAGED_TREE)
+	@echo "--> the staged tree passes the pipeline's server, contract and docs checks"
 
 licenses: ## Check dependency licences against the policy
 	$(UV) run python -m tools.check_licenses
@@ -106,5 +127,6 @@ compose-migrate: ## Apply migrations inside the running stack
 clean: ## Remove caches and build artefacts
 	rm -rf $(SERVER)/.pytest_cache $(SERVER)/.ruff_cache $(SERVER)/.coverage \
 		$(SERVER)/htmlcov $(SERVER)/dist $(SERVER)/build \
-		web/dist web/coverage web/storybook-static web/playwright-report web/test-results
+		web/dist web/coverage web/storybook-static web/playwright-report web/test-results \
+		.check-staged
 	find $(SERVER) -name '__pycache__' -type d -prune -exec rm -rf {} +

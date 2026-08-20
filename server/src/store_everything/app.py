@@ -11,13 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from store_everything import bootstrap
 from store_everything.api import health
-from store_everything.api.v1.router import build_v1_router
+from store_everything.api.v1.router import build_public_v1_router, build_v1_router
 from store_everything.config import Settings, load_settings
 from store_everything.db import create_engine
 from store_everything.log import configure_logging
 from store_everything.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from store_everything.problems import install_exception_handlers
+from store_everything.ratelimit import RequestLimiter
 
 _logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ def _operation_id(route: APIRoute) -> str:
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings: Settings = app.state.settings
     _logger.info("service starting", extra={"app_env": settings.app_env})
+    # Start-up is migrations plus starting the loops (12-reliability.md § startup); this is
+    # the one exception, and it is idempotent and non-fatal by construction.
+    await bootstrap.run_at_startup(app.state.engine, settings)
     try:
         yield
     finally:
@@ -70,10 +75,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved
     app.state.engine = create_engine(resolved)
+    # Per process, deliberately: these counters are a courtesy backstop, and losing them on
+    # restart costs nothing. The durable limit — failed logins — is derived from the event
+    # log instead (07 § abuse protection).
+    app.state.request_limiter = RequestLimiter(resolved.rate_limit_per_minute)
 
     install_exception_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(build_public_v1_router())
     app.include_router(build_v1_router(api_docs_enabled=resolved.api_docs_enabled))
 
     # Last added is outermost: CORS → security headers → request context → routes.

@@ -42,3 +42,6 @@ data/
 .idea/
 .vscode/
 .DS_Store
+
+# Scratch checkout used by `make check-staged` (see the Makefile).
+.check-staged/
