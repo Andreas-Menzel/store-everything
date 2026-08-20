@@ -1,0 +1,23 @@
+# Development override: no proxy, ports on localhost.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d
+#
+# The Traefik labels in the base file are inert without Traefik, so they stay; the edge
+# network becomes an ordinary local one so the API can attach without a proxy present.
+
+services:
+  postgres:
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+
+  api:
+    environment:
+      SE_APP_ENV: development
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-DEBUG}
+    ports:
+      - '127.0.0.1:${API_PORT:-8000}:8000'
+
+networks:
+  edge:
+    external: false
+    name: store-everything-dev-edge

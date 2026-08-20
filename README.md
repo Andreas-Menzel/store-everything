@@ -25,7 +25,7 @@ PostgreSQL with pgvector as the single datastore ([ADR-0001](decisions/ADR-0001-
 
 This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built — the core service in [`server/`](server/README.md), the web UI in [`web/`](web/README.md), and the API contract in `openapi.json`, from which the typed client in `packages/api-client` is generated.
 
-`make help` lists every task; `make check` runs everything the pipeline will.
+`make help` lists every task; `make check` runs everything the pipeline will. Installing an instance: [docs/install.md](docs/install.md).
 
 ## License
 

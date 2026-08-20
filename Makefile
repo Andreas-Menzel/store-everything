@@ -7,7 +7,8 @@ PNPM := pnpm
 # Every target is a task, never a file — `corpus` in particular collides with the
 # directory of the same name, and make would otherwise consider it already built.
 .PHONY: help install lint format typecheck test test-unit e2e corpus spec-lint matrix \
-	check licenses notice audit verify-gates openapi build storybook migrate run clean
+	check licenses notice audit verify-gates openapi build storybook migrate run clean \
+	release release-preview up down compose-migrate
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -86,6 +87,21 @@ migrate: ## Apply database migrations
 
 run: ## Serve the API locally
 	$(UV) run python -m store_everything
+
+release: ## Derive the next version from the commits, write the changelog, tag it
+	uvx --from commitizen cz bump
+
+release-preview: ## Show what `make release` would do, changing nothing
+	uvx --from commitizen cz bump --dry-run --yes
+
+up: ## Start the stack for development (no proxy, ports on localhost)
+	docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+
+down: ## Stop the development stack
+	docker compose -f compose.yaml -f compose.dev.yaml down
+
+compose-migrate: ## Apply migrations inside the running stack
+	docker compose -f compose.yaml -f compose.dev.yaml run --rm migrations
 
 clean: ## Remove caches and build artefacts
 	rm -rf $(SERVER)/.pytest_cache $(SERVER)/.ruff_cache $(SERVER)/.coverage \

@@ -6,10 +6,10 @@ never logged (10-deployment-and-operations.md § configuration & secrets).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -37,8 +37,13 @@ class Settings(BaseSettings):
     api_docs_enabled: bool = True
     """Serve the OpenAPI schema to authenticated users (08-api-principles.md)."""
 
-    cors_allow_origins: tuple[str, ...] = ()
-    """Deny by default: an empty list installs no CORS middleware at all."""
+    cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
+    """Deny by default: an empty list installs no CORS middleware at all.
+
+    `NoDecode` is load-bearing: without it pydantic-settings JSON-decodes the raw
+    environment value before any validator runs, so the obvious `SE_CORS_ALLOW_ORIGINS=`
+    raises at start-up instead of meaning "no origins".
+    """
 
     host: str = "127.0.0.1"
     """Bind address. Containers set `SE_HOST=0.0.0.0`; the safe default stays loopback."""
@@ -55,11 +60,7 @@ class Settings(BaseSettings):
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
-        """Accept `a,b` in the environment.
-
-        Pydantic would otherwise demand JSON for a sequence field, so the obvious
-        `SE_CORS_ALLOW_ORIGINS=` (empty, meaning "none") would crash the service at boot.
-        """
+        """Accept `a,b` in the environment, and an empty value as "none"."""
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
