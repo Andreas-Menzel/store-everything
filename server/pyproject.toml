@@ -1,0 +1,110 @@
+[project]
+name = "store-everything"
+version = "0.0.0"
+description = "Store Everything — core API service and ingestion orchestrator"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "AGPL-3.0-only"
+dependencies = [
+    "fastapi>=0.120",
+    "uvicorn[standard]>=0.38",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.12",
+    "sqlalchemy[asyncio]>=2.0.44",
+    "psycopg[binary,pool]>=3.2",
+    "alembic>=1.16",
+]
+
+[project.scripts]
+store-everything = "store_everything.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/store_everything"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.2",
+    "pytest-cov>=7.0",
+    "httpx>=0.28",
+    "testcontainers[postgres]>=4.14",
+    "hypothesis>=6.140",
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+]
+
+# ---------------------------------------------------------------- lint / format
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtin shadowing
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "ASYNC",     # async pitfalls
+    "S",         # bandit
+    "RUF",       # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may assert, use fixed credentials for throwaway containers, and bind test servers.
+"tests/**" = ["S101", "S105", "S106"]
+# Alembic generates these stubs; revision identifiers are module-level by convention.
+"src/store_everything/migrations/**" = ["N999"]
+
+# ---------------------------------------------------------------- type checking
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+
+# ---------------------------------------------------------------- tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+addopts = "--strict-markers --strict-config"
+markers = [
+    # Requirement traceability (11-engineering-standards.md § requirement traceability).
+    # Consumed by the matrix generator; no feature FRs exist yet in phase 0.
+    "fr(id): the feature requirement this test verifies, e.g. fr('F-002/FR-7')",
+    "integration: needs a real PostgreSQL (started as a throwaway container)",
+]
+
+[tool.coverage.run]
+source = ["store_everything"]
+branch = true
+# SQLAlchemy's asyncio layer switches greenlets around every database call; without this
+# the tracer loses frames on resume and silently under-reports every async DB path.
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]

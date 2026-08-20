@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-**Current phase:** 0 — Foundations & toolchain *(stack decisions landed; skeleton next — no feature code exists yet)*
+**Current phase:** 0 — Foundations & toolchain *(in progress — no feature code exists yet)*
 
 The ordering authority for implementation. Each phase delivers **one clear new segment of the app**, is independently testable, and lists everything needed to work it: the features it delivers, the specs/ADRs to read first, the open questions to answer at entry, and the exit criteria that close it. This file records **order and rationale, not schedule** — dates are deliberately absent.
 
