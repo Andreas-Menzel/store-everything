@@ -38,7 +38,7 @@ Diff views between versions; delta storage (v1 stores full copies — measure be
 
 ## Open questions
 
-[Q4 (retention defaults & quota accounting)](../OPEN-QUESTIONS.md#q4).
+[Q4 (retention defaults & quota accounting)](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 

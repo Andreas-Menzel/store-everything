@@ -15,6 +15,16 @@ To make that possible, every uploaded file is analyzed by **pluggable extractors
 - **Originals are never modified.** Derived data is stored separately and stamped with its provenance, so it can be replaced when better models arrive while manual work survives.
 - **Multi-user from the start.** Accounts, workspaces, permissions, and sharing — with permission-aware search, because a result snippet is a data leak if you can't open the file.
 
+## The stack
+
+PostgreSQL with pgvector as the single datastore ([ADR-0001](decisions/ADR-0001-postgresql-single-datastore.md)) · Python 3.13 + FastAPI core, SQLAlchemy Core and hand-written SQL ([ADR-0012](decisions/ADR-0012-python-fastapi-core-stack.md)) · an owned crash-only operation layer instead of a job-queue library ([ADR-0013](decisions/ADR-0013-owned-operation-layer.md)) · a Vue 3 SPA talking to a generated OpenAPI client ([ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)) · Docker Compose behind an existing Traefik ([ADR-0005](decisions/ADR-0005-single-server-docker-network.md), [ADR-0009](decisions/ADR-0009-external-traefik-edge.md)).
+
 ## Status
 
-**Planning phase — no code yet.** This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), and the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built.
+**Phase 0 — foundations & toolchain.** The specification is essentially complete and the stack decisions are made; the deployable, fully-gated skeleton is next. **No feature code exists yet.**
+
+This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), and the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built.
+
+## License
+
+[AGPL-3.0-only](LICENSE). Third-party dependencies, test fixtures, and model weights keep their own licenses; compliance is a CI gate, and attribution is generated rather than hand-maintained ([ADR-0016](decisions/ADR-0016-license-and-third-party-compliance.md)).

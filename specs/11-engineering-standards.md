@@ -18,13 +18,13 @@ For every task, in order — steps are not batched and not skipped:
 1. Read the governing docs (above); restate the acceptance criteria you are working toward.
 2. Split the task into small, individually verifiable steps.
 3. **Per step:** implement → self-review the diff (incl. the two standing [reuse questions](#where-to-look)) → **update the test suite** (add / change / delete tests) → **run the affected tests**. Red stops the line — fix before starting the next step.
-4. Before opening the MR: full test suite, linter, and type check green locally.
+4. Before opening the PR: full test suite, linter, and type check green locally.
 5. Update the docs (rule above) in the same change; write Conventional Commits.
 6. Merge only when the [Definition of Done](#definition-of-done) holds: CI green, review threads resolved, checklist honestly ticked (or explicitly N/A).
 
 ## Code reuse & shared modules
 
-One concept, one implementation. UI is the canonical case — **one** confirm dialog, **one** bottom sheet, **one** button — but the rule covers all code. The rules are stack-agnostic on purpose; the concrete frontend stack and tooling are open (Q26).
+One concept, one implementation. UI is the canonical case — **one** confirm dialog, **one** bottom sheet, **one** button — but the rule covers all code. The rules are stack-agnostic on purpose; the concrete stack that enforces them is fixed in [ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md) (web) and [ADR-0012](../decisions/ADR-0012-python-fastapi-core-stack.md) (core).
 
 ### The rules
 
@@ -64,15 +64,15 @@ The counter-rule carries equal weight: **duplication is cheaper than the wrong a
 
 ### Enforcement
 
-Per this document's own rule — configured AND enforced: lint forbids raw UI primitives (`<button>`, `<dialog>`, hardcoded colors/spacing) outside the shared layer and enforces the import direction; a showcase page (Storybook-class) is the living component inventory — and a target for the E2E UI layer; CI runs an advisory copy-paste detector. Concrete tools land with the frontend stack (Q26).
+Per this document's own rule — configured AND enforced: **ESLint** forbids raw UI primitives (`<button>`, `<dialog>`, hardcoded colors/spacing) outside the shared layer, enforces the import direction, and forbids hand-rolled HTTP outside the generated API client; a **Storybook 10** showcase is the living component inventory — and a target for the E2E UI layer; CI runs an advisory copy-paste detector ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)).
 
 ## Refactor over quick fix
 
 Every change is made with the whole project in view. "It works now" is not a bar — done means *fits the system*.
 
 1. **No quick fixes.** A change that fights the current structure — a special case where a concept belongs, a copy where a variant belongs, a workaround where a refactor belongs — is not done, even if green.
-2. **If the clean change needs a refactor, the refactor is in scope.** Reshape first, then build on it — as separate commits (or a preparatory MR), so the refactor stays reviewable and the feature diff stays small. Never a silent drive-by.
-3. **Extraction is part of the task that triggers it.** When the [four tests](#when-to-abstract--four-tests) say "shared concept", creating the shared module belongs to the current task; migrating the existing call sites may follow as its own small MR immediately after — not as a "later" that never comes.
+2. **If the clean change needs a refactor, the refactor is in scope.** Reshape first, then build on it — as separate commits (or a preparatory PR), so the refactor stays reviewable and the feature diff stays small. Never a silent drive-by.
+3. **Extraction is part of the task that triggers it.** When the [four tests](#when-to-abstract--four-tests) say "shared concept", creating the shared module belongs to the current task; migrating the existing call sites may follow as its own small PR immediately after — not as a "later" that never comes.
 4. **Known debt is recorded, never implicit.** If a shortcut is consciously taken anyway (deadline, blocked decision), it is written down — an issue or an [OPEN-QUESTIONS](../OPEN-QUESTIONS.md) row — naming what the right change would be. Divergence is never silent, in code as in docs.
 
 ## Testing
@@ -88,7 +88,7 @@ Every change is made with the whole project in view. "It works now" is not a bar
 | **Fault-injection** | kill the process at fault points around every filesystem mutation and state transition, restart, assert convergence: terminal state reached, no debris past grace windows, no duplicated effects or events ([12](12-reliability.md#verification)) — the home of the `fault-injection` verification method | real PostgreSQL + scratch filesystem |
 
 - **Headless by default.** Every test — including E2E/UI — runs unattended in CI. A check a human has to remember is not a test.
-- **UI mode on demand.** The E2E/UI layer must also run headed, in a "UI mode" (watch the browser act, step through, inspect traces — e.g. Playwright's UI mode; tool choice open until the frontend stack is fixed — Q26). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
+- **UI mode on demand.** The E2E/UI layer must also run headed, in **Playwright's UI mode** (watch the browser act, step through, inspect traces — [ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)). Headless and headed run the **same** tests — UI mode is a lens, never a separate suite.
 - Tests are **isolated** (no order dependence) and fast enough that running them beats checking by hand.
 - **A flaky test is red.** Quarantining requires an expiry date and a linked issue — visible, never silently retried into green.
 - **Time is injected.** The core reads "now" only through an injectable clock — date facets, versioning, retention, and trash expiry are deterministic under test.
@@ -99,9 +99,9 @@ Every FR is verified by a **declared method**; the feature file marks any FR who
 
 | Method | Meaning | Runs |
 |---|---|---|
-| `test` *(default, unmarked)* | Deterministic automated test. Default home: the **integration layer, through the public API** — API-first makes the API the falsification surface. Unit for pure logic; E2E stays a thin smoke path. | per MR, blocking |
+| `test` *(default, unmarked)* | Deterministic automated test. Default home: the **integration layer, through the public API** — API-first makes the API the falsification surface. Unit for pure logic; E2E stays a thin smoke path. | per PR, blocking |
 | `benchmark` | Threshold-scored suite over the ground-truth corpus: quality metrics for statistical FRs (recall@k / NDCG — Q8), latency percentiles on reference hardware (Q27) for performance FRs (e.g. [F-002/FR-10](../features/F-002-hybrid-search.md)). Model versions pinned; trends tracked. | scheduled + pre-release; release-blocking |
-| `fault-injection` | Crash-semantics tests: worker killed mid-job, duplicate result delivery, orchestrator restart — generalized by the crash-only harness to every effectful operation ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle), [12](12-reliability.md#verification)). | per MR, blocking |
+| `fault-injection` | Crash-semantics tests: worker killed mid-job, duplicate result delivery, orchestrator restart — generalized by the crash-only harness to every effectful operation ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle), [12](12-reliability.md#verification)). | per PR, blocking |
 | `drill` | Exercised procedure: restore — backup → restore into a fresh stack → smoke suite (Q13); upgrade-path — seed data on the previous tagged release → upgrade → smoke ([10](10-deployment-and-operations.md#upgrades--migrations)). | scheduled; release-blocking |
 
 A test satisfies an FR only if it **fails when the FR is violated** — for "never / only / no" guarantees the negative case *is* the required test, not an extra.
@@ -110,12 +110,12 @@ A test satisfies an FR only if it **fails when the FR is violated** — for "nev
 
 FR ids in test markers make requirement coverage checkable; the matrix makes it **checked**:
 
-- Tests carry the ids they verify as structured markers (e.g. `@fr("F-002/FR-7")`; exact mechanism follows the stack, Q10). Domain invariants participate under stable ids (`02/INV-n` ↔ [02 § Invariants](02-domain-model.md#invariants) #n).
-- CI regenerates the matrix on every run — one row per FR/invariant: id · requirement · feature + status · declared method · covering tests (name, layer) · last result · tombstone note. Published as a CI artifact with a summary on the MR; **not committed** (a committed generated file is a staleness bug waiting).
-- **Hard gates (fail the pipeline):** a feature at `Implemented` — or moved there in the MR — with an FR lacking ≥ 1 passing verification of its declared method (`Implemented` is thereby a *computed* status, not a claim) · a test referencing an FR id that doesn't exist or is tombstoned.
+- Tests carry the ids they verify as structured markers — `@pytest.mark.fr("F-002/FR-7")` in the core suite, the equivalent tag in the web suite ([ADR-0012](../decisions/ADR-0012-python-fastapi-core-stack.md)). Domain invariants participate under stable ids (`02/INV-n` ↔ [02 § Invariants](02-domain-model.md#invariants) #n).
+- CI regenerates the matrix on every run — one row per FR/invariant: id · requirement · feature + status · declared method · covering tests (name, layer) · last result · tombstone note. Published as a CI artifact with a summary on the PR; **not committed** (a committed generated file is a staleness bug waiting).
+- **Hard gates (fail the pipeline):** a feature at `Implemented` — or moved there in the PR — with an FR lacking ≥ 1 passing verification of its declared method (`Implemented` is thereby a *computed* status, not a claim) · a test referencing an FR id that doesn't exist or is tombstoned.
 - **Soft gates (warn):** an FR declaring a method whose suite isn't wired up yet · vague-word lint on FR lines ([Writing FRs](../features/README.md#writing-frs)).
 - Tracing runs both ways: forward (FR → tests) proves coverage; backward (test → FR) catches dangling ids. **Not every test carries an FR marker** — bug regressions trace to issues, unit tests of internals to nothing; only FR-marked tests are cross-checked.
-- Needed from the **first feature MR**; specified here language-agnostically (marker convention + script contract), implemented once Q10 resolves.
+- Needed from the **first feature PR**; specified here language-agnostically (marker convention + script contract), implemented in phase 0 against the [ADR-0012](../decisions/ADR-0012-python-fastapi-core-stack.md) toolchain.
 
 ### What must be tested
 
@@ -133,7 +133,7 @@ FR ids in test markers make requirement coverage checkable; the matrix makes it 
 
 ### Test infrastructure
 
-- **Ground-truth corpus** — a versioned fixture set with a machine-readable manifest of each fixture's truth: PDFs with known phrases on known pages, images with known objects, audio/video with utterances at known timestamps — plus the adversarial set: unicode and case-colliding names (Q25), symlink layouts (Q22), zip-slip archive entries, corrupt / zero-byte / oversized files. One corpus feeds FR tests, the golden-query benchmark, and the conformance kit. Fixtures must be redistributable (Q28).
+- **Ground-truth corpus** — a versioned fixture set with a machine-readable manifest of each fixture's truth: PDFs with known phrases on known pages, images with known objects, audio/video with utterances at known timestamps — plus the adversarial set: unicode and case-colliding names (Q25), symlink layouts (Q22), zip-slip archive entries, corrupt / zero-byte / oversized files. One corpus feeds FR tests, the golden-query benchmark, and the conformance kit. Fixtures must be redistributable, and each carries a manifest row (source, author, license, SHA-256, asserted truth) — sourcing, storage, and size budget: [ADR-0015](../decisions/ADR-0015-ground-truth-corpus-strategy.md).
 - **Reference extractor** — deterministic and instant, shipped with the conformance kit. Triple duty: E2E test double, executable example for third-party extractor authors, and the image the kit validates itself against.
 - **Mutation testing** *(later)* — scheduled and scoped to the security-critical core (authz, permission-aware search, share links) as a machine check on test quality (Q29). Deliberately post-v1.
 
@@ -146,7 +146,7 @@ FR ids in test markers make requirement coverage checkable; the matrix makes it 
 
 ## Definition of Done
 
-A task is done when every line is honestly true — or explicitly marked N/A in the MR:
+A task is done when every line is honestly true — or explicitly marked N/A in the PR:
 
 - [ ] Feature file exists / is updated; acceptance criteria & FRs demonstrably met — **by tests, not by hand**; the traceability matrix is green for every touched FR.
 - [ ] Tests added/changed/removed to match the behaviour; full suite green in CI; coverage gate met. New/changed tests **fail when their requirement is violated** (spot-checked in review); "never/only" guarantees have negative tests.
@@ -155,33 +155,33 @@ A task is done when every line is honestly true — or explicitly marked N/A in 
 - [ ] API changes are additive within the major; schema regenerated; generated clients not stale ([08](08-api-principles.md)).
 - [ ] Schema changes ship as a versioned migration, up **and** down tested, expand–contract safe ([10](10-deployment-and-operations.md#upgrades--migrations)).
 - [ ] New/changed dependency has a recorded justification; lockfile committed.
-- [ ] Conventional Commits; MR small and focused, linked to its issue; all threads resolved.
+- [ ] Conventional Commits; PR small and focused, linked to its issue; all threads resolved.
 
 The feature template links this checklist; feature-specific criteria come **on top of** it, never instead of it.
 
 ## Git & commits
 
-- Trunk is `main`, protected: no direct pushes, MR + green pipeline required. Work happens on short-lived `feature/*` / `fix/*` / `chore/*` branches (< ~2 days), deleted on merge. (Deliberately simpler than a two-trunk flow: a self-hosted product has tagged releases, not a staging trunk.)
+- Trunk is `main`, protected: no direct pushes, PR + green pipeline required. Work happens on short-lived `feature/*` / `fix/*` / `chore/*` branches (< ~2 days), deleted on merge. (Deliberately simpler than a two-trunk flow: a self-hosted product has tagged releases, not a staging trunk.)
 - **Conventional Commits are required:** `type(scope): subject` with types `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert`; breaking changes marked `feat!:` or a `BREAKING CHANGE:` footer; issues referenced in footers (`Refs: #123` / `Resolves: #123`).
 - **Configured AND enforced:** commit format, lint, types, tests, coverage — every declared convention is a CI gate. An unenforced convention is a suggestion that rots.
 
 ## Versioning & releases
 
 - **App releases follow SemVer**, derived from the Conventional Commits since the last tag: `fix:` → patch, `feat:` → minor, breaking → major.
-- **One command creates a release:** `make release` — derives the bump from the commits, updates `CHANGELOG.md`, bumps the version, creates the annotated git tag. (Proposed tool: Commitizen `cz bump` — language-independent, so it doesn't prejudge Q10.) Manual tags and hand-edited changelogs are forbidden; **CI builds and publishes images from tags only**.
+- **One command creates a release:** `make release` — derives the bump from the commits, updates `CHANGELOG.md`, bumps the version, creates the annotated git tag. (Tool: Commitizen `cz bump` — language-independent, so the version lives in one place across the Python core and the web workspace.) Manual tags and hand-edited changelogs are forbidden; **CI builds and publishes images from tags only**.
 - **Version lines are independent.** App SemVer, API major ([08](08-api-principles.md), `/api/v1`), and extractor contract (`extractor-api/v1`, [05](05-extractor-contract.md)) deliberately do **not** imply one another. Compatibility is promised in exactly one place: a **support matrix** in the repo — restated per release in the release notes — recording which app versions serve which API major(s) and speak which extractor-contract version(s). Dropping an API/contract major follows the deprecation rules in [08](08-api-principles.md) and becomes visible in the matrix, never through a version-number convention.
 - Database schema versions are internal: ordered migrations per release ([10](10-deployment-and-operations.md#upgrades--migrations)), never user-facing.
 
 ## Dependencies & configuration
 
 - Pin and lock everything; commit the lockfile — reproducible builds, always.
-- A new dependency (or a swap of an established one) needs a deliberate, recorded justification.
+- A new dependency (or a swap of an established one) needs a deliberate, recorded justification — **including its license**, which must be on the allow-list or the pipeline fails ([ADR-0016](../decisions/ADR-0016-license-and-third-party-compliance.md)). This repository is public: every third-party artifact is attributable before it lands.
 - 12-factor throughout: config from the environment; stateless processes (state lives in PostgreSQL); logs to stdout ([10](10-deployment-and-operations.md#logging)); graceful shutdown on SIGTERM — which for hours-long extraction jobs means re-queue, at-least-once delivery, idempotent result writes ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)). SIGTERM handling is an optimization only — `kill -9` must be exactly as safe ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md)).
 
 ## CI pipeline (the enforcement list)
 
-All blocking: lint + format check · type check · unit tests · integration tests (real PostgreSQL + pgvector) · migrations up/down · fault-injection suite · **traceability matrix gate** · spec lint (FR format; vague-word warnings) · extractor conformance kit (official extractors) · E2E headless · coverage gate (≥ 85 %, ratcheting) · OpenAPI schema in sync + generated clients not stale · commit-format check · secret scan · dependency vulnerability scan · image scan (core + official extractor images) · SBOM generation.
+All blocking: lint + format check · type check · unit tests · integration tests (real PostgreSQL + pgvector) · migrations up/down · fault-injection suite · **traceability matrix gate** · spec lint (FR format; vague-word warnings) · extractor conformance kit (official extractors) · E2E headless · coverage gate (≥ 85 %, ratcheting) · OpenAPI schema in sync + generated clients not stale · commit-format check · secret scan · dependency vulnerability scan · **dependency license allow-list + third-party notice generation** ([ADR-0016](../decisions/ADR-0016-license-and-third-party-compliance.md)) · **corpus manifest complete + `ATTRIBUTION.md` in sync** ([ADR-0015](../decisions/ADR-0015-ground-truth-corpus-strategy.md)) · image scan (core + official extractor images) · SBOM generation.
 
-Scheduled / release-gating rather than per-MR: benchmark suite against its thresholds (Q8, Q27) · upgrade-path test from the previous tagged release · restore drill (once Q13 resolves) · mutation run on the authz core (later, Q29).
+Scheduled / release-gating rather than per-PR: benchmark suite against its thresholds (Q8, Q27) · upgrade-path test from the previous tagged release · restore drill (once Q13 resolves) · mutation run on the authz core (later, Q29).
 
 Advisory (non-blocking): copy-paste/duplication report — input to the [reuse check](#code-reuse--shared-modules) in review, not a gate.

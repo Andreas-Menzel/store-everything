@@ -4,6 +4,8 @@
 
 **Store Everything** — a self-hosted personal cloud for 1–30 users where search is the product: exact search returns positions (document pages 1, 3, 7; video at 04:12), semantic search finds "photo of my dog at the beach" via detected content. Every file is analyzed by pluggable extractor containers (OCR, transcription, object detection, …) running locally by default.
 
+**Stack** (decided at the phase-0 gate — rationale in [ADR-0012](decisions/ADR-0012-python-fastapi-core-stack.md)–[ADR-0016](decisions/ADR-0016-license-and-third-party-compliance.md)): Python 3.13 + FastAPI core using SQLAlchemy Core and hand-written SQL (no ORM session) · PostgreSQL + pgvector as the single datastore · an owned crash-only operation layer, no job-queue library · a Vue 3 SPA on Vite consuming a generated OpenAPI client · Docker Compose behind an existing Traefik. The repository is public under **AGPL-3.0**: no secrets, and every third-party artifact is license-checked before it lands.
+
 ## Spec-driven development (mandatory workflow)
 
 The documentation is the source of truth. Code must match the docs; divergence is never silent — if implementation must deviate, the same change updates the spec or records the point in `OPEN-QUESTIONS.md` / a new ADR.

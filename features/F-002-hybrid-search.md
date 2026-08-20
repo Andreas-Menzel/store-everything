@@ -50,7 +50,7 @@ Query-builder UI (a client concern) — saved searches themselves are specified 
 
 ## Open questions
 
-[Q8 (result grouping/ranking tuning process)](../OPEN-QUESTIONS.md#q8), [Q9 (embedding model selection)](../OPEN-QUESTIONS.md#q9).
+[Q8 (result grouping/ranking tuning process)](../OPEN-QUESTIONS.md), [Q9 (embedding model selection)](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 

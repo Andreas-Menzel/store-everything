@@ -1,7 +1,7 @@
 # ADR-0001 — PostgreSQL as the single datastore
 
-**Status:** Proposed
-**Date:** 2026-07-29
+**Status:** Accepted
+**Date:** 2026-07-29 *(accepted 2026-08-20, phase-0 stack gate)*
 
 ## Context
 

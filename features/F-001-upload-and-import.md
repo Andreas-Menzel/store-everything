@@ -37,7 +37,7 @@ Desktop sync clients, WebDAV (deferred; see [08-api-principles](../specs/08-api-
 
 ## Open questions
 
-[Q2 (mount↔workspace mapping)](../OPEN-QUESTIONS.md#q2), [Q3 (change detection: watch vs. scheduled re-scan)](../OPEN-QUESTIONS.md#q3).
+[Q2 (mount↔workspace mapping)](../OPEN-QUESTIONS.md), [Q3 (change detection: watch vs. scheduled re-scan)](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 

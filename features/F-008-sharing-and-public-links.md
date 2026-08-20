@@ -40,7 +40,7 @@ Groups/teams (grants are per-user in v1). Folder-level public links (later). Den
 
 ## Open questions
 
-[Q12 (upload links / file-request links?)](../OPEN-QUESTIONS.md#q12) · [Q21 (response code for suspended links)](../OPEN-QUESTIONS.md).
+[Q12 (upload links / file-request links?)](../OPEN-QUESTIONS.md) · [Q21 (response code for suspended links)](../OPEN-QUESTIONS.md).
 
 ## Acceptance criteria
 

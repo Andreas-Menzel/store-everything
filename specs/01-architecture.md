@@ -68,14 +68,18 @@ flowchart TB
 5. **GPU optional.** Extractors declare whether they can use a GPU; the same container must run (slower) on CPU-only hosts.
 6. **Crash-only.** Any process may be killed at any instant without corruption, lost work, or duplicated effects: effectful operations are recorded durably before they start, every effect is idempotent, and recovery is the normal execution path — graceful shutdown is an optimization, never a correctness requirement ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12-reliability.md](12-reliability.md)).
 
-## Technology direction (proposed, not final)
+## Technology direction
 
-| Concern | Proposal | Why |
+Rows with an ADR are decided; model choices stay open until phases 2–3 ([Q9](../OPEN-QUESTIONS.md)).
+
+| Concern | Choice | Why |
 |---|---|---|
-| Datastore | PostgreSQL + pgvector | One dependency, transactional consistency between permissions and index (ADR-0001) |
-| Job queue | PostgreSQL `SKIP LOCKED` claims + leases/fencing | No extra broker; queue state in the same transaction as domain state; crash-safe ownership ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [12](12-reliability.md#leases--fencing)) |
-| Text embedding | Local sentence-embedding model (CPU-capable) | Semantic doc search |
-| Image/text shared space | CLIP-class local model | "Photo of my dog at the beach" → image match |
-| Transcription | Whisper-class local model | Video/voice/MP3 → text with timestamps |
+| Datastore | PostgreSQL + pgvector | One dependency, transactional consistency between permissions and index ([ADR-0001](../decisions/ADR-0001-postgresql-single-datastore.md)) |
+| Core service language/framework | **Python 3.13 + FastAPI** | No ML runs in the core (extractors own it), the reliability substrate is hand-written SQL in any language, and long-term maintainability follows maintainer fluency ([ADR-0012](../decisions/ADR-0012-python-fastapi-core-stack.md)) |
+| Data access | SQLAlchemy Core + hand-written SQL, no ORM session | Lease claims and search need exact control over statements and transactions ([ADR-0012](../decisions/ADR-0012-python-fastapi-core-stack.md)) |
+| Job queue / operations | Owned operation layer: `SKIP LOCKED` claims + heartbeat leases + fencing — **no queue library** | No extra broker; queue state in the same transaction as domain state; no library ships fencing, and the operation record is also the job-status and idempotency surface ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md), [ADR-0013](../decisions/ADR-0013-owned-operation-layer.md), [12](12-reliability.md#leases--fencing)) |
+| Web UI | Vue 3 SPA on Vite, typed client generated from OpenAPI | The baseline client; API access only through the generated client ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)) |
+| Text embedding | Local sentence-embedding model (CPU-capable) *(model: Q9)* | Semantic doc search |
+| Image/text shared space | CLIP-class local model *(model: Q9)* | "Photo of my dog at the beach" → image match |
+| Transcription | Whisper-class local model *(model: Q9)* | Video/voice/MP3 → text with timestamps |
 | OCR | Tesseract (baseline) | Scanned PDFs, images, video keyframes |
-| Core service language/framework | *undecided* | See OPEN-QUESTIONS Q10 |

@@ -6,7 +6,7 @@ Significant decisions, one file each, numbered and immutable once accepted. To c
 
 | ADR | Title | Status |
 |---|---|---|
-| [ADR-0001](ADR-0001-postgresql-single-datastore.md) | PostgreSQL as the single datastore | Proposed |
+| [ADR-0001](ADR-0001-postgresql-single-datastore.md) | PostgreSQL as the single datastore | Accepted |
 | [ADR-0002](ADR-0002-extractor-containers-fixed-api.md) | Extractors as Docker containers behind a fixed, pull-based API | Accepted |
 | [ADR-0003](ADR-0003-files-on-disk-source-of-truth.md) | Files on disk are the source of truth; all app data is a derived layer | Accepted |
 | [ADR-0004](ADR-0004-tag-provenance-and-reprocessing.md) | Tag provenance model and reprocessing rules | Accepted |
@@ -17,6 +17,11 @@ Significant decisions, one file each, numbered and immutable once accepted. To c
 | [ADR-0009](ADR-0009-external-traefik-edge.md) | Edge via an existing external Traefik instance | Accepted |
 | [ADR-0010](ADR-0010-crash-only-execution-model.md) | Crash-only execution: durable operations, leases + fencing, idempotent effects | Accepted |
 | [ADR-0011](ADR-0011-person-recognition-architecture.md) | Person recognition: opt-in face extractor, core-owned per-owner identity resolution | Accepted |
+| [ADR-0012](ADR-0012-python-fastapi-core-stack.md) | Core service stack: Python + FastAPI, PostgreSQL via SQLAlchemy Core | Accepted |
+| [ADR-0013](ADR-0013-owned-operation-layer.md) | The operation layer is ours: no job-queue library | Accepted |
+| [ADR-0014](ADR-0014-vue-frontend-stack.md) | Web UI stack: Vue 3 SPA with a generated API client | Accepted |
+| [ADR-0015](ADR-0015-ground-truth-corpus-strategy.md) | Ground-truth corpus: synthetic-first, curated for realism, manifest-governed | Accepted |
+| [ADR-0016](ADR-0016-license-and-third-party-compliance.md) | AGPL-3.0, and third-party license compliance as a CI gate | Accepted |
 
 ## Template
 

@@ -3,8 +3,8 @@
 **Status:** Draft
 **Priority:** P1
 **Clients:** all
-**Depends on:** F-008, F-015
-**Related specs:** [08-api-principles](../specs/08-api-principles.md), [09-previews](../specs/09-previews.md#storage), [F-012](F-012-live-updates.md) (progress), [F-014](F-014-deletion-and-trash.md) (state)
+**Depends on:** F-008, F-015, [F-012](F-012-live-updates.md) (progress), [F-014](F-014-deletion-and-trash.md) (state)
+**Related specs:** [08-api-principles](../specs/08-api-principles.md), [09-previews](../specs/09-previews.md#storage)
 
 ## Summary
 

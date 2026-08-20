@@ -36,7 +36,7 @@ Layout/table structure understanding, handwriting recognition, form-field extrac
 
 ## Open questions
 
-Per-page vs. per-document OCR routing threshold — implementation detail, decide with data. [Q9](../OPEN-QUESTIONS.md#q9) covers model choices.
+Per-page vs. per-document OCR routing threshold — implementation detail, decide with data. [Q9](../OPEN-QUESTIONS.md) covers model choices.
 
 ## Acceptance criteria
 

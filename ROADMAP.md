@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-**Current phase:** 0 — Foundations & toolchain *(not started; no code exists yet)*
+**Current phase:** 0 — Foundations & toolchain *(stack decisions landed; skeleton next — no feature code exists yet)*
 
 The ordering authority for implementation. Each phase delivers **one clear new segment of the app**, is independently testable, and lists everything needed to work it: the features it delivers, the specs/ADRs to read first, the open questions to answer at entry, and the exit criteria that close it. This file records **order and rationale, not schedule** — dates are deliberately absent.
 
@@ -30,7 +30,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 4. **P0 before P1 before P2** wherever dependencies allow.
 5. **Decisions are batched at phase entry** — each phase names the OPEN-QUESTIONS rows that must be answered before its implementation starts.
 6. **API before UI within a phase; web before mobile across phases.** The web UI is the baseline client ([F-025](features/F-025-client-parity.md)); the mobile apps follow once the API they consume exists.
-7. **Test infrastructure arrives with the thing it tests**: the traceability matrix with the first feature MR, the conformance kit with the extractor contract, the golden-query benchmark with search. Every phase exit is tagged — the upgrade-path drill ([11](specs/11-engineering-standards.md#ci-pipeline-the-enforcement-list)) needs a previous tagged release to exist.
+7. **Test infrastructure arrives with the thing it tests**: the traceability matrix with the first feature PR, the conformance kit with the extractor contract, the golden-query benchmark with search. Every phase exit is tagged — the upgrade-path drill ([11](specs/11-engineering-standards.md#ci-pipeline-the-enforcement-list)) needs a previous tagged release to exist.
 
 ## Overview
 
@@ -56,9 +56,9 @@ This file never records status. Feature statuses live in [features/README.md](fe
 
 **Build order:**
 
-1. **Stack decisions** — resolve the gate questions below; write the resulting ADRs; accept or supersede [ADR-0001](decisions/ADR-0001-postgresql-single-datastore.md) (still `Proposed`).
+1. **Stack decisions** — resolve the gate questions below; write the resulting ADRs; accept or supersede [ADR-0001](decisions/ADR-0001-postgresql-single-datastore.md).
 2. **Repository scaffolding** — core service, migration tooling (up **and** down in CI), OpenAPI toolchain with generated client ([08](specs/08-api-principles.md)), lint/format/type gates.
-3. **CI enforcement list** from [11](specs/11-engineering-standards.md#ci-pipeline-the-enforcement-list) — including the traceability-matrix tooling (marker convention + script; "needed from the first feature MR"), coverage ratchet, commit-format check, secret scan, SBOM.
+3. **CI enforcement list** from [11](specs/11-engineering-standards.md#ci-pipeline-the-enforcement-list) — including the traceability-matrix tooling (marker convention + script; "needed from the first feature PR"), coverage ratchet, commit-format check, secret scan, SBOM.
 4. **Test infrastructure v0** — ground-truth corpus starter with machine-readable manifest ([11 § test infrastructure](specs/11-engineering-standards.md#test-infrastructure)), fault-injection harness skeleton ([12 § verification](specs/12-reliability.md#verification)).
 5. **Deployment skeleton** — Docker Compose behind the external Traefik, health/readiness endpoints, 12-factor config ([10](specs/10-deployment-and-operations.md)); `make release` (Conventional-Commits-derived SemVer, [11 § versioning](specs/11-engineering-standards.md#versioning--releases)).
 
@@ -94,7 +94,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 5. **[F-001](features/F-001-upload-and-import.md) — upload & import**: resumable upload protocol (per Q38), workspace import/adoption, re-scan detecting external add/modify/delete.
 6. **[F-015](features/F-015-folders.md) — folders**: UUID identity surviving rename/move, reconciliation, aggregates; **move/rename as first-class operations** (this is deferred [F-010](features/F-010-auto-sort-inbox.md)'s v1 obligation FR-1; FR-3's workspace-model flexibility is a design constraint here too).
 7. **[F-007](features/F-007-versioning.md) — write path only** *(staged)*: a new upload to an existing path or a changed file on re-scan preserves the previous content in `versions/` — no data-loss window, ever. Version browsing/restore/search and retention land in phase 4.
-8. **Web UI shell** (stack from Q26): login, browse, upload, download.
+8. **Web UI shell** (Vue 3 SPA — [ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)): login, browse, upload, download.
 
 **Read first**
 - **Features:** [F-001](features/F-001-upload-and-import.md) · [F-015](features/F-015-folders.md) · [F-007](features/F-007-versioning.md) (write-path part) · [F-011](features/F-011-audit-trail.md) (log part) · [F-010](features/F-010-auto-sort-inbox.md) (v1 obligations only)

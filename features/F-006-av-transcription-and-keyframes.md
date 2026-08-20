@@ -37,7 +37,7 @@ Speaker diarization ("who said it"), music/audio-event classification, subtitle-
 
 ## Open questions
 
-Keyframe density defaults (storage vs. recall trade-off at 10 TB with lots of video); [Q9](../OPEN-QUESTIONS.md#q9) for model choice.
+Keyframe density defaults (storage vs. recall trade-off at 10 TB with lots of video); [Q9](../OPEN-QUESTIONS.md) for model choice.
 
 ## Acceptance criteria
 

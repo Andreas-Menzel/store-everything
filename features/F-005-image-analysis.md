@@ -37,7 +37,7 @@ Face recognition / person identification — privacy-sensitive, therefore its ow
 
 ## Open questions
 
-[Q9 (which local models)](../OPEN-QUESTIONS.md#q9), threshold defaults.
+[Q9 (which local models)](../OPEN-QUESTIONS.md), threshold defaults.
 
 ## Acceptance criteria
 
