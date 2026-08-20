@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import __version__
 from store_everything.api import health
 from store_everything.api.v1.router import build_v1_router
 from store_everything.config import Settings, load_settings
@@ -23,6 +22,12 @@ from store_everything.problems import install_exception_handlers
 _logger = logging.getLogger(__name__)
 
 _SUMMARY = "Self-hosted personal cloud where search is the product."
+
+#: The contract's version, deliberately independent of the app's SemVer and of the
+#: extractor contract (08-api-principles.md § stable versioning). The API is
+#: path-versioned, so this changes only when a /v2 appears — never on a release, which
+#: would otherwise churn openapi.json and every generated client on every bump.
+API_VERSION = "1"
 
 
 def _operation_id(route: APIRoute) -> str:
@@ -54,7 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Store Everything",
         summary=_SUMMARY,
-        version=__version__,
+        version=API_VERSION,
         lifespan=_lifespan,
         generate_unique_id_function=_operation_id,
         # The built-in docs routes are public; ours are mounted under /api/v1 behind

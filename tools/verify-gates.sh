@@ -24,11 +24,17 @@ failures=0
 skipped=0
 fixtures=()
 
+# Restored from a copy taken here, never from git: `git checkout -- openapi.json` would
+# throw away uncommitted work on a file this script deliberately mutates.
+OPENAPI_BACKUP="$(mktemp -t gate-openapi-XXXXXX.json)"
+cp "$REPO_ROOT/openapi.json" "$OPENAPI_BACKUP"
+
 cleanup() {
   for fixture in "${fixtures[@]:-}"; do
     [ -n "$fixture" ] && rm -rf "$fixture"
   done
-  git -C "$REPO_ROOT" checkout --quiet -- openapi.json 2>/dev/null || true
+  [ -f "$OPENAPI_BACKUP" ] && cp "$OPENAPI_BACKUP" "$REPO_ROOT/openapi.json"
+  rm -f "$OPENAPI_BACKUP"
 }
 trap cleanup EXIT
 
@@ -94,7 +100,7 @@ document["info"]["title"] = "Drifted"
 path.write_text(json.dumps(document, indent=2) + "\n")
 ' "$REPO_ROOT/openapi.json"
 expect_failure "openapi drift" $UV run pytest tests/test_openapi_document.py -q
-git checkout --quiet -- openapi.json
+cp "$OPENAPI_BACKUP" "$REPO_ROOT/openapi.json"
 
 # ------------------------------------------------------------ licences policy
 fixture="$(mktemp -t gate-policy-XXXXXX.json)"

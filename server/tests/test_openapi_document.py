@@ -6,6 +6,8 @@ from typing import Any, cast
 
 from tools.export_openapi import OPENAPI_PATH, build_document, render
 
+from store_everything.app import API_VERSION
+
 
 def test_committed_document_is_current() -> None:
     """Guards the generated clients: they are built from this file, not from the app."""
@@ -49,3 +51,13 @@ def test_operation_ids_are_unique() -> None:
 def test_operation_ids_are_readable() -> None:
     """They become function names in every generated client."""
     assert set(_operation_ids(build_document())) == {"healthz", "readyz", "openapi_schema"}
+
+
+def test_the_contract_version_is_the_api_major_not_the_app_release() -> None:
+    """08-api-principles.md keeps the version lines independent.
+
+    Embedding the app's SemVer here would rewrite openapi.json and every generated
+    client on each release, and would tell clients a version they cannot act on.
+    """
+    assert build_document()["info"]["version"] == API_VERSION
+    assert API_VERSION == "1"

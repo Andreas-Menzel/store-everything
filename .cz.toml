@@ -17,3 +17,10 @@ version_files = [
     "server/pyproject.toml:^version",
     "package.json:\"version\"",
 ]
+# The lockfile records the project's own version, so bumping pyproject.toml without
+# re-locking leaves `uv sync --locked` failing on the released commit. The hook runs
+# after the version files are written and before the bump commit, and stages its
+# result so it lands in that commit.
+pre_bump_hooks = [
+    "uv lock --directory server --quiet && git add server/uv.lock",
+]
