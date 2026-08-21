@@ -349,15 +349,21 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
         # built. Retrying is right: the provisioning operation is still working on it.
         raise OSError(f"workspace {workspace_id} is not active yet")
 
-    root_path = str(job.payload.get("path") or scans.ROOT)
+    requested = str(job.payload.get("path") or scans.ROOT)
     try:
-        root_folder = await _root_folder(job.connection, workspace_id=workspace.id, path=root_path)
+        start = await _root_folder(job.connection, workspace_id=workspace.id, path=requested)
     except names.InvalidNameError as invalid:
         raise PermanentFailureError(
             f"{KIND} was given an unusable path: {invalid.reason}"
         ) from invalid
-    if root_folder is None:
-        raise PermanentFailureError(f"{KIND} was asked to scan an unknown path: {root_path!r}")
+    if start is None:
+        raise PermanentFailureError(f"{KIND} ran before {workspace.id} had a folder tree")
+    root_folder, root_path = start
+    if root_path != requested:
+        _logger.info(
+            "scanning the nearest known folder instead",
+            extra={"workspace": str(workspace.id), "requested": requested, "scanning": root_path},
+        )
 
     run = await scans.start(
         job.connection,
@@ -537,12 +543,25 @@ async def _requester(connection: AsyncConnection, requested_by: object) -> Actor
 
 async def _root_folder(
     connection: AsyncConnection, *, workspace_id: UUID, path: str
-) -> folders.Folder | None:
-    if not path:
-        return await folders.root_of(connection, workspace_id)
-    return await folders.resolve(
-        connection, workspace_id=workspace_id, segments=names.split_path(path)
-    )
+) -> tuple[folders.Folder, str] | None:
+    """Where to start, and the path that turned out to be: the deepest folder the index knows.
+
+    A requested subtree can name a directory the app has not registered yet — a watcher event for
+    a folder created a moment ago is exactly that — and scanning its nearest known ancestor is
+    what *discovers* it. Refusing would be worse than coarse: the operation would dead-letter for
+    the one case the watcher exists to handle.
+
+    The manual rescan endpoint validates the path before queueing, so the fallback only ever
+    applies to a path that appeared, or vanished, between the request and the run.
+    """
+    segments = list(names.split_path(path)) if path else []
+    while segments:
+        found = await folders.resolve(connection, workspace_id=workspace_id, segments=segments)
+        if found is not None:
+            return found, "/".join(segments)
+        segments.pop()
+    root = await folders.root_of(connection, workspace_id)
+    return None if root is None else (root, scans.ROOT)
 
 
 async def _rearm(connection: AsyncConnection, *, workspace: workspaces.Workspace) -> None:

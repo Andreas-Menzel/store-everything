@@ -9,7 +9,8 @@ the second whether what is on disk still agrees with the database.
 
 The API and the worker are separate processes on purpose: background work must never be able
 to starve request handling of CPU, and the two scale independently
-(10-deployment-and-operations.md § topology).
+(10-deployment-and-operations.md § topology). The `worker` process also holds the filesystem
+watcher, which is background work with no request behind it (ADR-0019).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import uvicorn
 
-from store_everything import bootstrap, fscheck, handlers, passwords, verify
+from store_everything import bootstrap, fscheck, handlers, passwords, verify, watcher
 from store_everything.config import Settings, load_settings
 from store_everything.db import create_engine
 from store_everything.log import configure_logging
@@ -51,18 +52,28 @@ _logger = logging.getLogger(__name__)
 
 
 async def _work(settings: Settings) -> int:
-    """Run the operation loop until the process is asked to stop.
+    """Run the operation loop, and the filesystem watcher beside it, until asked to stop.
 
     SIGTERM stops claiming and lets in-flight work finish; it is an optimization for restart
     speed, not a correctness mechanism. A `kill -9` here is equally safe — the leases simply
     expire and another worker reclaims (ADR-0010).
+
+    The watcher lives in this process rather than the API's because it is background work with
+    no request behind it, and because exactly one process should hold the subscriptions
+    (ADR-0019). It is started as a sibling task: one signal stops both, and a watcher that
+    cannot subscribe never stops the worker from working.
     """
     engine = create_engine(settings)
     runner = Runner(engine, settings, handlers.registry(settings))
+    watching = watcher.Watcher(engine, settings)
+
+    def stop() -> None:
+        runner.stop()
+        watching.stop()
 
     loop = asyncio.get_running_loop()
     for signal_number in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(signal_number, runner.stop)
+        loop.add_signal_handler(signal_number, stop)
 
     try:
         # Nothing here touches a table until the schema exists: on a fresh install the stack
@@ -71,7 +82,9 @@ async def _work(settings: Settings) -> int:
         if not await runner.wait_until_ready():
             return 0
         await handlers.install_schedules(engine, settings)
-        await runner.run_forever()
+        async with asyncio.TaskGroup() as group:
+            group.create_task(runner.run_forever())
+            group.create_task(watching.run_forever())
     finally:
         await engine.dispose()
     return 0

@@ -1413,6 +1413,9 @@
             "type": "integer",
             "title": "Scan Interval Minutes"
           },
+          "watch": {
+            "$ref": "#/components/schemas/WatchStatus"
+          },
           "active": {
             "anyOf": [
               {
@@ -1439,6 +1442,7 @@
         "required": [
           "workspace",
           "scan_interval_minutes",
+          "watch",
           "active",
           "recent",
           "findings"
@@ -2150,6 +2154,38 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WatchStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "unwatched",
+              "watching",
+              "unavailable"
+            ],
+            "title": "State"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "state",
+          "detail"
+        ],
+        "title": "WatchStatus",
+        "description": "Whether the fast path in front of the schedule is listening to this root."
       },
       "WorkspaceCreateRequest": {
         "properties": {

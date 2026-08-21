@@ -346,9 +346,25 @@ class ScanFinding(BaseSchema):
     skipped. The app never resolves either by touching the tree (ADR-0019)."""
 
 
+class WatchStatus(BaseSchema):
+    """Whether the fast path in front of the schedule is listening to this root."""
+
+    state: Literal["unwatched", "watching", "unavailable"]
+    """`unwatched` — no worker is holding a subscription (the watcher is off, or has not got to
+    this workspace yet). `watching` — events on this root hasten its next scan. `unavailable` —
+    the app tried and could not, and `detail` says why. None of the three is an error: the
+    scheduled pass is the one that cannot be missed (ADR-0019)."""
+
+    detail: str | None
+    """Why this root is not watched, with the fix named where there is one."""
+
+
 class ImportStatus(BaseSchema):
     workspace: UUID
     scan_interval_minutes: int
+    watch: WatchStatus
+    """The answer to "why did my change take an hour to show up?"."""
+
     active: ScanSummary | None
     recent: list[ScanSummary]
     findings: Page[ScanFinding]
@@ -448,6 +464,7 @@ async def import_status(
     return ImportStatus(
         workspace=found.id,
         scan_interval_minutes=found.scan_interval_minutes,
+        watch=WatchStatus(state=found.watch_state, detail=found.watch_detail),
         active=(
             None
             if active is None

@@ -64,6 +64,7 @@ Confirmed as the shipping defaults (Q30), every one env-tunable, with per-cost-c
 | Janitor grace window | **24 h** | The window exists so the janitor cannot race an in-flight operation between its bytes-write and its row-commit; 24 h is what comparable products use for the same kind of temp-file TTL. |
 | Upload-session expiry | **7 d** | An interrupted multi-GB upload survives a weekend; staging is not held indefinitely. Published to clients as `Upload-Limit: max-age` ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)). |
 | Workspace scan interval | **1 h** | The correctness backstop for external changes; the watcher and manual rescan are the fast paths ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)). Per-workspace tunable. |
+| Watcher debounce window | **5 s** | How long a burst of filesystem events has to go quiet before it becomes one scan. A burst that never goes quiet is acted on every twelve windows anyway, so an import is visible while it runs rather than only when it stops — that multiple is a consequence of this number, not a second knob. |
 
 ## Filesystem write protocol
 
