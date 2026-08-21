@@ -79,6 +79,31 @@ def normalize_api_name(name: str) -> str:
     return unicodedata.normalize("NFC", name)
 
 
+def split_path(path: str) -> tuple[str, ...]:
+    """A workspace-relative path as validated segments, NFC-normalized.
+
+    Refuses everything that is not a plain relative path: a leading `/` (which would look
+    absolute and mean something else), an empty segment from `a//b` or a trailing slash, a
+    segment breaking the name rules, and a path over the byte limit. Traversal is impossible
+    by construction rather than by filtering — `.` and `..` are not names
+    (`validate_name`), so there is nothing to strip.
+    """
+    normalized = normalize_api_name(path)
+    if normalized.startswith("/"):
+        raise InvalidNameError("a path must be relative to the workspace root")
+    if len(normalized.encode()) > MAX_PATH_BYTES:
+        raise InvalidNameError(f"a path must be at most {MAX_PATH_BYTES} bytes")
+
+    segments = tuple(normalized.split("/"))
+    if any(segment == "" for segment in segments):
+        raise InvalidNameError("a path must not contain an empty segment")
+    for index, segment in enumerate(segments):
+        # Only the first segment sits at the workspace root, so only it collides with the
+        # names we reserve there.
+        validate_name(segment, at_root=index == 0)
+    return segments
+
+
 def validate_name(name: str, *, at_root: bool = False) -> None:
     """Refuse a name that may not be stored, naming the rule it broke.
 

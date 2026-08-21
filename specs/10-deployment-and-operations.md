@@ -54,8 +54,8 @@ Rules:
 
 The resumable-upload protocol ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)) puts three requirements on whatever sits in front of the app. They are configuration, not code, so they belong in the operator documentation — and each one fails as "large uploads mysteriously break", which is why they are named here:
 
-1. **`1xx` interim responses must reach the client.** The `104 (Upload Resumption Supported)` response *is* the signal that resumption is available; Apple's background uploader treats it as authoritative. Traefik's default proxy forwards `1xx`; its experimental fast proxy does not.
-2. **Request bodies must not be buffered.** Buffering defeats streaming and delays the `104` until the body is complete, which is the opposite of the point.
+1. **`1xx` interim responses must reach the client** — a requirement in waiting rather than one in force. The app currently sends **no** `104 (Upload Resumption Supported)`, because ASGI has no message for an interim response and the protocol permits omitting it ([03 § uploads](03-storage-and-portability.md#uploads), [Q58](../OPEN-QUESTIONS.md)); clients take the upload resource from the `201 Created`. Should the 104 arrive later, this constraint becomes real: Traefik's default proxy forwards `1xx`, its experimental fast proxy does not — so an operator who switched to the fast proxy would break iOS background uploads and nothing else.
+2. **Request bodies must not be buffered.** The app streams an upload to disk as it arrives and `fsync`s before acknowledging an offset; a buffering proxy turns that into "hold a multi-gigabyte body in memory, then write it", which defeats resumption and can defeat the machine.
 3. **Request timeouts must accommodate a whole upload.** Traefik's `respondingTimeouts.readTimeout` defaults to **60 s and covers the entire request including its body**, so every upload slower than a minute dies until it is raised. The app publishes `Upload-Limit: max-append-size` so clients can size appends under an intermediary's body limit instead of guessing.
 
 ## Health & readiness

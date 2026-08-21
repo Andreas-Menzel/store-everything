@@ -80,6 +80,12 @@ services:
       # and is empty — disabled — until an operator names a path they have mounted here.
       SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
       SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
+      # Uploads (ADR-0017). The append sizes are published to clients in `Upload-Limit`, so
+      # they have to fit inside whatever the proxy in front of this will pass through.
+      SE_UPLOAD_EXPIRY_DAYS: ${SE_UPLOAD_EXPIRY_DAYS:-7}
+      SE_UPLOAD_MAX_SIZE: ${SE_UPLOAD_MAX_SIZE:-0}
+      SE_UPLOAD_MAX_APPEND_SIZE: ${SE_UPLOAD_MAX_APPEND_SIZE:-67108864}
+      SE_UPLOAD_MIN_APPEND_SIZE: ${SE_UPLOAD_MIN_APPEND_SIZE:-1048576}
     volumes:
       - app-data:/var/lib/store-everything
       - workspace-data:/srv/store-everything
@@ -145,6 +151,12 @@ services:
       # and is empty — disabled — until an operator names a path they have mounted here.
       SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
       SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
+      # Uploads (ADR-0017). The append sizes are published to clients in `Upload-Limit`, so
+      # they have to fit inside whatever the proxy in front of this will pass through.
+      SE_UPLOAD_EXPIRY_DAYS: ${SE_UPLOAD_EXPIRY_DAYS:-7}
+      SE_UPLOAD_MAX_SIZE: ${SE_UPLOAD_MAX_SIZE:-0}
+      SE_UPLOAD_MAX_APPEND_SIZE: ${SE_UPLOAD_MAX_APPEND_SIZE:-67108864}
+      SE_UPLOAD_MIN_APPEND_SIZE: ${SE_UPLOAD_MIN_APPEND_SIZE:-1048576}
     volumes:
       - app-data:/var/lib/store-everything
       - workspace-data:/srv/store-everything

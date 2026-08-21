@@ -174,6 +174,51 @@ probe passes against that mount with its own options — on a filesystem that li
 `fsync`, every durability guarantee this app makes is void, and a refused workspace is better
 than silent loss.
 
+## Uploads and the proxy in front
+
+Uploads speak the [IETF resumable-upload protocol](../decisions/ADR-0017-resumable-upload-protocol.md),
+which is the only way bytes get in. Two things about that are the proxy's business, and both
+bite silently:
+
+**Raise Traefik's read timeout.** `respondingTimeouts.readTimeout` defaults to **60 seconds and
+covers the whole request including its body**, so every upload slower than a minute dies with a
+truncated request and no useful error. In your static configuration:
+
+```yaml
+entryPoints:
+  websecure:
+    address: ':443'
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s # or a value that fits your slowest upload
+```
+
+**Do not put a body-buffering middleware in front of this.** The app streams an upload to disk
+as it arrives and `fsync`s before acknowledging each offset; a buffering proxy turns that into
+"hold a multi-gigabyte body in memory, then write it".
+
+**The size limits are yours to set,** and they are published to clients in the `Upload-Limit`
+header rather than discovered by failing:
+
+| Setting | Default | What it decides |
+|---|---|---|
+| `SE_UPLOAD_MAX_APPEND_SIZE` | 64 MiB | The largest body one request may carry. It also caps a *single-request* upload — anything larger must use the resumable flow, which our clients do. Keep it under whatever your proxy will pass. |
+| `SE_UPLOAD_MIN_APPEND_SIZE` | 1 MiB | The smallest body an append should carry. Appends at least this large are not counted against `SE_RATE_LIMIT_PER_MINUTE`, so a fast link uploading a large file cannot rate-limit itself. |
+| `SE_UPLOAD_MAX_SIZE` | 0 (unlimited) | A ceiling on one file. `0` publishes no ceiling rather than a fictional one. |
+| `SE_UPLOAD_EXPIRY_DAYS` | 7 | How long an interrupted upload can be resumed. Its staged bytes sit in the workspace's `.workspace/staging/` until then; the janitor collects them afterwards. |
+
+Uploading one file, end to end:
+
+```bash
+curl -s -X POST "https://$PUBLIC_HOST/api/v1/workspaces/$WORKSPACE/files?path=Photos/beach.jpg" \
+  -H "Authorization: Bearer $TOKEN" -H 'Upload-Complete: ?1' \
+  -H 'Content-Type: image/jpeg' --data-binary @beach.jpg
+```
+
+The response is the registered file, and `Location` names it. Add
+`?content_hash=<sha256>` and the server verifies the assembled bytes against it before
+publishing anything — a mismatch fails the upload rather than storing a corrupt file.
+
 ## Upgrading
 
 ```bash

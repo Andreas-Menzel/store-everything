@@ -28,7 +28,7 @@ from fastapi import Depends, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from store_everything import identity, tokens
+from store_everything import identity, resumable, tokens
 from store_everything.config import Settings
 from store_everything.identity import AccountDisabledError, Credential
 from store_everything.problems import ProblemException
@@ -234,6 +234,34 @@ async def require_admin(credential: CurrentCredential) -> Credential:
 AdminCredential = Annotated[Credential, Depends(require_admin)]
 
 
+def _is_bulk_append(request: Request, settings: Settings) -> bool:
+    """Whether this is a resumable-upload append large enough to pay for itself.
+
+    What the ceiling rations is per-request overhead — an append costs one `fsync` — not
+    throughput, and a fixed request count punishes exactly the wrong client: a fast link
+    uploading a large file. So an append carrying at least `min-append-size` is not counted,
+    and everything smaller is an ordinary request against the ordinary budget.
+
+    That is safe because of an asymmetry: a *small* append can only breach a per-minute count
+    if the link is fast, and a fast link has no reason to send small appends — while an
+    attacker sending kilobyte appends spends the normal budget and stops. Session creation is
+    counted too, so nobody gets unlimited sessions to append to.
+
+    Recognised by media type rather than by path, so this stays true of any route the protocol
+    grows (07 § abuse protection, ADR-0017).
+    """
+    if request.method != "PATCH":
+        return False
+    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    if content_type != resumable.MEDIA_TYPE:
+        return False
+    declared = request.headers.get("content-length")
+    # An undeclared length is not the fast path: it is counted like anything else.
+    if declared is None or not declared.isdigit():
+        return False
+    return int(declared) >= settings.upload_min_append_size
+
+
 async def enforce_request_ceiling(request: Request) -> None:
     """The app-level request ceiling for `/api/v1`.
 
@@ -246,6 +274,9 @@ async def enforce_request_ceiling(request: Request) -> None:
     once per window (`note_refusal`).
     """
     settings = settings_of(request)
+    if _is_bulk_append(request, settings):
+        return
+
     presented = _presented_credential(request)
     key = (
         f"credential:{tokens.digest(presented)}"

@@ -15,6 +15,9 @@ Two rules keep collection from becoming its own hazard:
   against a list of what *is* referenced. No such list exists until file versions do, and
   "no references found" must therefore mean "skip", not "delete everything" — so blob
   collection stays off until a reference source is registered.
+- **An open upload session is not debris**, however old its staging file looks: a client has
+  days to come back for it (ADR-0017). So this sweep first expires the sessions that are
+  genuinely past their deadline, and then leaves every still-open one alone.
 
 Filesystem work runs in a thread, never on the event loop: a sweep over a staging directory
 is thousands of `stat` calls, and the worker shares its loop with heartbeats that must not
@@ -38,7 +41,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import filestore, operations, workspaces
+from store_everything import filestore, operations, uploads, workspaces
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -134,6 +137,10 @@ async def collect(
     """Sweep debris older than the grace window. Idempotent, and safe to run concurrently."""
     grace = timedelta(hours=settings.janitor_grace_hours)
 
+    # Before deciding what is debris, decide what has stopped being live. An upload past its
+    # deadline is the only thing here that expires on a clock rather than on a state change.
+    sessions_expired = await uploads.expire_due(job.connection)
+
     roots = await all_staging_roots(job.connection, settings)
     candidates, inspected = await asyncio.to_thread(_aged_candidates, roots, grace=grace)
 
@@ -141,15 +148,21 @@ async def collect(
     # of staging behind, and the janitor must not turn that into a round-trip storm.
     owners = [candidate.operation_id for candidate in candidates if candidate.operation_id]
     states = await operations.states_of(job.connection, owners)
+    # Staging in a workspace is named after an upload session rather than an operation, and an
+    # open one is live data: without this the sweep would eat a paused upload's bytes.
+    live_sessions = await uploads.open_ids(job.connection, owners)
 
     doomed = [
         candidate.path
         for candidate in candidates
+        if candidate.operation_id not in live_sessions
         # An unrecognised name has only its age to go by, and that has already passed. An
         # operation that no longer exists cannot come back for its file — terminal rows are
         # pruned (12 § queue hygiene) — so absence counts as terminal.
-        if candidate.operation_id is None
-        or states.get(candidate.operation_id, "succeeded") in operations.TERMINAL_STATES
+        and (
+            candidate.operation_id is None
+            or states.get(candidate.operation_id, "succeeded") in operations.TERMINAL_STATES
+        )
     ]
     collected = await asyncio.to_thread(_remove_all, doomed)
 
@@ -175,4 +188,5 @@ async def collect(
         "staging_inspected": inspected,
         "staging_collected": collected,
         "blobs_collected": blobs_collected,
+        "sessions_expired": sessions_expired,
     }

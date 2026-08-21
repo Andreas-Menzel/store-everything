@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -157,3 +157,61 @@ export const createWorkspace = <ThrowOnError extends boolean = false>(options: O
  * Read one workspace
  */
 export const readWorkspace = <ThrowOnError extends boolean = false>(options: Options<ReadWorkspaceData, ThrowOnError>): RequestResult<ReadWorkspaceResponses, ReadWorkspaceErrors, ThrowOnError> => (options.client ?? client).get<ReadWorkspaceResponses, ReadWorkspaceErrors, ThrowOnError>({ url: '/api/v1/workspaces/{workspace_id}', ...options });
+
+/**
+ * Advertise the upload limits
+ *
+ * The protocol's preflight: how large a body may be, and how long a session lives.
+ *
+ * A server that does not implement the protocol answers `501` here, so answering `200` with
+ * `Upload-Limit` is the signal that resumable uploads are available (ADR-0017).
+ */
+export const uploadLimits = <ThrowOnError extends boolean = false>(options: Options<UploadLimitsData, ThrowOnError>): RequestResult<UploadLimitsResponses, UploadLimitsErrors, ThrowOnError> => (options.client ?? client).options<UploadLimitsResponses, UploadLimitsErrors, ThrowOnError>({ url: '/api/v1/workspaces/{workspace_id}/files', ...options });
+
+/**
+ * Upload a file, resumably
+ */
+export const createUpload = <ThrowOnError extends boolean = false>(options: Options<CreateUploadData, ThrowOnError>): RequestResult<CreateUploadResponses, CreateUploadErrors, ThrowOnError> => (options.client ?? client).post<CreateUploadResponses, CreateUploadErrors, ThrowOnError>({
+    bodySerializer: null,
+    url: '/api/v1/workspaces/{workspace_id}/files',
+    ...options,
+    headers: {
+        'Content-Type': 'application/octet-stream',
+        ...options.headers
+    }
+});
+
+/**
+ * Cancel an upload
+ */
+export const cancelUpload = <ThrowOnError extends boolean = false>(options: Options<CancelUploadData, ThrowOnError>): RequestResult<CancelUploadResponses, CancelUploadErrors, ThrowOnError> => (options.client ?? client).delete<CancelUploadResponses, CancelUploadErrors, ThrowOnError>({ url: '/api/v1/uploads/{upload_id}', ...options });
+
+/**
+ * Report an upload's offset
+ *
+ * Where to resume from. The answer a client trusts after any interruption.
+ */
+export const uploadOffset = <ThrowOnError extends boolean = false>(options: Options<UploadOffsetData, ThrowOnError>): RequestResult<UploadOffsetResponses, UploadOffsetErrors, ThrowOnError> => (options.client ?? client).head<UploadOffsetResponses, UploadOffsetErrors, ThrowOnError>({ url: '/api/v1/uploads/{upload_id}', ...options });
+
+/**
+ * Append to an upload
+ */
+export const appendToUpload = <ThrowOnError extends boolean = false>(options: Options<AppendToUploadData, ThrowOnError>): RequestResult<AppendToUploadResponses, AppendToUploadErrors, ThrowOnError> => (options.client ?? client).patch<AppendToUploadResponses, AppendToUploadErrors, ThrowOnError>({
+    bodySerializer: null,
+    url: '/api/v1/uploads/{upload_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/partial-upload',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one file
+ */
+export const readFile = <ThrowOnError extends boolean = false>(options: Options<ReadFileData, ThrowOnError>): RequestResult<ReadFileResponses, ReadFileErrors, ThrowOnError> => (options.client ?? client).get<ReadFileResponses, ReadFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}', ...options });
+
+/**
+ * Download a file's content
+ */
+export const readFileContent = <ThrowOnError extends boolean = false>(options: Options<ReadFileContentData, ThrowOnError>): RequestResult<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError> => (options.client ?? client).get<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/content', ...options });

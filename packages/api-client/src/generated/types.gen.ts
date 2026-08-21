@@ -26,6 +26,60 @@ export type CurrentIdentity = {
 };
 
 /**
+ * FileSummary
+ */
+export type FileSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Workspace
+     */
+    workspace: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Content Hash
+     */
+    content_hash: string;
+    /**
+     * Digest Algorithm
+     */
+    digest_algorithm?: 'sha256';
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Media Class
+     */
+    media_class: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    /**
+     * State
+     */
+    state: 'live' | 'trashed';
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Modified At
+     */
+    modified_at: string | null;
+};
+
+/**
  * FilesystemVerdict
  *
  * What the `fs-check` probe found on the filesystem holding this workspace.
@@ -859,3 +913,292 @@ export type ReadWorkspaceResponses = {
 };
 
 export type ReadWorkspaceResponse = ReadWorkspaceResponses[keyof ReadWorkspaceResponses];
+
+export type UploadLimitsData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/files';
+};
+
+export type UploadLimitsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UploadLimitsError = UploadLimitsErrors[keyof UploadLimitsErrors];
+
+export type UploadLimitsResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateUploadData = {
+    /**
+     * The file's bytes, or a leading part of them.
+     */
+    body?: Blob | File;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query: {
+        /**
+         * Path
+         *
+         * Workspace-relative destination, e.g. `Photos/2026/beach.jpg`.
+         */
+        path: string;
+        /**
+         * Content Hash
+         *
+         * Optional SHA-256 of the content; verified before anything is published.
+         */
+        content_hash?: string | null;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/files';
+};
+
+export type CreateUploadErrors = {
+    /**
+     * No such workspace, or not yours
+     */
+    404: unknown;
+    /**
+     * Something already exists at that path
+     */
+    409: unknown;
+    /**
+     * The body exceeds Upload-Limit: max-append-size
+     */
+    413: unknown;
+    /**
+     * The path or the declared hash was refused
+     */
+    422: unknown;
+};
+
+export type CreateUploadResponses = {
+    /**
+     * The file was stored, or the upload was created
+     */
+    201: unknown;
+};
+
+export type CancelUploadData = {
+    body?: never;
+    path: {
+        /**
+         * Upload Id
+         */
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/uploads/{upload_id}';
+};
+
+export type CancelUploadErrors = {
+    /**
+     * No such upload, or it already completed
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CancelUploadError = CancelUploadErrors[keyof CancelUploadErrors];
+
+export type CancelUploadResponses = {
+    /**
+     * The upload is cancelled and its staged content discarded
+     */
+    204: void;
+};
+
+export type CancelUploadResponse = CancelUploadResponses[keyof CancelUploadResponses];
+
+export type UploadOffsetData = {
+    body?: never;
+    path: {
+        /**
+         * Upload Id
+         */
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/uploads/{upload_id}';
+};
+
+export type UploadOffsetErrors = {
+    /**
+     * No such upload, or not yours
+     */
+    404: unknown;
+    /**
+     * The upload expired
+     */
+    410: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UploadOffsetError = UploadOffsetErrors[keyof UploadOffsetErrors];
+
+export type UploadOffsetResponses = {
+    /**
+     * The current offset, in Upload-Offset
+     */
+    204: void;
+};
+
+export type UploadOffsetResponse = UploadOffsetResponses[keyof UploadOffsetResponses];
+
+export type AppendToUploadData = {
+    /**
+     * The next bytes of the file.
+     */
+    body: Blob | File;
+    path: {
+        /**
+         * Upload Id
+         */
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/uploads/{upload_id}';
+};
+
+export type AppendToUploadErrors = {
+    /**
+     * Upload-Offset is missing or unintelligible
+     */
+    400: unknown;
+    /**
+     * No such upload, or not yours
+     */
+    404: unknown;
+    /**
+     * The offset does not match; Upload-Offset carries the real one
+     */
+    409: unknown;
+    /**
+     * The upload expired
+     */
+    410: unknown;
+    /**
+     * The body exceeds Upload-Limit: max-append-size
+     */
+    413: unknown;
+    /**
+     * An append must be application/partial-upload
+     */
+    415: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AppendToUploadError = AppendToUploadErrors[keyof AppendToUploadErrors];
+
+export type AppendToUploadResponses = {
+    /**
+     * The upload completed and the file is registered
+     */
+    200: unknown;
+    /**
+     * The bytes were stored; Upload-Offset carries the new offset
+     */
+    204: void;
+};
+
+export type AppendToUploadResponse = AppendToUploadResponses[keyof AppendToUploadResponses];
+
+export type ReadFileData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}';
+};
+
+export type ReadFileErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileError = ReadFileErrors[keyof ReadFileErrors];
+
+export type ReadFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: FileSummary;
+};
+
+export type ReadFileResponse = ReadFileResponses[keyof ReadFileResponses];
+
+export type ReadFileContentData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/content';
+};
+
+export type ReadFileContentErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * The requested range lies outside the file
+     */
+    416: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileContentError = ReadFileContentErrors[keyof ReadFileContentErrors];
+
+export type ReadFileContentResponses = {
+    /**
+     * The original bytes, unmodified
+     */
+    200: unknown;
+    /**
+     * The requested byte range
+     */
+    206: unknown;
+};

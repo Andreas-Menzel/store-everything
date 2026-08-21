@@ -1,0 +1,194 @@
+"""Reading a file: its metadata, and its untouched bytes.
+
+`/content` serves the original file exactly as it is on disk — that is ADR-0003's promise, and
+it is also why this endpoint needs care. Serving user-supplied content from the app's own
+origin is how a personal cloud grows an XSS hole: an uploaded `.html` is honest HTML, and
+`nosniff` does nothing about that. So content is served **as a download unless its type is
+inert to render** (images other than SVG, audio, video, plain text), always with
+`Content-Security-Policy: default-src 'none'; sandbox` and the app's global `nosniff`. Inline
+viewing of documents belongs to the rendition path (ADR-0008), where the bytes we serve are
+ones we generated.
+
+Two cheap wins come for free with the content hash: it is the `ETag`, so a client that already
+has the bytes revalidates into a `304`
+([F-026/FR-25](../../../../features/F-026-offline-cache-and-prefetch.md)), and Starlette's
+`FileResponse` handles `Range`, `If-Range` and `416` properly, so streaming a video or letting
+an extractor read one byte range is framework work rather than ours.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from pathlib import Path
+from typing import Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Request, Response
+from fastapi.responses import FileResponse
+
+from store_everything import files, filestore, mediatypes, workspaces
+from store_everything.db import DatabaseConnection
+from store_everything.problems import ProblemException
+from store_everything.schemas import BaseSchema
+from store_everything.security import CurrentCredential
+
+router = APIRouter(prefix="/files", tags=["files"])
+
+#: Types a browser may render in place without becoming a script host. SVG is deliberately
+#: absent: it is a document format that can carry script, whatever its `image/` prefix says.
+_INLINE_FAMILIES = frozenset({"image", "audio", "video"})
+_INLINE_EXCEPTIONS = frozenset({"image/svg+xml"})
+
+#: Belt and braces for the one response that carries content we did not write.
+_CONTENT_SECURITY = "default-src 'none'; sandbox"
+
+
+class FileSummary(BaseSchema):
+    id: UUID
+    workspace: UUID
+    path: str
+    """Workspace-relative, derived from the folder chain — never a stored string (02 § file)."""
+
+    name: str
+    size: int
+    content_hash: str
+    digest_algorithm: Literal["sha256"] = "sha256"
+    media_type: str
+    media_class: Literal["image", "video", "audio", "document", "archive", "other"]
+    state: Literal["live", "trashed"]
+    created_at: datetime
+    modified_at: datetime | None
+    """The file's own timestamp on disk, which is what a later scan compares against."""
+
+    @classmethod
+    def of(cls, found: files.File, version: files.Version, path: str) -> FileSummary:
+        return cls(
+            id=found.id,
+            workspace=found.workspace_id,
+            path=path,
+            name=found.name,
+            size=version.size_bytes,
+            content_hash=version.content_hash,
+            media_type=version.media_type,
+            media_class=version.media_class,  # pyright: ignore[reportArgumentType]
+            state=found.state,  # pyright: ignore[reportArgumentType]
+            created_at=found.created_at,
+            modified_at=version.modified_at,
+        )
+
+
+def not_found() -> ProblemException:
+    """One answer for absent, someone else's, and purged (08 § errors)."""
+    return ProblemException(status=404, slug="not-found", title="Not found")
+
+
+async def readable(
+    connection: DatabaseConnection, *, file_id: UUID, credential: CurrentCredential
+) -> tuple[files.File, workspaces.Workspace]:
+    """The file and its workspace, or `404`.
+
+    Ownership is the only permission in phase 1 (07): grants and sharing arrive in phase 4,
+    and this is the single place that will need to learn about them.
+    """
+    found = await files.get(connection, file_id)
+    if found is None:
+        raise not_found()
+    workspace = await workspaces.get(connection, found.workspace_id)
+    if workspace is None or workspace.owner_id != credential.user.id:
+        raise not_found()
+    return found, workspace
+
+
+async def summarize(connection: DatabaseConnection, found: files.File) -> FileSummary:
+    version = await files.current_version(connection, found.id)
+    if version is None:  # pragma: no cover - a file is registered with its version or not at all
+        raise RuntimeError(f"file {found.id} has no current version")
+    return FileSummary.of(found, version, await files.path_of(connection, found))
+
+
+@router.get(
+    "/{file_id}",
+    summary="Read one file",
+    response_model=FileSummary,
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file(
+    file_id: UUID, credential: CurrentCredential, connection: DatabaseConnection
+) -> FileSummary:
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    return await summarize(connection, found)
+
+
+@router.get(
+    "/{file_id}/content",
+    summary="Download a file's content",
+    response_class=FileResponse,
+    response_model=None,
+    responses={
+        200: {"description": "The original bytes, unmodified", "content": {"*/*": {}}},
+        206: {"description": "The requested byte range"},
+        304: {"description": "The caller's copy matches the current content hash"},
+        404: {"description": "No such file, or not yours"},
+        416: {"description": "The requested range lies outside the file"},
+    },
+)
+async def read_file_content(
+    file_id: UUID,
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> Response:
+    found, workspace = await readable(connection, file_id=file_id, credential=credential)
+    version = await files.current_version(connection, found.id)
+    if version is None:  # pragma: no cover - see `summarize`
+        raise RuntimeError(f"file {found.id} has no current version")
+
+    etag = f'"{version.content_hash}"'
+    headers = {
+        "ETag": etag,
+        # Storable but always revalidated: the URL serves *the current* version, so a client
+        # may keep the bytes and ask whether they are still current (08 § caching).
+        "Cache-Control": "private, no-cache",
+        "Content-Security-Policy": _CONTENT_SECURITY,
+    }
+    if etag in {tag.strip() for tag in (request.headers.get("if-none-match") or "").split(",")}:
+        return Response(status_code=304, headers=headers)
+
+    relative = await files.path_of(connection, found)
+    # Re-resolved on every open, deliberately redundant with the scanner's refusal to follow
+    # symlinks: lexical containment is not containment (ADR-0019).
+    try:
+        absolute = await asyncio.to_thread(
+            filestore.resolve_within, workspace.root_path, Path(relative)
+        )
+        exists = await asyncio.to_thread(absolute.is_file)
+    except filestore.ContainmentError as escaped:
+        raise not_found() from escaped
+    if not exists:
+        # The row says the file is there and the filesystem disagrees. Reconciling that is
+        # re-scan's job (F-001/FR-6); answering honestly is this endpoint's.
+        raise ProblemException(
+            status=404,
+            slug="not-found",
+            title="Not found",
+            detail="The content of this file is no longer on the storage.",
+        )
+
+    return FileResponse(
+        absolute,
+        media_type=version.media_type,
+        filename=found.name,
+        content_disposition_type=_disposition(version.media_type),
+        headers=headers,
+    )
+
+
+def _disposition(media_type: str) -> str:
+    """`inline` only for types that cannot execute; everything else is a download."""
+    normalized = mediatypes.normalize(media_type) or mediatypes.DEFAULT_MEDIA_TYPE
+    if normalized in _INLINE_EXCEPTIONS:
+        return "attachment"
+    if normalized.partition("/")[0] in _INLINE_FAMILIES or normalized == "text/plain":
+        return "inline"
+    return "attachment"
