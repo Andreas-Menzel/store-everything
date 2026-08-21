@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-**Current phase:** 0 — Foundations & toolchain *(in progress — no feature code exists yet)*
+**Current phase:** 1 — Files & identity *(in progress; phase 0 closed at [v0.1.0](CHANGELOG.md))*
 
 The ordering authority for implementation. Each phase delivers **one clear new segment of the app**, is independently testable, and lists everything needed to work it: the features it delivers, the specs/ADRs to read first, the open questions to answer at entry, and the exit criteria that close it. This file records **order and rationale, not schedule** — dates are deliberately absent.
 
@@ -46,7 +46,9 @@ This file never records status. Feature statuses live in [features/README.md](fe
 | [7](#phase-7--mobile-backup--parity--v10) | Mobile backup & parity (**v1.0**) | [F-021](features/F-021-mobile-auto-upload.md), [F-022](features/F-022-device-storage-reclaim.md), [F-024](features/F-024-offline-files-and-downloads.md), [F-025](features/F-025-client-parity.md) | Q44 |
 | [pool](#post-v1-pool) | Post-v1 | [F-010](features/F-010-auto-sort-inbox.md), [F-018](features/F-018-people.md), [F-023](features/F-023-os-file-manager-integration.md), … | — |
 
-**Staged features** (split across phases, per maintenance rule 4): [F-007](features/F-007-versioning.md) (1 → 4), [F-011](features/F-011-audit-trail.md) (1 → 4), [F-009](features/F-009-reprocessing.md) (2 → 5), [F-017](features/F-017-views.md) (3 → 5). A staged feature computes `Implemented` only when its last part lands.
+**Staged features** (split across phases, per maintenance rule 4): [F-007](features/F-007-versioning.md) (1 → 4), [F-011](features/F-011-audit-trail.md) (1 → 4), [F-015](features/F-015-folders.md) (1 → 2 → 3), [F-009](features/F-009-reprocessing.md) (2 → 5), [F-017](features/F-017-views.md) (3 → 5). A staged feature computes `Implemented` only when its last part lands.
+
+[F-015](features/F-015-folders.md)'s split: the entity, identity, closure, operations, aggregates and visibility roots land in phase 1; **folder tags** ([F-015/FR-9](features/F-015-folders.md)) wait for the tag vocabulary in phase 2 ([F-003](features/F-003-tagging.md)); **folders as search results** ([F-015/FR-10](features/F-015-folders.md)) wait for search in phase 3 ([F-002](features/F-002-hybrid-search.md)). Neither can be verified earlier, so neither is claimed earlier.
 
 ---
 
@@ -87,21 +89,22 @@ This file never records status. Feature statuses live in [features/README.md](fe
 
 **Build order:**
 
-1. **Identity core** ([07](specs/07-identity-permissions-sharing.md)) — accounts, sessions, personal access tokens, admin bootstrap, abuse protection. (No grants/sharing yet — that is [F-008](features/F-008-sharing-and-public-links.md), phase 4; ownership is the only permission.)
-2. **Reliability substrate** ([12](specs/12-reliability.md), [ADR-0010](decisions/ADR-0010-crash-only-execution-model.md)) — operation records, leases + fencing, the filesystem write protocol, janitor, durable schedules. The fault-injection harness becomes real here.
-3. **Event log** ([ADR-0007](decisions/ADR-0007-unified-event-log.md)) — transactional outbox; **every mutation from the first one is logged** ([F-011](features/F-011-audit-trail.md)'s log — its query API/UI follows in phase 4).
-4. **Storage layout** ([03](specs/03-storage-and-portability.md)) — workspace trees, staging area, content-addressed `versions/` shadow area.
-5. **[F-001](features/F-001-upload-and-import.md) — upload & import**: resumable upload protocol (per Q38), workspace import/adoption, re-scan detecting external add/modify/delete.
-6. **[F-015](features/F-015-folders.md) — folders**: UUID identity surviving rename/move, reconciliation, aggregates; **move/rename as first-class operations** (this is deferred [F-010](features/F-010-auto-sort-inbox.md)'s v1 obligation FR-1; FR-3's workspace-model flexibility is a design constraint here too).
-7. **[F-007](features/F-007-versioning.md) — write path only** *(staged)*: a new upload to an existing path or a changed file on re-scan preserves the previous content in `versions/` — no data-loss window, ever. Version browsing/restore/search and retention land in phase 4.
-8. **Web UI shell** (Vue 3 SPA — [ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)): login, browse, upload, download — plus the **authenticated interactive API docs page** ([08](specs/08-api-principles.md)), which waits for login to exist because the schema endpoint is never public.
+1. **Identity core + event log** ([07](specs/07-identity-permissions-sharing.md), [ADR-0007](decisions/ADR-0007-unified-event-log.md)) — accounts, sessions, personal access tokens, admin bootstrap, abuse protection, **and the event log they already write into**. The log comes first because "every mutation is logged in its own transaction" has to hold from the *first* mutation, and the first mutation is a user being created ([F-011](features/F-011-audit-trail.md)'s log — its query API/UI follows in phase 4). (No grants/sharing yet — that is [F-008](features/F-008-sharing-and-public-links.md), phase 4; ownership is the only permission.)
+2. **Reliability substrate** ([12](specs/12-reliability.md), [ADR-0010](decisions/ADR-0010-crash-only-execution-model.md)) — operation records, leases + fencing, the filesystem write protocol, janitor, durable schedules, plus the `fs-check` probe and the `verify` audit ([ADR-0019](decisions/ADR-0019-source-tree-semantics.md)). The fault-injection harness becomes real here.
+3. **Storage layout** ([03](specs/03-storage-and-portability.md), [ADR-0018](decisions/ADR-0018-workspace-layout-and-adoption.md)) — workspace roots in both placements, the `.workspace/` control directory, content-addressed `versions/` shadow area.
+4. **[F-001](features/F-001-upload-and-import.md) — upload & import**: the resumable-upload protocol ([ADR-0017](decisions/ADR-0017-resumable-upload-protocol.md)), workspace import and admin-gated adoption, re-scan detecting external add/modify/delete — scheduled, manual, and watcher-accelerated ([ADR-0019](decisions/ADR-0019-source-tree-semantics.md)), with the name and symlink rules enforced from the first scan.
+5. **[F-015](features/F-015-folders.md) — folders** *(staged — see the split above)*: UUID identity surviving rename/move, reconciliation, aggregates, visibility roots; **move/rename as first-class operations** (this is deferred [F-010](features/F-010-auto-sort-inbox.md)'s v1 obligation FR-1; FR-3's workspace-model flexibility is a design constraint here too).
+6. **[F-007](features/F-007-versioning.md) — write path only** *(staged)*: a new upload to an existing path or a changed file on re-scan preserves the previous content in `versions/` — no data-loss window, ever. Version browsing/restore/search and retention land in phase 4.
+7. **Web UI shell** (Vue 3 SPA — [ADR-0014](decisions/ADR-0014-vue-frontend-stack.md)), served by the API container at the same origin ([10 § topology](specs/10-deployment-and-operations.md#topology)): login, browse, upload, download — plus the **authenticated interactive API docs page** ([08](specs/08-api-principles.md)), which waits for login to exist because the schema endpoint is never public.
+
+**Also in phase 1, as a consequence rather than a feature:** [F-001/FR-6](features/F-001-upload-and-import.md) requires an externally deleted file to become a trash entry, so the `live | trashed` lifecycle state and the trash record land here ([F-014](features/F-014-deletion-and-trash.md)'s data model). In-app delete, restore, purge, and the trash page stay in phase 4 — phase 1 can capture a deletion that already happened on disk, but offers no way to delete through the app.
 
 **Read first**
 - **Features:** [F-001](features/F-001-upload-and-import.md) · [F-015](features/F-015-folders.md) · [F-007](features/F-007-versioning.md) (write-path part) · [F-011](features/F-011-audit-trail.md) (log part) · [F-010](features/F-010-auto-sort-inbox.md) (v1 obligations only)
 - **Specs:** [02-domain-model](specs/02-domain-model.md) · [03-storage-and-portability](specs/03-storage-and-portability.md) · [04-ingestion-pipeline](specs/04-ingestion-pipeline.md) (detection stage) · [07-identity-permissions-sharing](specs/07-identity-permissions-sharing.md) · [08-api-principles](specs/08-api-principles.md) · [12-reliability](specs/12-reliability.md)
-- **ADRs:** [ADR-0003](decisions/ADR-0003-files-on-disk-source-of-truth.md) · [ADR-0007](decisions/ADR-0007-unified-event-log.md) · [ADR-0010](decisions/ADR-0010-crash-only-execution-model.md)
+- **ADRs:** [ADR-0003](decisions/ADR-0003-files-on-disk-source-of-truth.md) · [ADR-0007](decisions/ADR-0007-unified-event-log.md) · [ADR-0010](decisions/ADR-0010-crash-only-execution-model.md) · [ADR-0017](decisions/ADR-0017-resumable-upload-protocol.md) · [ADR-0018](decisions/ADR-0018-workspace-layout-and-adoption.md) · [ADR-0019](decisions/ADR-0019-source-tree-semantics.md)
 
-**Answer at entry:**
+**Answer at entry** (what gated the phase; each row's status and resolution live in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md), the decisions in [ADR-0017](decisions/ADR-0017-resumable-upload-protocol.md)–[ADR-0019](decisions/ADR-0019-source-tree-semantics.md)):
 - **Q38** — upload wire protocol (explicitly blocks F-001; IETF resumable-uploads unlocks the iOS background-upload extension later)
 - **Q31** — staging placement & scan-ignore mechanics
 - **Q32** — NAS filesystem guarantees (run the rename/fsync test matrix on the real target hardware)
@@ -117,7 +120,9 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Overwriting content (re-upload to a path, changed file on re-scan) preserves the prior bytes in `versions/` — negative test proves nothing is lost.
 - Every mutation has its event row, written in the same transaction ([02 § invariants](specs/02-domain-model.md#invariants)).
 - PATs are listed and revocable; every endpoint rejects unauthenticated calls.
-- F-001 and F-015 FRs verified by their declared methods (matrix green for both); phase tagged.
+- The name, symlink, and adoption rules hold as negative tests: a case-colliding import reports conflicts without touching the tree, a symlink out of the workspace is never read, a non-allow-listed adoption is refused, and `.workspace/` appears in no API response.
+- `fs-check` refuses a filesystem that fails a required property (verified against a deliberately unsuitable one).
+- All F-001 FRs verified by their declared methods; F-015 green **except** its phase-2/3 parts (FR-9 folder tags, FR-10 folder search results) — matrix green for everything claimed; phase tagged.
 
 ---
 
@@ -130,7 +135,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 1. **Extractor contract finalized** ([05](specs/05-extractor-contract.md), [ADR-0002](decisions/ADR-0002-extractor-containers-fixed-api.md)) — wire format (Q5), sandbox enforcement (Q7 — security-first precondition before any extractor runs).
 2. **Orchestrator** ([04](specs/04-ingestion-pipeline.md)) — routing by manifest, execution with leases, persistence, priority classes ([04 § prioritization](specs/04-ingestion-pipeline.md#prioritization--scheduling)); **provenance + generation columns on every extraction write from the first result** ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md)) — this is [F-009](features/F-009-reprocessing.md)'s schema *(staged; management surface in phase 5)*.
 3. **Conformance kit + reference extractor** ([11 § test infrastructure](specs/11-engineering-standards.md#test-infrastructure)) — runnable against any extractor image; the reference extractor doubles as E2E test double.
-4. **[F-003](features/F-003-tagging.md) — tagging**: tag DAG ([ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md)), provenance state machine ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md)), manual tagging UI, auto-tag write path (exercised via the reference extractor now; the first real auto-tagger is [F-005](features/F-005-image-analysis.md), phase 3).
+4. **[F-003](features/F-003-tagging.md) — tagging**: tag DAG ([ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md)), provenance state machine ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md)), manual tagging UI, auto-tag write path (exercised via the reference extractor now; the first real auto-tagger is [F-005](features/F-005-image-analysis.md), phase 3). **Folder tags** ([F-015/FR-9](features/F-015-folders.md)) land here *(staged)* — manual and self-only, because a vocabulary to tag with exists only now.
 5. **`preview-gen` + thumbnails** ([09](specs/09-previews.md), [ADR-0008](decisions/ADR-0008-renditions.md)) — thumbnail tiers (Q42), preview descriptor, on-demand rendition policy.
 6. **Metadata extraction** — EXIF/dates/typed metadata ([02 § MetadataEntry](specs/02-domain-model.md)); feeds phase 3's timeline and date facets.
 7. **[F-004](features/F-004-document-text-extraction.md) — document text**: `pdf-text` decision tree, `tesseract-ocr`, plain text/markdown/office/code — segments with page/line anchors, originals never modified.
@@ -152,7 +157,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Sandbox negative test: a default extractor container cannot reach the outside network.
 - Images and PDFs have thumbnails at the fixed tier set; heavy renditions generate on demand and cache per policy.
 - Tag DAG with query-time expansion works; `manual`/`confirmed` survive a re-run, `rejected` suppresses re-adding ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) state machine tests).
-- F-003 and F-004 matrix green; phase tagged.
+- F-003 and F-004 matrix green; [F-015/FR-9](features/F-015-folders.md) joins them (folder tags), leaving only F-015's search part open; phase tagged.
 
 ---
 
@@ -163,7 +168,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 **Build order:**
 
 1. **Embedding infrastructure** ([06 § embedding spaces](specs/06-search.md), [ADR-0001](decisions/ADR-0001-postgresql-single-datastore.md) pgvector/HNSW) + text-embedding extractor (model per Q9).
-2. **[F-002](features/F-002-hybrid-search.md) — hybrid search**: exact/FTS over segments, names, typed metadata, tags (with DAG expansion — [ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md)); filters, facets, pagination; positions + snippets; date histogram + compact projection (FR-19/20 — the timeline backbone); geo filters + grid aggregation (FR-17/18). **Permission-aware by construction from the first query** ([06](specs/06-search.md#permission-aware-by-construction), [07 § search](specs/07-identity-permissions-sharing.md)) — the universe is owner-only until phase 4, but the filter join exists now. Conditional requests (ETags) and version-pinned thumbnail URLs land with the listing endpoints ([08 § conventions](specs/08-api-principles.md), [14](specs/14-client-sync-and-caching.md)) so phase 6's client cache costs the server nothing.
+2. **[F-002](features/F-002-hybrid-search.md) — hybrid search**: exact/FTS over segments, names, typed metadata, tags (with DAG expansion — [ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md)); filters, facets, pagination; positions + snippets; date histogram + compact projection (FR-19/20 — the timeline backbone); geo filters + grid aggregation (FR-17/18); **folder-typed results** ([F-015/FR-10](features/F-015-folders.md), F-015's last staged part). **Permission-aware by construction from the first query** ([06](specs/06-search.md#permission-aware-by-construction), [07 § search](specs/07-identity-permissions-sharing.md)) — the universe is owner-only until phase 4, but the filter join exists now. Conditional requests (ETags) and version-pinned thumbnail URLs land with the listing endpoints ([08 § conventions](specs/08-api-principles.md), [14](specs/14-client-sync-and-caching.md)) so phase 6's client cache costs the server nothing.
 3. **[F-005](features/F-005-image-analysis.md) — image analysis**: objects/scene/OCR/CLIP extractors → first real `auto` tags + semantic image search.
 4. **[F-006](features/F-006-av-transcription-and-keyframes.md) — A/V**: Whisper-class transcription with timestamps; keyframes chained through the image pipeline — completes "video Y at 04:12".
 5. **Ranking fusion + benchmark**: RRF with exact-beats-semantic; golden-query benchmark (Q8) on reference targets (Q27) wired as the scheduled, release-gating `benchmark` suite ([11 § verification methods](specs/11-engineering-standards.md#verification-methods-per-fr)).
@@ -186,7 +191,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Timeline histogram + compact projection serve a 100k-item library in one request each; geo filter + grid aggregation work (map *page* still absent).
 - Every search path joins the permission filter (query-plan/leak test proves no unfiltered path exists).
 - System views seeded and admin-manageable; user views CRUD; library tabs live in the web UI.
-- F-002, F-005, F-006 matrix green; F-017 green except map-page FRs (staged); phase tagged.
+- F-002, F-005, F-006 matrix green; F-017 green except map-page FRs (staged); **F-015 completes** — [F-015/FR-10](features/F-015-folders.md) (folders as permission-filtered search results) is its last staged part, so the feature computes `Implemented` here; phase tagged.
 
 ---
 
@@ -295,7 +300,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 
 **Build order:**
 
-1. **[F-021](features/F-021-mobile-auto-upload.md) — auto-upload**: source discovery (MediaStore/SAF, PhotoKit/Files), backfill + continuous backup, byte-identical originals, durable ledger with *verified* = server-confirmed content hash, `hash-check` endpoint, platform background-execution per [13 § background matrix](specs/13-mobile-clients.md); the Q38 protocol choice pays off in the iOS background-upload extension.
+1. **[F-021](features/F-021-mobile-auto-upload.md) — auto-upload**: source discovery (MediaStore/SAF, PhotoKit/Files), backfill + continuous backup, byte-identical originals, durable ledger with *verified* = server-confirmed content hash, `hash-check` endpoint, platform background-execution per [13 § background matrix](specs/13-mobile-clients.md); the [ADR-0017](decisions/ADR-0017-resumable-upload-protocol.md) protocol choice pays off in the iOS background-upload extension, which needs no server work beyond what phase 1 already shipped.
 2. **[F-022](features/F-022-device-storage-reclaim.md) — storage reclaim**: the five gates of [13 § reclaim gates](specs/13-mobile-clients.md#reclaim-gates) — verified, re-confirmed server-side at action time, locally unchanged, past age policy, OS-dialog + OS-trash only.
 3. **[F-024](features/F-024-offline-files-and-downloads.md) — offline files & downloads**: one-off downloads + pinned items kept current, per-file state everywhere, the one-way principle — no server event ever deletes a local copy; honest badging + actions on trash/purge/revocation.
 4. **[F-025](features/F-025-client-parity.md) — parity ratchet**: every `Clients: all` feature reachable on both apps, admin surfaces included; parity gaps are spec bugs.
@@ -324,7 +329,7 @@ Explicitly later. Pulling an item forward = maintenance rule 6 (assign a phase; 
 | Item | What | Reading / gates when pulled |
 |---|---|---|
 | [F-018](features/F-018-people.md) — People | Faces, persons, naming, account links (fully specified, additive) | [ADR-0011](decisions/ADR-0011-person-recognition-architecture.md) · [ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) · Q50, Q51, Q52, Q53 |
-| [F-010](features/F-010-auto-sort-inbox.md) — Auto-sort inbox | Rule- then AI-driven sorting; its v1 obligations (move API, observable events, workspace-model flexibility) are already delivered in phases 1 and 5 | Q2 (inbox destination) |
+| [F-010](features/F-010-auto-sort-inbox.md) — Auto-sort inbox | Rule- then AI-driven sorting; its v1 obligations (move API, observable events, workspace-model flexibility) are already delivered in phases 1 and 5 | Q55 (inbox destination) |
 | [F-023](features/F-023-os-file-manager-integration.md) — OS file-manager integration | iOS Files / Android DocumentsProvider surfaces; P2 — pull into a mobile phase if wanted sooner | [13-mobile-clients](specs/13-mobile-clients.md) |
 | External workspace sources | GDrive & co., read-only mirrored ([03 § workspace sources](specs/03-storage-and-portability.md#workspace-sources)) | Q16 |
 | Saved-search subscriptions | Standing queries notifying on new matches | Q37 (likely needs Q41) |

@@ -60,7 +60,7 @@ Two-way sync / mirroring (explicit non-goal — [13](../specs/13-mobile-clients.
 
 ## Open questions
 
-[Q38 (upload wire protocol — iOS extension compatibility)](../OPEN-QUESTIONS.md) · [Q44](../OPEN-QUESTIONS.md) · [Q45 (store distribution & permission review)](../OPEN-QUESTIONS.md) · [Q47](../OPEN-QUESTIONS.md).
+[Q44](../OPEN-QUESTIONS.md) · [Q45 (store distribution & permission review)](../OPEN-QUESTIONS.md) · [Q47](../OPEN-QUESTIONS.md). The upload wire protocol is decided — the server speaks the same IETF protocol as the iOS upload extension ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)).
 
 ## Acceptance criteria
 

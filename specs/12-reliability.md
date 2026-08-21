@@ -51,13 +51,25 @@ RETURNING *;
 - **Idempotency keys are deterministic** — `hash(file_version, extractor id + version, model version, generation, params)` — with a unique index over non-terminal states, so re-detecting the same work (a re-scan while the job is still pending) converges on the existing operation instead of duplicating it.
 - Leases make **deploy overlap safe** — old and new orchestrator briefly both running simply compete for claims — and later multi-host workers a configuration change, not a redesign.
 
-Proposed defaults (confirm: Q30): lease 5 min, heartbeat every 60 s, `max_attempts` 4, exponential backoff with jitter between attempts; per-cost-class overrides.
+## Tuning defaults
+
+Confirmed as the shipping defaults (Q30), every one env-tunable, with per-cost-class overrides where noted. They are conservative on purpose and get revisited at phase-2 entry against real extractor runtimes — a re-tune is a configuration change, never a design change.
+
+| Knob | Default | Why this number |
+|---|---|---|
+| Lease duration | **5 min** | Long enough that a busy worker does not lose work to a missed heartbeat, short enough that a dead worker's job is reclaimed while someone still cares. Per-cost-class overrides. |
+| Heartbeat cadence | **60 s** | Five chances to renew inside one lease, so a single slow cycle is survivable. Doubles as the cancellation channel. |
+| `max_attempts` | **4** | Three retries past the first attempt before dead-lettering. Attempts count **on claim**, so a poison job that kills its worker still converges. |
+| Retry backoff | **exponential with jitter** | Jitter is load-bearing: without it, a batch of failures retries in lockstep forever. |
+| Janitor grace window | **24 h** | The window exists so the janitor cannot race an in-flight operation between its bytes-write and its row-commit; 24 h is what comparable products use for the same kind of temp-file TTL. |
+| Upload-session expiry | **7 d** | An interrupted multi-GB upload survives a weekend; staging is not held indefinitely. Published to clients as `Upload-Limit: max-age` ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)). |
+| Workspace scan interval | **1 h** | The correctness backstop for external changes; the watcher and manual rescan are the fast paths ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)). Per-workspace tunable. |
 
 ## Filesystem write protocol
 
 PostgreSQL transactions do not cover the NAS — this protocol closes the gap. Every file the app writes, everywhere (source tree, `versions/`, derived store), goes through **one shared write layer** implementing it; ad-hoc file IO in feature code is a review-blocker.
 
-1. **Stage on the destination filesystem.** Write to a staging file named with the operation id, in a staging area that shares a filesystem with the destination — for workspace writes that is *inside the source tree* at `.workspace/staging/` ([03 § storage layout](03-storage-and-portability.md#storage-layout-proposed), Q31); for `versions/` and the derived store, a staging directory on the same volume.
+1. **Stage on the destination filesystem.** Write to a staging file named with the operation id, in a staging area that shares a filesystem with the destination — for workspace writes that is *inside the source tree* at `.workspace/staging/` ([03 § storage layout](03-storage-and-portability.md#storage-layout), [ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)); for `versions/` and the derived store, a staging directory on the same volume.
 2. **`fsync` the file**, then **atomically `rename` onto the deterministic final path**, then **`fsync` the parent directory** — a rename is not durable until its directory entry is. Deterministic paths (derived from ids/content hashes, never minted fresh per attempt) make retries converge on the same target.
 3. **Content-addressed areas are idempotent for free** (`versions/`, hashed derived assets): same bytes, same path — if the blob already exists, the write is a no-op.
 4. **Cross-filesystem moves** (trash safeguarding and version snapshots when `{data-root}` and the app volume differ — [03](03-storage-and-portability.md#deletion--trash)) cannot be atomic; they run as a journaled sequence: copy → fsync → verify hash → commit reference → delete source. A crash between copy and delete leaves both copies — harmless, because the operation record says which step is next.
@@ -68,7 +80,7 @@ PostgreSQL transactions do not cover the NAS — this protocol closes the gap. E
 - *Deleting:* rows first, bytes second. Purge deletes domain rows and decrements blob refcounts in one transaction while recording unlink work items; unlinking runs deferred with retries (`unlink` is naturally idempotent — ENOENT means done). This also upholds [F-014/FR-9](../features/F-014-deletion-and-trash.md): purge only *frees* space, so a full disk can never block it.
 - The one exception is external: content deleted directly on the NAS is reconciled by re-scan and flagged `restorable: false` ([F-014/FR-10](../features/F-014-deletion-and-trash.md)) — an accepted reality, never an app bug.
 
-**NAS caveat:** rename atomicity and fsync honesty on SMB/NFS mounts differ from local POSIX in mount-option-dependent ways. The whole protocol leans on them, so they are verified on the target hardware before v1 (Q32).
+**The protocol's assumptions are checked, not assumed.** Rename atomicity and `fsync` honesty on SMB/NFS mounts differ from local POSIX in mount-option-dependent ways, and every guarantee here stands on them. So the `fs-check` probe exercises them against a workspace root before that workspace exists, refusing one whose filesystem fails, and v1 supports filesystems local to the app host ([03 § filesystem requirements](03-storage-and-portability.md#filesystem-requirements), [ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)).
 
 ## Debris & the janitor
 
@@ -79,11 +91,11 @@ Every crash leaks *by design*: staging files, stale upload sessions, blobs whose
 - Expired upload sessions are closed and their staging removed.
 - [F-014](../features/F-014-deletion-and-trash.md)'s trash-retention janitor is the same machinery with a policy on top.
 
-Proposed defaults (Q30): grace window 24 h, upload-session expiry 7 days.
+Grace window and upload-session expiry are in [§ tuning defaults](#tuning-defaults).
 
 ## Durable schedules, lossy doorbells
 
-Generalizing [ADR-0007](../decisions/ADR-0007-unified-event-log.md)'s `LISTEN/NOTIFY` pattern: **every push channel is a lossy wake-up over durable state plus a periodic poll.** `NOTIFY` (job dispatch, event fan-out), inotify watchers (Q3), WebSocket pushes — all may drop; none may be load-bearing. The durable side is always a table: queued operations, `next_due_at` schedules (re-scan, janitor, retry backoff), the event log with consumer-held cursors. Server-side WebSocket state is deliberately none: thin notifications are lossy by design and clients resync via the `/events` cursor feed on reconnect ([F-012](../features/F-012-live-updates.md)).
+Generalizing [ADR-0007](../decisions/ADR-0007-unified-event-log.md)'s `LISTEN/NOTIFY` pattern: **every push channel is a lossy wake-up over durable state plus a periodic poll.** `NOTIFY` (job dispatch, event fan-out), filesystem watchers ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md) — a watcher event only ever *hastens* a scan the schedule would have run anyway), WebSocket pushes — all may drop; none may be load-bearing. The durable side is always a table: queued operations, `next_due_at` schedules (re-scan, janitor, retry backoff), the event log with consumer-held cursors. Server-side WebSocket state is deliberately none: thin notifications are lossy by design and clients resync via the `/events` cursor feed on reconnect ([F-012](../features/F-012-live-updates.md)).
 
 ## Client-visible idempotency
 
@@ -113,6 +125,7 @@ A guarantee that isn't tested doesn't exist ([11](11-engineering-standards.md#te
 
 - **Fault-injection tests** (the [11 § test layer](11-engineering-standards.md#testing) and per-FR verification method of the same name): a fault hook in the shared write layer kills the process at injected points around every filesystem mutation and every state transition; the harness restarts and asserts the binding property — terminal state reached, no debris past grace windows, no duplicated effects or events. This is [F-001](../features/F-001-upload-and-import.md)'s "kill the importer mid-run" acceptance criterion, generalized to every row of the inventory below.
 - **`verify` — an fsck-style admin audit** (CLI + admin API), read-only and incremental-capable: every row-referenced blob exists (with hash spot-checks — the bit-rot check from [03 § integrity](03-storage-and-portability.md#integrity)); every unreferenced blob is younger than the grace window; version-blob refcounts add up; no operation sits non-terminal with a long-expired lease. It runs clean after every crash-injection test and is runnable on demand in production.
+- **`fs-check` — the filesystem probe** (CLI + admin API): exercises atomic same-directory rename, `fsync` write-through on files and directories, and deterministic listing against a candidate workspace root. It gates workspace creation and adoption, and is what makes this spec's assumptions a checked precondition rather than a hope ([03 § filesystem requirements](03-storage-and-portability.md#filesystem-requirements)).
 
 ## Operation inventory
 
@@ -121,8 +134,9 @@ The normative list of effectful operations and how each converges. A feature tha
 | Operation | Intent record | Idempotence & recovery |
 |---|---|---|
 | Extraction job ([04](04-ingestion-pipeline.md), [05](05-extractor-contract.md#job-lifecycle)) | job row | lease + fencing; results applied in one guarded transaction keyed by idempotency key |
-| Chunked upload ([F-001/FR-2](../features/F-001-upload-and-import.md)) | upload session (`bytes_received`) | chunks fsync'd, then offset committed; resume truncates staging to the recorded offset; finalize = hash-verify → rename → FileVersion + extraction jobs in one transaction |
-| Import scan / re-scan ([F-001/FR-4–6](../features/F-001-upload-and-import.md)) | scan run + durable cursor | deterministic traversal; batch upserts by (path, hash) committed with the cursor; convergent across passes |
+| Resumable upload ([F-001/FR-2](../features/F-001-upload-and-import.md), [ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)) | upload session (`bytes_received`) | appends fsync'd, then offset committed; resume truncates staging to the committed offset; finalize = hash-verify → rename → FileVersion + extraction jobs in one transaction |
+| Workspace create / adopt ([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)) | workspace row created before the first directory is touched | deterministic paths (`data/`, `.workspace/`, `marker`); `mkdir` is idempotent, the marker is written by the staged-write protocol; a crash leaves a directory tree the retry adopts rather than duplicates. Refused outright when the `fs-check` probe fails |
+| Import scan / re-scan ([F-001/FR-4–6](../features/F-001-upload-and-import.md)) | scan run + durable cursor | deterministic traversal; batch upserts by (path, hash) committed with the cursor; convergent across passes. Scheduled, manual, and watcher-triggered runs are the same operation — a watcher event only advances `next_due_at` ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)) |
 | Move / rename / restore ([F-010/FR-1 contract](../features/F-010-auto-sort-inbox.md), [F-014/FR-4](../features/F-014-deletion-and-trash.md)) | move op (from → to) | same-fs rename is atomic; recovery inspects which side exists and rolls forward; cross-filesystem = journaled copy |
 | Trash safeguarding ([F-014/FR-2](../features/F-014-deletion-and-trash.md)) | the `trashed` + not-yet-safeguarded state | content-addressed move into `versions/`; re-runs converge; out-of-space rolls back per FR-2 |
 | Purge ([F-014/FR-7](../features/F-014-deletion-and-trash.md)) | purge op + unlink work items | rows + refcount decrements in one transaction; deferred unlinks retried (ENOENT = done); never blocked by a full disk |

@@ -22,6 +22,9 @@ Significant decisions, one file each, numbered and immutable once accepted. To c
 | [ADR-0014](ADR-0014-vue-frontend-stack.md) | Web UI stack: Vue 3 SPA with a generated API client | Accepted |
 | [ADR-0015](ADR-0015-ground-truth-corpus-strategy.md) | Ground-truth corpus: synthetic-first, curated for realism, manifest-governed | Accepted |
 | [ADR-0016](ADR-0016-license-and-third-party-compliance.md) | AGPL-3.0, and third-party license compliance as a CI gate | Accepted |
+| [ADR-0017](ADR-0017-resumable-upload-protocol.md) | Uploads speak the IETF resumable-upload protocol, implemented in-app | Accepted |
+| [ADR-0018](ADR-0018-workspace-layout-and-adoption.md) | Workspace layout: managed and adopted roots, one control directory | Accepted |
+| [ADR-0019](ADR-0019-source-tree-semantics.md) | Source-tree semantics: names, symlinks, change detection, filesystem requirements | Accepted |
 
 ## Template
 

@@ -28,10 +28,11 @@ Rules:
 
 1. **Only the core API joins the Traefik network.** Orchestrator, PostgreSQL, and extractors live on the internal network with no ingress; extractors additionally have no egress by default (Q7).
 2. The API serves **plain HTTP internally**; TLS exists only at the edge.
-3. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
-4. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
-5. Local development runs without a proxy (localhost bind, plain HTTP).
-6. **The runtime image contains no package installer.** The virtualenv is built at image-build time and copied in; `pip` and `ensurepip` are removed. A running container therefore cannot install code, and the image does not inherit pip's vendored dependency tree — which is otherwise its only source of CVEs. Enforced in CI ([11](11-engineering-standards.md#ci-pipeline-the-enforcement-list)).
+3. **The API container also serves the built web UI** ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)) — one image, one origin, so the SPA needs no CORS entry and the session cookie is same-site by construction ([07](07-identity-permissions-sharing.md#tokens--credentials)). API routes live under `/api/v1`; everything else falls back to the SPA's entry document.
+4. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
+5. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
+6. Local development runs without a proxy (localhost bind, plain HTTP).
+7. **The runtime image contains no package installer.** The virtualenv is built at image-build time and copied in; `pip` and `ensurepip` are removed. A running container therefore cannot install code, and the image does not inherit pip's vendored dependency tree — which is otherwise its only source of CVEs. Enforced in CI ([11](11-engineering-standards.md#ci-pipeline-the-enforcement-list)).
 
 ## Edge vs. app responsibilities
 
@@ -43,6 +44,14 @@ Rules:
 | Per-token/per-IP rate limits; login & share-password brute-force protection | App ([07](07-identity-permissions-sharing.md#abuse-protection)) |
 | CORS (deny by default, explicit allow-list) | App ([08](08-api-principles.md)) |
 | Content security headers (`nosniff`, frame-deny) | App |
+
+### What the proxy must not break (uploads)
+
+The resumable-upload protocol ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)) puts three requirements on whatever sits in front of the app. They are configuration, not code, so they belong in the operator documentation — and each one fails as "large uploads mysteriously break", which is why they are named here:
+
+1. **`1xx` interim responses must reach the client.** The `104 (Upload Resumption Supported)` response *is* the signal that resumption is available; Apple's background uploader treats it as authoritative. Traefik's default proxy forwards `1xx`; its experimental fast proxy does not.
+2. **Request bodies must not be buffered.** Buffering defeats streaming and delays the `104` until the body is complete, which is the opposite of the point.
+3. **Request timeouts must accommodate a whole upload.** Traefik's `respondingTimeouts.readTimeout` defaults to **60 s and covers the entire request including its body**, so every upload slower than a minute dies until it is raised. The app publishes `Upload-Limit: max-append-size` so clients can size appends under an intermediary's body limit instead of guessing.
 
 ## Health & readiness
 

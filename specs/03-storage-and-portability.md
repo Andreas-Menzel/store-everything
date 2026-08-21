@@ -1,7 +1,7 @@
 # 03 — Storage and Portability
 
 **Status:** Draft
-**Related ADRs:** [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md)
+**Related ADRs:** [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md), [ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md), [ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md), [ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)
 
 ## The core promise
 
@@ -28,19 +28,39 @@ A workspace corresponds to a **top-level folder** and is defined by *(source typ
 
 v1 spec work focuses on `local`; the workspace model carries the `source` field from day one so external backends slot in without redesign.
 
-## Storage layout (proposed)
+### Placement: managed and adopted roots
+
+Every `local` workspace has a **root directory** on disk plus a **placement** saying who chose that path ([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)):
+
+| Placement | Root directory | Created by |
+|---|---|---|
+| `managed` | `{data-root}/users/{user}/workspaces/{workspace}/data` — ours to shape | any member, for themselves |
+| `adopted` | an existing directory, indexed in place with **nothing moved or copied** | **admin only**, and only inside the `SE_ADOPTION_ROOTS` allow-list |
+
+Everything downstream — scanning, folders, uploads, versions, permissions — treats the two identically. Only two behaviors differ:
+
+- **Creation.** An adopted root is accepted only if it resolves (`realpath`) inside an allow-listed root, is a directory, neither contains nor is contained by another workspace root, and passes the filesystem probe ([§ filesystem requirements](#filesystem-requirements)). Members never submit filesystem paths.
+- **Rename.** Renaming a `managed` workspace renames its directory. An `adopted` root path is **immutable for the workspace's lifetime** — the display name is metadata; re-pointing at another directory is a new workspace, not a rename.
+
+## Storage layout
 
 ```
-{data-root}/
+{data-root}/                  ← managed placement
   users/{user}/
     workspaces/{workspace}/
-      .workspace/             ← marker: workspace UUID, source type/config
-        staging/              ← write staging (uploads, app-mediated writes):
-                                same filesystem as data/ → atomic rename into
-                                place; skipped by scans, janitor-cleaned
-                                (12-reliability.md, Q31)
-      data/                   ← the actual file tree (local content, or the
-                                mirror of an external source)
+      data/                   ← THE WORKSPACE ROOT: the file tree (local
+                                content, or the mirror of an external source)
+        .workspace/           ← the one control directory the app plants in a
+                                workspace root (reserved name, scan-skipped)
+          marker              ← workspace UUID, placement, created-at
+          staging/            ← write staging (uploads, app-mediated writes),
+                                files named by operation id: same filesystem as
+                                the destination → finalize is an atomic rename;
+                                janitor-collected (12-reliability.md)
+
+/mnt/…/some/existing/tree/    ← adopted placement: THE WORKSPACE ROOT is the
+  .workspace/                   user's own directory — same control directory
+  …the user's files…            inside it, nothing relocated
 
 /var/lib/store-everything/    ← app-owned (removable without data loss)
   derived/                    ← previews, keyframes, transcripts, renditions
@@ -49,9 +69,11 @@ v1 spec work focuses on `local`; the workspace model carries the `source` field 
 postgres volume               ← database
 ```
 
-The **database is authoritative** for workspace configuration; the `.workspace` marker only makes a tree re-identifiable after moves/backup-restore — never a second config source that can drift. Folder names are human-readable (you should recognize your data without the app); the UUID lives in the marker.
+The **database is authoritative** for workspace configuration; the `.workspace/marker` only makes a tree re-identifiable after a move or a backup restore — never a second config source that can drift. Folder names are human-readable (you should recognize your data without the app); the UUID lives in the marker.
 
-> Open — Q2: whether `local` workspaces may also *adopt* an existing folder in place (outside `{data-root}` — the NAS-import story with zero copying), and whether renaming a workspace renames its folder on disk.
+`.workspace/` is the **only** thing the app writes into a user's tree, in both placements — the price of atomic renames, which require staging on the destination filesystem. It is a reserved name at the workspace root ([F-015/FR-6](../features/F-015-folders.md)), skipped by every scan, and visible to anyone browsing the tree over SMB; operator documentation names the Samba options that hide it.
+
+The app-owned areas (`derived/`, `versions/`) sit **outside every workspace root** for both placements. An adopted root commonly lives on a different filesystem than the app volume, which makes [12](12-reliability.md#filesystem-write-protocol)'s journaled cross-filesystem move the normal path there rather than an exotic one — see the cost honesty in [§ deletion & trash](#deletion--trash).
 
 ## Import of existing structures
 
@@ -59,17 +81,55 @@ Users bring an existing folder tree ("we will import the file structure the user
 
 - Point a workspace at an existing subtree → the app scans it, registers every file (path, size, hash, mtime), and queues ingestion. Nothing is moved or renamed.
 - Import is resumable and incremental; at 10 TB the initial scan+ingest runs for a long time and must survive restarts.
-- Re-scan detects on-disk changes made *outside* the app (files added/modified/deleted directly on the NAS) and reconciles: new file → ingest; changed hash → new version; missing → a trash entry badged "removed outside the app" ([F-014/FR-10](../features/F-014-deletion-and-trash.md)) — never silently purged. Whether this is watch-based, scheduled, or manual is open — Q3.
+- Re-scan detects on-disk changes made *outside* the app (files added/modified/deleted directly on the NAS) and reconciles: new file → ingest; changed hash → new version; missing → a trash entry badged "removed outside the app" ([F-014/FR-10](../features/F-014-deletion-and-trash.md)) — never silently purged.
+- Two kinds of entry are **reported instead of registered**: siblings whose names collide on the comparison key ([§ names on disk](#names-on-disk)) and symlinks ([§ symlinks](#symlinks)). Both appear in the scan report; neither is ever resolved by touching the user's files.
+
+### Change detection
+
+Detection has one guaranteed path and two accelerators ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)):
+
+| Mechanism | Role |
+|---|---|
+| **Scheduled scan** — durable per-workspace `next_due_at`, default hourly, tunable | The correctness backstop. A **stat-scan**: compare size and mtime, hash only what looks changed. |
+| **Manual rescan** — workspace or single subtree | The user's "look now" button, and the answer when a watcher cannot exist. |
+| **Filesystem watcher**, where the platform supports it | A [lossy doorbell](12-reliability.md#durable-schedules-lossy-doorbells): events debounce into targeted subtree scans. Overflow, failure, or total absence is **not an error** — the scheduled pass reaches the same state. |
+
+No change is ever noticed *only* because a watcher fired, which is what keeps behavior identical on filesystems that deliver no events at all (every SMB/NFS mount). Verifying the content hash of every file is a **separate on-demand integrity pass** ([§ integrity](#integrity)), never part of routine scanning.
+
+## Names on disk
+
+The same tree is written by Linux, macOS and Windows machines, whose name rules disagree. The app's rules ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)):
+
+- Names are **stored exactly as given or found** — case-preserving, byte-preserving.
+- Sibling uniqueness is enforced on a **comparison key**: the name, NFC-normalized and case-folded. `Foo.txt` and `foo.txt` cannot be siblings; neither can the NFC and NFD spellings of one name. Path lookups compare keys, never raw strings.
+- Names arriving **through the API** are normalized to **NFC** before storage; names found **on disk** are stored verbatim with the key derived from them.
+- A rename changing only case, or only normalization, **is a rename**.
+- **Collisions found on disk are scan conflicts**, not errors and not merges: the first entry in the deterministic traversal order registers, the rest are listed as conflicts — visible, unregistered, untouched. Resolution is a human renaming something; the app never renames, moves, or deletes a user's file to resolve a collision.
+- Limits, explicit so they fail predictably rather than at the filesystem's whim: **255 bytes** per name (UTF-8), **4096 bytes** per workspace-relative path, no `/`, no control characters, and `.workspace` reserved at the workspace root.
+
+## Symlinks
+
+**Never followed** ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)). The scanner does not dereference a symlink, file or directory; the tree behind a symlinked directory is never traversed, so loops cannot arise. Each link is recorded as a skipped entry in the scan report and becomes no domain object, and the API never creates one. Independently of scanning, **every path the app opens is resolved and re-verified to lie inside its workspace root before any byte moves** — a redundant check by design: lexical containment is not containment, as the File Browser CVEs (CVE-2026-54094 and its incomplete fix CVE-2026-55668) demonstrated.
+
+## Filesystem requirements
+
+The write protocol ([12](12-reliability.md#filesystem-write-protocol)) stands on three properties of a workspace root's filesystem: **atomic same-directory rename**, **honest `fsync`** on files *and* directories, and **listings stable enough to traverse deterministically**. These are not assumed:
+
+- An **`fs-check` probe** ships with the app and exercises them directly. It runs when a workspace is created or adopted — recording its verdict on the workspace — and on demand.
+- A root whose filesystem fails the probe is **refused, naming the property that failed**.
+- **v1 supports filesystems local to the app host.** SMB and NFS mounts stay unsupported until the probe passes against that mount with its own options, because on a filesystem that lies about `fsync` or breaks rename atomicity every guarantee in [12](12-reliability.md) is void.
 
 ## Uploads
 
-Uploading through the API writes the file to the target workspace path on the source storage — an upload and a file copied onto the NAS by hand converge to the same state after reconciliation. Uploads support large files (resumable/chunked; 10 TB scale includes multi-GB videos).
+Uploading through the API writes the file to the target workspace path on the source storage — an upload and a file copied onto the NAS by hand converge to the same state after reconciliation. Uploads support large files (resumable; 10 TB scale includes multi-GB videos).
 
-Upload mechanics are crash-safe per [12](12-reliability.md#filesystem-write-protocol): chunks accumulate in the workspace's `.workspace/staging/` area — the same filesystem as the destination, so finalizing is an atomic rename — with received bytes tracked in a durable upload-session row; an interrupted upload resumes from the last acknowledged offset, an abandoned one expires and is janitor-collected. Finalize verifies the content hash, renames into place, and creates the `FileVersion` plus extraction jobs in one transaction.
+The wire format is the **IETF resumable-upload protocol**, implemented in-app and the only upload path there is ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)) — the same protocol Apple's Photos background-upload extension speaks, which is what makes [F-021](../features/F-021-mobile-auto-upload.md) work on iOS without a second dialect. A one-request upload is the ordinary case; resumption exists when it is needed.
+
+Upload mechanics are crash-safe per [12](12-reliability.md#filesystem-write-protocol): appended bytes accumulate in the workspace's `.workspace/staging/` area — the same filesystem as the destination, so finalizing is an atomic rename — with received bytes tracked in a durable upload-session row, fsync'd before each offset is committed. An interrupted upload resumes from the last committed offset; an abandoned one expires and is janitor-collected. Finalize verifies the content hash (the protocol carries no digest of its own), renames into place, and creates the `FileVersion` plus extraction jobs in one transaction.
 
 ## The auto-sort inbox (deferred feature, keep possible)
 
-A special workspace for quick uploads with no chosen destination: files land in an inbox and are automatically organized — initially by simple rules (year/month folders), later optionally by a local AI model that proposes/executes moves. Whether the sorted destination is inside the same workspace or another one is undecided (Q2). Requirement for now: file *move* operations (within/between workspaces, preserving identity, versions, tags) must be first-class API operations, because auto-sorting is just an API consumer doing moves.
+A special workspace for quick uploads with no chosen destination: files land in an inbox and are automatically organized — initially by simple rules (year/month folders), later optionally by a local AI model that proposes/executes moves. Whether the sorted destination is inside the same workspace or another one is undecided (Q55) — both placements can host either answer. Requirement for now: file *move* operations (within/between workspaces, preserving identity, versions, tags) must be first-class API operations, because auto-sorting is just an API consumer doing moves.
 
 ## Versioning vs. "the folder is everything" (known tension)
 
@@ -92,6 +152,6 @@ In-app deletion is **logically instant, physically deferred** ([F-014](../featur
 
 ## Integrity
 
-- Every version gets a content hash at ingest; re-scan can verify (bit-rot detection on demand).
+- Every version gets a **SHA-256** content hash at ingest, stored with its algorithm so a future algorithm is an additive change ([02](02-domain-model.md#fileversion)); re-scan can verify (bit-rot detection on demand).
 - Hash equality is used to skip redundant re-extraction (same bytes → reuse extraction results, still recorded per file).
 - The admin `verify` audit ([12](12-reliability.md#verification)) extends this to the app-owned areas: every referenced blob exists (with hash spot-checks), every unreferenced blob is younger than the janitor's grace window, version-blob refcounts add up.

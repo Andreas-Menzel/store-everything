@@ -15,7 +15,7 @@ A drop-zone workspace for uploads with no chosen destination: files land in an i
 - Rule stage: deterministic sorting (e.g. `{year}/{month}` from EXIF taken-at, else mtime). Runs after ingestion completes so extracted metadata is available.
 - AI stage (optional, local model): propose destination (existing folder taxonomy) with confidence; below threshold → suggestion awaiting user approval instead of silent move.
 - Every automatic move is audited and reversible (undo restores previous path; file identity, versions, and tags are move-invariant by construction).
-- Whether sorted destinations live inside the inbox workspace or in other workspaces is undecided — [Q2](../OPEN-QUESTIONS.md).
+- Whether sorted destinations live inside the inbox workspace or in other workspaces is undecided — [Q55](../OPEN-QUESTIONS.md). The workspace layout itself is settled and hosts either answer ([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)).
 
 ## v1 obligations (so this stays buildable later)
 
@@ -25,4 +25,4 @@ A drop-zone workspace for uploads with no chosen destination: files land in an i
 
 ## Open questions
 
-[Q2 (workspace layout, inbox destination)](../OPEN-QUESTIONS.md).
+[Q55 (inbox destination)](../OPEN-QUESTIONS.md).

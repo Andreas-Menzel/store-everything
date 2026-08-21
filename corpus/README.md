@@ -34,8 +34,10 @@ manifest-driven download-on-demand, both already sketched in ADR-0015.
 `fixtures/adversarial/hostile-names.json` rather than committed as files. Both members of
 such a pair cannot exist side by side on a case-insensitive volume, so committing them
 would break checkout on macOS and Windows. Tests materialise them at runtime and skip
-where the filesystem cannot hold them — which is itself the observation
-[Q25](../OPEN-QUESTIONS.md) has to resolve.
+where the filesystem cannot hold them — the observation that decided the name policy:
+siblings are unique on an NFC-normalized, case-folded comparison key, and a tree that
+violates it imports partially and reports the rest as scan conflicts
+([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)).
 
 **Positioned documents, images and audio/video** arrive with the phases that can read
 them (2 and 3). Phase 0 ships only fixtures whose truth needs no extractor to verify.
