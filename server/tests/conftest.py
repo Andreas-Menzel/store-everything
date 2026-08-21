@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -97,11 +98,15 @@ def identity_database(fresh_database: str) -> str:
 
 
 @pytest.fixture
-def identity_settings(identity_database: str) -> Settings:
+def identity_settings(identity_database: str, tmp_path: Path) -> Settings:
     return make_settings(
         database_url=identity_database,
         bootstrap_admin_email=ADMIN_EMAIL,
         bootstrap_admin_password=ADMIN_PASSWORD,
+        # Storage roots inside the test's own directory: nothing here may write to
+        # `/var/lib` or `/srv`, and a workspace created by a test has somewhere to live.
+        app_data_root=tmp_path / "app-data",
+        data_root=tmp_path / "workspaces",
         # The test client speaks plain HTTP, and a `__Host-` cookie without `Secure` is
         # invalid — the same reason a development instance sets this (config.py).
         session_cookie_secure=False,

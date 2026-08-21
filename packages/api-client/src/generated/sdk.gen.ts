@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
+import type { CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -135,3 +135,25 @@ export const updateUser = <ThrowOnError extends boolean = false>(options: Option
         ...options.headers
     }
 });
+
+/**
+ * List your workspaces
+ */
+export const listWorkspaces = <ThrowOnError extends boolean = false>(options?: Options<ListWorkspacesData, ThrowOnError>): RequestResult<ListWorkspacesResponses, ListWorkspacesErrors, ThrowOnError> => (options?.client ?? client).get<ListWorkspacesResponses, ListWorkspacesErrors, ThrowOnError>({ url: '/api/v1/workspaces', ...options });
+
+/**
+ * Create a workspace
+ */
+export const createWorkspace = <ThrowOnError extends boolean = false>(options: Options<CreateWorkspaceData, ThrowOnError>): RequestResult<CreateWorkspaceResponses, CreateWorkspaceErrors, ThrowOnError> => (options.client ?? client).post<CreateWorkspaceResponses, CreateWorkspaceErrors, ThrowOnError>({
+    url: '/api/v1/workspaces',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one workspace
+ */
+export const readWorkspace = <ThrowOnError extends boolean = false>(options: Options<ReadWorkspaceData, ThrowOnError>): RequestResult<ReadWorkspaceResponses, ReadWorkspaceErrors, ThrowOnError> => (options.client ?? client).get<ReadWorkspaceResponses, ReadWorkspaceErrors, ThrowOnError>({ url: '/api/v1/workspaces/{workspace_id}', ...options });

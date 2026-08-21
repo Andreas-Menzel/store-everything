@@ -75,8 +75,14 @@ services:
       SE_APP_DATA_ROOT: ${SE_APP_DATA_ROOT:-/var/lib/store-everything}
       SE_JANITOR_GRACE_HOURS: ${SE_JANITOR_GRACE_HOURS:-24}
       SE_JANITOR_INTERVAL_MINUTES: ${SE_JANITOR_INTERVAL_MINUTES:-60}
+      # The user's own file trees (03 § storage layout). Managed workspace roots are created
+      # under SE_DATA_ROOT; adoption of an existing directory is confined to the allow-list
+      # and is empty — disabled — until an operator names a path they have mounted here.
+      SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
+      SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
     volumes:
       - app-data:/var/lib/store-everything
+      - workspace-data:/srv/store-everything
     healthcheck:
       # Readiness, not liveness: an instance whose migrations are pending must not be
       # sent traffic (10-deployment-and-operations.md § health & readiness).
@@ -134,8 +140,14 @@ services:
       SE_APP_DATA_ROOT: ${SE_APP_DATA_ROOT:-/var/lib/store-everything}
       SE_JANITOR_GRACE_HOURS: ${SE_JANITOR_GRACE_HOURS:-24}
       SE_JANITOR_INTERVAL_MINUTES: ${SE_JANITOR_INTERVAL_MINUTES:-60}
+      # The user's own file trees (03 § storage layout). Managed workspace roots are created
+      # under SE_DATA_ROOT; adoption of an existing directory is confined to the allow-list
+      # and is empty — disabled — until an operator names a path they have mounted here.
+      SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
+      SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
     volumes:
       - app-data:/var/lib/store-everything
+      - workspace-data:/srv/store-everything
     command: ['store-everything', 'worker']
     # Sized for stop-claiming-and-release, never for job duration (ADR-0010).
     stop_grace_period: 30s
@@ -169,6 +181,9 @@ volumes:
   # `versions/` inside this volume is the only copy of superseded file content, so it is
   # mandatory backup scope — unlike `derived/`, which reprocessing can rebuild (Q13).
   app-data:
+  # Managed workspace roots: the users' own files. Backup scope for the obvious reason — this
+  # is the data. Replace with a bind mount to keep the trees on your own storage.
+  workspace-data:
 
 networks:
   internal:

@@ -52,6 +52,10 @@ RUN useradd --create-home --uid 10001 app
 RUN mkdir -p /var/lib/store-everything/versions /var/lib/store-everything/derived \
     && chown -R app:app /var/lib/store-everything
 
+# The same reasoning for the workspace storage, which holds the users' own file trees
+# (03 § storage layout). A managed workspace cannot be created at all if this is root-owned.
+RUN mkdir -p /srv/store-everything && chown -R app:app /srv/store-everything
+
 COPY --from=builder --chown=app:app /app /app
 
 WORKDIR /app

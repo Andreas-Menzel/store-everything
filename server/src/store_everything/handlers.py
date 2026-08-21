@@ -6,9 +6,10 @@ worker's dependencies are visible in one place rather than discovered by import 
 Handlers are built *with* the settings they need rather than reaching for globals, which
 keeps them testable against a temporary directory instead of `/var/lib`.
 
-Two kinds so far. `instance.heartbeat` is a periodic no-op that proves the layer works end to
-end on a real instance; `maintenance.janitor` collects the debris a crash-only system leaks by
-design (12 § debris & the janitor). Every later feature adds its kind here.
+`instance.heartbeat` is a periodic no-op that proves the layer works end to end on a real
+instance; `maintenance.janitor` collects the debris a crash-only system leaks by design
+(12 § debris & the janitor); `workspace.provision` turns a requested workspace into a real
+directory tree (ADR-0018). Every later feature adds its kind here.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import janitor, operations
+from store_everything import janitor, operations, workspaces
 from store_everything.config import Settings
 from store_everything.runner import Handler, Job
 
@@ -27,6 +28,13 @@ from store_everything.runner import Handler, Job
 HEARTBEAT = "instance.heartbeat"
 
 HEARTBEAT_INTERVAL = timedelta(minutes=15)
+
+
+#: The kinds that must always have a pending run, re-asserted on every start-up. A
+#: deliberately separate list from `registry`: most kinds are enqueued by the change that
+#: needs them (a workspace being created, a file being uploaded) and having no pending row is
+#: their normal state.
+SCHEDULED_KINDS = (HEARTBEAT, janitor.KIND)
 
 
 async def instance_heartbeat(job: Job) -> dict[str, Any]:
@@ -53,7 +61,12 @@ def registry(settings: Settings) -> dict[str, Handler]:
     async def sweep(job: Job) -> dict[str, Any]:
         return await janitor.collect(job, settings=settings)
 
-    return {HEARTBEAT: instance_heartbeat, janitor.KIND: sweep}
+    return {
+        HEARTBEAT: instance_heartbeat,
+        janitor.KIND: sweep,
+        # Needs nothing from the settings: a workspace's root is on its own row.
+        workspaces.KIND: workspaces.provision,
+    }
 
 
 async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
@@ -63,7 +76,7 @@ async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
     rows, so racing workers converge on one row instead of queueing a run each.
     """
     async with engine.connect() as connection:
-        for kind in (HEARTBEAT, janitor.KIND):
+        for kind in SCHEDULED_KINDS:
             await operations.ensure_scheduled(
                 connection,
                 kind=kind,

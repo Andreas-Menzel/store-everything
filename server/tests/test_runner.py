@@ -17,7 +17,7 @@ import pytest_asyncio
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from store_everything import handlers, operations
+from store_everything import handlers, operations, workspaces
 from store_everything.config import Settings
 from store_everything.runner import Job, PermanentFailureError, Runner
 from store_everything.tables import app_user, operation
@@ -330,8 +330,10 @@ async def test_installing_schedules_twice_leaves_one_pending_run_per_kind(
     await handlers.install_schedules(engine, settings)
 
     async with engine.connect() as connection:
-        for kind in handlers.registry(settings):
+        for kind in handlers.SCHEDULED_KINDS:
             assert await operations.count_by_state(connection, kind=kind) == {"queued": 1}, kind
+        # An on-demand kind has no standing schedule, and must not acquire one here.
+        assert await operations.count_by_state(connection, kind=workspaces.KIND) == {}
 
 
 # ------------------------------------------------------- starting before the schema exists

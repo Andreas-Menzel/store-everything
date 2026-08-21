@@ -112,9 +112,8 @@ async def audit(
     findings: list[Finding] = []
     grace = timedelta(hours=settings.janitor_grace_hours)
 
-    stale = await asyncio.to_thread(
-        _uncollected_staging, janitor.staging_roots(settings), grace=grace
-    )
+    roots = await janitor.all_staging_roots(connection, settings)
+    stale = await asyncio.to_thread(_uncollected_staging, roots, grace=grace)
     for path in stale:
         owner = filestore.operation_of_staging_entry(path)
         state = None if owner is None else await operations.get(connection, owner)

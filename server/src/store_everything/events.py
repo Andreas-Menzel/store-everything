@@ -47,10 +47,19 @@ OPERATION_DEAD_LETTERED = "operation.dead_lettered"
 TOKEN_CREATED = "token.created"  # noqa: S105 - an action name, not a secret
 TOKEN_REVOKED = "token.revoked"  # noqa: S105 - an action name, not a secret
 
+WORKSPACE_CREATED = "workspace.created"
+#: The root exists, the control directory is planted and the root folder is registered —
+#: the moment a workspace becomes usable, and a separate fact from being requested.
+WORKSPACE_PROVISIONED = "workspace.provisioned"
+
+FOLDER_CREATED = "folder.created"
+
 RESOURCE_USER = "user"
 RESOURCE_SESSION = "session"
 RESOURCE_OPERATION = "operation"
 RESOURCE_TOKEN = "token"  # noqa: S105 - a resource name, not a secret
+RESOURCE_WORKSPACE = "workspace"
+RESOURCE_FOLDER = "folder"
 
 #: Detail keys that would put a credential into the permanent record. The log is the one
 #: table nothing ever deletes, so a secret written here is a secret kept forever.

@@ -36,7 +36,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from store_everything import filestore, operations
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from store_everything import filestore, operations, workspaces
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -59,12 +61,18 @@ class Candidate:
 
 
 def staging_roots(settings: Settings) -> tuple[Path, ...]:
-    """The app-owned staging areas.
-
-    Workspace staging (`.workspace/staging/`) joins this list when workspaces exist
-    (ADR-0018); it is deliberately not guessed at here.
-    """
+    """The app-owned staging areas — the ones that need no database to find."""
     return (settings.versions_root / "staging", settings.derived_root / "staging")
+
+
+async def all_staging_roots(connection: AsyncConnection, settings: Settings) -> tuple[Path, ...]:
+    """Every staging area on this instance, app-owned and per workspace.
+
+    A workspace stages inside the user's own tree, because committing a write has to be a
+    rename on the destination filesystem (ADR-0018) — so those paths are known only to the
+    database, and debris there is as much this module's business as debris on the app volume.
+    """
+    return staging_roots(settings) + await workspaces.staging_roots(connection)
 
 
 def _aged_candidates(roots: tuple[Path, ...], *, grace: timedelta) -> tuple[list[Candidate], int]:
@@ -126,9 +134,8 @@ async def collect(
     """Sweep debris older than the grace window. Idempotent, and safe to run concurrently."""
     grace = timedelta(hours=settings.janitor_grace_hours)
 
-    candidates, inspected = await asyncio.to_thread(
-        _aged_candidates, staging_roots(settings), grace=grace
-    )
+    roots = await all_staging_roots(job.connection, settings)
+    candidates, inspected = await asyncio.to_thread(_aged_candidates, roots, grace=grace)
 
     # One query for every candidate rather than one per file: a 10 TB import can leave a lot
     # of staging behind, and the janitor must not turn that into a round-trip storm.
