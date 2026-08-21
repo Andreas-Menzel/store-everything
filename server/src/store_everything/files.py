@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Select, insert, select
+from sqlalchemy import Select, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import events, mediatypes, names
@@ -157,6 +157,7 @@ async def register(
     modified_at: datetime | None,
     origin: str,
     actor: Actor,
+    last_seen_at: datetime | None = None,
 ) -> tuple[File, Version]:
     """Record a file and its first version. The bytes are already on disk.
 
@@ -176,6 +177,9 @@ async def register(
                         name=name,
                         name_key=names.comparison_key(name),
                         state="live",
+                        # A file the app just put there is known to be there. Stamping it now
+                        # means a scan that starts mid-upload cannot mistake it for missing.
+                        last_seen_at=func.now() if last_seen_at is None else last_seen_at,
                     )
                     .returning(*_FILE_COLUMNS)
                 )
@@ -223,3 +227,13 @@ async def register(
         },
     )
     return created, version
+
+
+async def mark_seen(connection: AsyncConnection, *, file_id: UUID, seen_at: datetime) -> None:
+    """Record that a scan found this file on disk.
+
+    Stamped with the *run's* start rather than `now()`, so "what did this run not see" is an
+    exact comparison however long the run took — and a run interrupted halfway leaves a
+    consistent answer rather than a moving one.
+    """
+    await connection.execute(update(file).where(file.c.id == file_id).values(last_seen_at=seen_at))

@@ -676,6 +676,134 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/rescan": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Scan a workspace for changes made outside the app",
+        "description": "The user's \"look now\" button (ADR-0019), and the answer where no watcher can exist.\n\nIt does not start a parallel traversal: it makes the workspace's **pending** scan due\nnow, which is the same mechanism a watcher event will use\n(12 § durable schedules, lossy doorbells). So asking twice costs nothing.",
+        "operationId": "rescan_workspace",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "A scan is pending; poll import-status for its progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RescanAccepted"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such workspace, or not yours"
+          },
+          "409": {
+            "description": "The workspace is still being provisioned"
+          },
+          "422": {
+            "description": "No such path in this workspace"
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/import-status": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Report scan progress, conflicts and skipped entries",
+        "description": "What the last scans did, and what they refused to do (F-001/FR-5, FR-11, FR-12).",
+        "operationId": "import_status",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "exclusiveMinimum": 0,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such workspace, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/files": {
       "options": {
         "tags": [
@@ -1245,6 +1373,49 @@
         ],
         "title": "HealthResponse"
       },
+      "ImportStatus": {
+        "properties": {
+          "workspace": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Workspace"
+          },
+          "scan_interval_minutes": {
+            "type": "integer",
+            "title": "Scan Interval Minutes"
+          },
+          "active": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScanSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/ScanSummary"
+            },
+            "type": "array",
+            "title": "Recent"
+          },
+          "findings": {
+            "$ref": "#/components/schemas/Page_ScanFinding_"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workspace",
+          "scan_interval_minutes",
+          "active",
+          "recent",
+          "findings"
+        ],
+        "title": "ImportStatus"
+      },
       "LoginRequest": {
         "properties": {
           "email": {
@@ -1268,6 +1439,33 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "Page_ScanFinding_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ScanFinding"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Page[ScanFinding]"
       },
       "Page_UserSummary_": {
         "properties": {
@@ -1337,6 +1535,178 @@
           "status"
         ],
         "title": "ReadyResponse"
+      },
+      "RescanAccepted": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Operation"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation",
+          "path"
+        ],
+        "title": "RescanAccepted"
+      },
+      "RescanRequest": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RescanRequest"
+      },
+      "ScanFinding": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "conflict",
+              "skipped"
+            ],
+            "title": "Kind"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "path",
+          "detail"
+        ],
+        "title": "ScanFinding",
+        "description": "Something the scan reported instead of registering."
+      },
+      "ScanSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "scheduled",
+              "manual",
+              "watcher"
+            ],
+            "title": "Trigger"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "State"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "directories_scanned": {
+            "type": "integer",
+            "title": "Directories Scanned"
+          },
+          "files_seen": {
+            "type": "integer",
+            "title": "Files Seen"
+          },
+          "files_registered": {
+            "type": "integer",
+            "title": "Files Registered"
+          },
+          "conflicts": {
+            "type": "integer",
+            "title": "Conflicts"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "directories_pending": {
+            "type": "integer",
+            "title": "Directories Pending"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "trigger",
+          "state",
+          "path",
+          "directories_scanned",
+          "files_seen",
+          "files_registered",
+          "conflicts",
+          "skipped",
+          "directories_pending",
+          "started_at",
+          "finished_at",
+          "error"
+        ],
+        "title": "ScanSummary",
+        "description": "One traversal, as a client watching an import sees it."
       },
       "SessionSummary": {
         "properties": {
@@ -1775,6 +2145,10 @@
           "filesystem": {
             "$ref": "#/components/schemas/FilesystemVerdict"
           },
+          "scan_interval_minutes": {
+            "type": "integer",
+            "title": "Scan Interval Minutes"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -1792,6 +2166,7 @@
           "state",
           "root_path",
           "filesystem",
+          "scan_interval_minutes",
           "created_at"
         ],
         "title": "WorkspaceSummary"

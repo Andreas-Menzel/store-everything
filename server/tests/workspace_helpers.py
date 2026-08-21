@@ -8,7 +8,7 @@ on its own connection, committing with the transition.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import operations, workspaces
+from store_everything import operations, scanning, workspaces
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.app import create_app
 from store_everything.config import Settings
@@ -95,12 +95,14 @@ async def create_workspace(
     return await client.post(WORKSPACES, json=body, headers=SAME_ORIGIN)
 
 
-async def provision_pending(database_url: str) -> list[dict[str, Any]]:
-    """Run every queued `workspace.provision` exactly as the worker would.
+async def run_pending(
+    database_url: str, handlers: dict[str, Callable[[Job], Awaitable[dict[str, Any]]]]
+) -> list[dict[str, Any]]:
+    """Claim and run every due operation of these kinds, exactly as the worker would.
 
-    Deliberately not a call to the handler with a hand-made job: claiming counts the attempt
-    and takes the lease, and the handler's writes are supposed to commit with the success
-    transition. A test that skipped that would not be testing the thing that runs.
+    Deliberately not a call to a handler with a hand-made job: claiming counts the attempt and
+    takes the lease, and a handler's writes are supposed to commit with the success transition.
+    A test that skipped that would not be testing the thing that runs.
     """
     engine = create_async_engine(database_url)
     results: list[dict[str, Any]] = []
@@ -109,18 +111,28 @@ async def provision_pending(database_url: str) -> list[dict[str, Any]]:
             while True:
                 claimed = await operations.claim(
                     connection,
-                    worker="test/provisioner",
+                    worker="test/worker",
                     lease=timedelta(minutes=5),
-                    kinds=(workspaces.KIND,),
+                    kinds=tuple(sorted(handlers)),
                 )
                 if claimed is None:
                     return results
-                result = await workspaces.provision(Job(operation=claimed, connection=connection))
+                result = await handlers[claimed.kind](Job(operation=claimed, connection=connection))
                 await operations.succeed(connection, claimed=claimed, result=result)
                 await connection.commit()
                 results.append(result)
     finally:
         await engine.dispose()
+
+
+async def provision_pending(database_url: str) -> list[dict[str, Any]]:
+    """Run every queued `workspace.provision`."""
+    return await run_pending(database_url, {workspaces.KIND: workspaces.provision})
+
+
+async def scan_pending(database_url: str) -> list[dict[str, Any]]:
+    """Run every due `workspace.scan` — the traversal, as the orchestrator runs it."""
+    return await run_pending(database_url, {scanning.KIND: scanning.scan})
 
 
 async def provisioning_states(database_url: str, workspace_id: UUID) -> Sequence[str]:

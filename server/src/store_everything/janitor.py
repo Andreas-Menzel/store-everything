@@ -41,7 +41,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import filestore, operations, uploads, workspaces
+from store_everything import filestore, operations, scanning, uploads, workspaces
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -140,6 +140,10 @@ async def collect(
     # Before deciding what is debris, decide what has stopped being live. An upload past its
     # deadline is the only thing here that expires on a clock rather than on a state change.
     sessions_expired = await uploads.expire_due(job.connection)
+    # The floor under every workspace's scan schedule. A run re-arms itself, so this matters
+    # only when that chain broke — a dead-lettered scan — but the cost is one query per sweep
+    # and the alternative is a workspace that silently stops being scanned.
+    await scanning.ensure_all_scheduled(job.connection)
 
     roots = await all_staging_roots(job.connection, settings)
     candidates, inspected = await asyncio.to_thread(_aged_candidates, roots, grace=grace)

@@ -43,7 +43,7 @@ from uuid import UUID
 from sqlalchemy import Select, and_, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import events, filestore, folders, fscheck, names, workspacefs
+from store_everything import events, filestore, folders, fscheck, names, scans, workspacefs
 from store_everything.config import Settings
 from store_everything.events import Actor
 from store_everything.ids import new_id
@@ -84,6 +84,7 @@ class Workspace:
     state: State
     fs_check: dict[str, Any]
     fs_checked_at: datetime
+    scan_interval_minutes: int
     created_at: datetime
 
     @property
@@ -182,16 +183,29 @@ _COLUMNS = (
     workspace.c.state,
     workspace.c.fs_check,
     workspace.c.fs_checked_at,
+    workspace.c.scan_interval_minutes,
     workspace.c.created_at,
 )
 
 type _Row = tuple[
-    UUID, UUID, str, Source, Placement, str, State, dict[str, Any], datetime, datetime
+    UUID, UUID, str, Source, Placement, str, State, dict[str, Any], datetime, int, datetime
 ]
 
 
 def _as_workspace(row: _Row) -> Workspace:
-    identifier, owner_id, name, source, placement, root, state, verdict, checked_at, created = row
+    (
+        identifier,
+        owner_id,
+        name,
+        source,
+        placement,
+        root,
+        state,
+        verdict,
+        checked_at,
+        interval,
+        created,
+    ) = row
     return Workspace(
         id=identifier,
         owner_id=owner_id,
@@ -204,6 +218,7 @@ def _as_workspace(row: _Row) -> Workspace:
         state=state,
         fs_check=verdict,
         fs_checked_at=checked_at,
+        scan_interval_minutes=interval,
         created_at=created,
     )
 
@@ -283,6 +298,12 @@ async def list_for_owner(
     return [_as_workspace(tuple(row)) for row in (await connection.execute(query)).all()]
 
 
+async def list_active(connection: AsyncConnection) -> list[Workspace]:
+    """Every workspace whose storage exists. What the scan schedules are asserted over."""
+    rows = (await connection.execute(_query().where(workspace.c.state == "active"))).all()
+    return [_as_workspace(tuple(row)) for row in rows]
+
+
 async def staging_roots(connection: AsyncConnection) -> tuple[Path, ...]:
     """Every workspace's own staging area, for the janitor and the audit.
 
@@ -302,6 +323,7 @@ async def create(
     placement: Placement,
     root_path: Path,
     verdict: fscheck.Verdict,
+    scan_interval_minutes: int,
     actor: Actor,
 ) -> Workspace:
     """Record a workspace and the verdict that admitted it. Its directory follows.
@@ -322,6 +344,7 @@ async def create(
                 root_path=str(root_path),
                 state="provisioning",
                 fs_check=verdict.as_record(),
+                scan_interval_minutes=scan_interval_minutes,
             )
             .returning(*_COLUMNS)
         )
@@ -441,6 +464,9 @@ async def provision(job: Job) -> dict[str, Any]:
     activated = await mark_active(
         job.connection, workspace_id=found.id, verdict=verdict, actor=Actor.system()
     )
+    # The import (F-001/FR-4): an adopted tree already has files in it, and a managed one is
+    # empty — the same first scan covers both, and it is due immediately.
+    await scans.ensure_scheduled(job.connection, workspace_id=found.id, trigger="initial")
     return {
         "workspace": str(found.id),
         "outcome": "provisioned" if activated is not None else "already-active",

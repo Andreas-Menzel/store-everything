@@ -314,3 +314,51 @@ async def _create_child(
         details={"workspace": str(workspace_id), "name": created.name, "parent": str(parent.id)},
     )
     return created
+
+
+async def ensure_child(
+    connection: AsyncConnection,
+    *,
+    workspace_id: UUID,
+    parent: Folder,
+    name: str,
+    actor: Actor,
+) -> Folder:
+    """The folder row for a directory that **already exists on disk**, created if missing.
+
+    The scanner's counterpart to `ensure_path`: a scan has just listed the directory, so
+    creating anything on the filesystem here would be wrong — at best a no-op, at worst a
+    directory conjured for an entry that had vanished between the listing and now.
+    """
+    found = await child_by_name(connection, parent_id=parent.id, name=name)
+    if found is not None:
+        return found
+    return await _create_child(
+        connection,
+        workspace_id=workspace_id,
+        parent=parent,
+        name=name,
+        depth=parent.depth + 1,
+        actor=actor,
+    )
+
+
+async def get(connection: AsyncConnection, folder_id: UUID) -> Folder | None:
+    row = (await connection.execute(select(*_COLUMNS).where(folder.c.id == folder_id))).first()
+    return None if row is None else _as_folder(tuple(row))
+
+
+async def resolve(
+    connection: AsyncConnection, *, workspace_id: UUID, segments: Sequence[str]
+) -> Folder | None:
+    """The folder at `segments`, or `None` if any part of the path is not a folder.
+
+    Read-only, unlike `ensure_path`: a subtree rescan names a directory that must already be
+    known, and inventing folder rows for a path the user mistyped would be worse than a `404`.
+    """
+    current = await root_of(connection, workspace_id)
+    for segment in segments:
+        if current is None:
+            return None
+        current = await child_by_name(connection, parent_id=current.id, name=segment)
+    return current

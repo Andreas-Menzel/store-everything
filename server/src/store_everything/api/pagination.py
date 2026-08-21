@@ -42,6 +42,23 @@ class InvalidCursor(ProblemException):
         )
 
 
+def encode_sequence_cursor(value: int) -> str:
+    """A cursor over a monotonic integer id.
+
+    Opaque like every other cursor (08 § pagination): a client that parsed it would freeze an
+    ordering we are free to change.
+    """
+    return base64.urlsafe_b64encode(str(value).encode()).decode().rstrip("=")
+
+
+def decode_sequence_cursor(cursor: str) -> int:
+    padding = "=" * (-len(cursor) % 4)
+    try:
+        return int(base64.urlsafe_b64decode(cursor + padding).decode())
+    except (binascii.Error, UnicodeDecodeError, ValueError) as invalid:
+        raise InvalidCursor() from invalid
+
+
 def encode_cursor(created_at: datetime, identifier: UUID) -> str:
     raw = f"{created_at.isoformat()}|{identifier}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")

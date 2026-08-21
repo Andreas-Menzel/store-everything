@@ -26,13 +26,15 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 from pydantic import Field
 
-from store_everything import events, identity, names, operations, workspaces
+from store_everything import events, folders, identity, names, operations, scans, workspaces
 from store_everything.api.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     Page,
     decode_cursor,
+    decode_sequence_cursor,
     encode_cursor,
+    encode_sequence_cursor,
 )
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
@@ -41,6 +43,16 @@ from store_everything.schemas import BaseSchema
 from store_everything.security import CurrentCredential, Forbidden, settings_of
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+
+#: How many past scans `import-status` reports. Enough to see the last few passes without
+#: turning a diagnostic endpoint into a paginated history.
+RECENT_SCANS = 5
+
+
+class RescanRequest(BaseSchema):
+    path: str | None = Field(default=None, max_length=names.MAX_PATH_BYTES)
+    """A workspace-relative subtree to scan, or absent for the whole workspace."""
 
 
 class WorkspaceCreateRequest(BaseSchema):
@@ -77,6 +89,10 @@ class WorkspaceSummary(BaseSchema):
     is the point of the layout (03), and only ever to the workspace's owner."""
 
     filesystem: FilesystemVerdict
+    scan_interval_minutes: int
+    """How often this workspace is scanned for changes made outside the app (ADR-0019). The
+    schedule is the correctness backstop; a manual rescan is the "look now" button."""
+
     created_at: datetime
 
     @classmethod
@@ -100,6 +116,7 @@ class WorkspaceSummary(BaseSchema):
                 },
                 facts=dict(verdict.get("facts", {})),
             ),
+            scan_interval_minutes=record.scan_interval_minutes,
             created_at=record.created_at,
         )
 
@@ -203,6 +220,7 @@ async def create_workspace(
         placement=placement,
         root_path=root,
         verdict=verdict,
+        scan_interval_minutes=settings.workspace_scan_interval_minutes,
         actor=Actor.user(credential.user.id),
     )
     # Same transaction as the row: there is no window in which a workspace exists and nothing
@@ -253,6 +271,180 @@ async def read_workspace(
     if found is None or found.owner_id != credential.user.id:
         raise ProblemException(status=404, slug="not-found", title="Not found")
     return WorkspaceSummary.of(found)
+
+
+# ---------------------------------------------------------------------- scanning
+
+
+class ScanSummary(BaseSchema):
+    """One traversal, as a client watching an import sees it."""
+
+    id: UUID
+    trigger: Literal["initial", "scheduled", "manual", "watcher"]
+    state: Literal["running", "completed", "failed", "cancelled"]
+    path: str
+    """The subtree this run covered; empty means the whole workspace."""
+
+    directories_scanned: int
+    files_seen: int
+    files_registered: int
+    conflicts: int
+    skipped: int
+    directories_pending: int
+    """How much of the tree is still queued — the number that makes a 10 TB import legible."""
+
+    started_at: datetime
+    finished_at: datetime | None
+    error: str | None
+
+    @classmethod
+    def of(cls, run: scans.Run, *, pending: int) -> ScanSummary:
+        return cls(
+            id=run.id,
+            trigger=run.trigger,
+            state=run.state,
+            path=run.root_path,
+            directories_scanned=run.directories_scanned,
+            files_seen=run.files_seen,
+            files_registered=run.files_registered,
+            conflicts=run.conflicts,
+            skipped=run.skipped,
+            directories_pending=pending,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            error=run.error,
+        )
+
+
+class ScanFinding(BaseSchema):
+    """Something the scan reported instead of registering."""
+
+    kind: Literal["conflict", "skipped"]
+    path: str
+    detail: str
+    """Prose the user has to act on: the other spelling of a collision, or why an entry was
+    skipped. The app never resolves either by touching the tree (ADR-0019)."""
+
+
+class ImportStatus(BaseSchema):
+    workspace: UUID
+    scan_interval_minutes: int
+    active: ScanSummary | None
+    recent: list[ScanSummary]
+    findings: Page[ScanFinding]
+    """Conflicts and skipped entries from the most recent run, oldest first."""
+
+
+class RescanAccepted(BaseSchema):
+    operation: UUID
+    path: str
+
+
+@router.post(
+    "/{workspace_id}/rescan",
+    summary="Scan a workspace for changes made outside the app",
+    status_code=202,
+    response_model=RescanAccepted,
+    responses={
+        202: {"description": "A scan is pending; poll import-status for its progress"},
+        404: {"description": "No such workspace, or not yours"},
+        409: {"description": "The workspace is still being provisioned"},
+        422: {"description": "No such path in this workspace"},
+    },
+)
+async def rescan_workspace(
+    workspace_id: UUID,
+    payload: RescanRequest,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> RescanAccepted:
+    """The user's "look now" button (ADR-0019), and the answer where no watcher can exist.
+
+    It does not start a parallel traversal: it makes the workspace's **pending** scan due
+    now, which is the same mechanism a watcher event will use
+    (12 § durable schedules, lossy doorbells). So asking twice costs nothing.
+    """
+    found = await _readable(connection, workspace_id, credential)
+    if not found.is_active:
+        raise _conflict("This workspace is still being provisioned.")
+
+    path = ""
+    if payload.path:
+        try:
+            segments = names.split_path(payload.path)
+        except names.InvalidNameError as invalid:
+            raise _invalid(invalid.reason, "/body/path") from invalid
+        if await folders.resolve(connection, workspace_id=found.id, segments=segments) is None:
+            raise _invalid("no such folder in this workspace", "/body/path")
+        path = "/".join(segments)
+
+    queued = await scans.ensure_scheduled(
+        connection, workspace_id=found.id, trigger="manual", path=path
+    )
+    # Converging on a pending scheduled run is the point — but the run has to report that a
+    # person asked for it, not that the hour came round.
+    await operations.expedite(
+        connection, operation_id=queued.id, payload={"trigger": "manual", "path": path}
+    )
+    return RescanAccepted(operation=queued.id, path=path)
+
+
+@router.get(
+    "/{workspace_id}/import-status",
+    summary="Report scan progress, conflicts and skipped entries",
+    response_model=ImportStatus,
+    responses={404: {"description": "No such workspace, or not yours"}},
+)
+async def import_status(
+    workspace_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    limit: Annotated[int, Query(gt=0, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> ImportStatus:
+    """What the last scans did, and what they refused to do (F-001/FR-5, FR-11, FR-12)."""
+    found = await _readable(connection, workspace_id, credential)
+    recent = await scans.latest(connection, found.id, limit=RECENT_SCANS)
+    active = next((run for run in recent if run.is_running), None)
+
+    after = decode_sequence_cursor(cursor) if cursor else None
+    findings: Page[ScanFinding] = Page(data=[])
+    if recent:
+        page = await scans.findings_of(connection, recent[0].id, limit=limit + 1, after=after)
+        rows = page[:limit]
+        findings = Page(
+            data=[
+                ScanFinding(kind=finding.kind, path=finding.path, detail=finding.detail)
+                for _, finding in rows
+            ],
+            next_cursor=(
+                encode_sequence_cursor(rows[-1][0]) if len(page) > limit and rows else None
+            ),
+        )
+
+    return ImportStatus(
+        workspace=found.id,
+        scan_interval_minutes=found.scan_interval_minutes,
+        active=(
+            None
+            if active is None
+            else ScanSummary.of(
+                active, pending=await scans.pending_directories(connection, active.id)
+            )
+        ),
+        recent=[ScanSummary.of(run, pending=0) for run in recent],
+        findings=findings,
+    )
+
+
+async def _readable(
+    connection: DatabaseConnection, workspace_id: UUID, credential: CurrentCredential
+) -> workspaces.Workspace:
+    """The caller's workspace, or `404` — the same answer for absent and someone else's."""
+    found = await workspaces.get(connection, workspace_id)
+    if found is None or found.owner_id != credential.user.id:
+        raise ProblemException(status=404, slug="not-found", title="Not found")
+    return found
 
 
 async def _resolve_owner(

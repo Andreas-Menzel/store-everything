@@ -9,19 +9,23 @@ keeps them testable against a temporary directory instead of `/var/lib`.
 `instance.heartbeat` is a periodic no-op that proves the layer works end to end on a real
 instance; `maintenance.janitor` collects the debris a crash-only system leaks by design
 (12 § debris & the janitor); `workspace.provision` turns a requested workspace into a real
-directory tree (ADR-0018). Every later feature adds its kind here.
+directory tree (ADR-0018); `workspace.scan` walks a tree and registers what is in it
+(ADR-0019). Every later feature adds its kind here.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import janitor, operations, workspaces
+from store_everything import janitor, operations, scanning, workspaces
 from store_everything.config import Settings
 from store_everything.runner import Handler, Job
+
+_logger = logging.getLogger(__name__)
 
 #: A recurring, effect-free operation. It exists so that a fresh instance exercises the whole
 #: path — claim, lease, transition, re-arm — instead of proving it only in tests.
@@ -64,8 +68,9 @@ def registry(settings: Settings) -> dict[str, Handler]:
     return {
         HEARTBEAT: instance_heartbeat,
         janitor.KIND: sweep,
-        # Needs nothing from the settings: a workspace's root is on its own row.
+        # Neither needs the settings: a workspace's root and its scan cadence are on its row.
         workspaces.KIND: workspaces.provision,
+        scanning.KIND: scanning.scan,
     }
 
 
@@ -83,4 +88,10 @@ async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
                 max_attempts=3,
                 priority=operations.PRIORITY_HEAVY,
             )
+        # Per-workspace schedules cannot be a fixed list: they are asserted over the
+        # workspaces that exist, which is also how a chain broken by a dead-letter is
+        # restored (12 § operation inventory).
+        armed = await scanning.ensure_all_scheduled(connection)
         await connection.commit()
+    if armed:
+        _logger.info("scan schedules asserted", extra={"workspaces": armed})

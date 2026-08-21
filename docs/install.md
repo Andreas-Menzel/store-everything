@@ -219,6 +219,49 @@ The response is the registered file, and `Location` names it. Add
 `?content_hash=<sha256>` and the server verifies the assembled bytes against it before
 publishing anything — a mismatch fails the upload rather than storing a corrupt file.
 
+## Importing an existing folder, and keeping up with it
+
+An adopted workspace scans itself as soon as it is provisioned: every file is registered with
+its path, size, timestamp and SHA-256, and nothing is moved, renamed or rewritten. After that
+each workspace is scanned again on a schedule — hourly by default
+(`SE_WORKSPACE_SCAN_INTERVAL_MINUTES`) — because that is the only mechanism that catches a
+file someone copied onto the share by hand
+([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)).
+
+Watch an import, or ask for one now:
+
+```bash
+curl -s "https://$PUBLIC_HOST/api/v1/workspaces/$WORKSPACE/import-status" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash
+curl -s -X POST "https://$PUBLIC_HOST/api/v1/workspaces/$WORKSPACE/rescan" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
+```
+
+A rescan does not start a second traversal: it pulls the workspace's pending scan forward, so
+asking twice costs nothing. Pass `{"path": "Photos/2026"}` to scan one subtree.
+
+**The first pass reads every byte** — a file's hash is its version's identity, and it is what
+later makes a moved or duplicated file recognisable. On a 10 TB share that takes as long as
+reading 10 TB takes; `import-status` reports directories scanned, files registered and how much
+of the tree is still queued while it runs. Later passes compare size and modification time and
+read only what looks changed. It is safe to restart the stack mid-import: the scan checkpoints
+after every directory and resumes where it stopped.
+
+**Two things a scan reports instead of importing**, because resolving either would mean
+touching your files:
+
+| Reported as | What it means | What to do |
+|---|---|---|
+| `conflict` | Two names in one directory that the app cannot tell apart — `Report.pdf` beside `report.pdf`, or the same name written in NFC and NFD. One of them is imported and the rest are listed with both spellings. | Rename one of them on disk (or in the app), then rescan |
+| `skipped` | A symbolic link (never followed, at any depth), a name over 255 bytes or containing a control character, something that is not a regular file, or a directory that could not be read | Nothing, unless you expected that entry to be imported |
+
+The distinction between a directory that is **gone** and one that could not be **read** is
+deliberate: only the first is a statement about the files inside it. A share that fails to
+mount produces skipped entries, never deletions.
+
 ## Upgrading
 
 ```bash
