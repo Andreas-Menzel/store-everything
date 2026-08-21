@@ -378,14 +378,17 @@ async def rescan_workspace(
             raise _invalid("no such folder in this workspace", "/body/path")
         path = "/".join(segments)
 
+    reason = scans.request_payload(trigger="manual", path=path, requested_by=credential.user.id)
     queued = await scans.ensure_scheduled(
-        connection, workspace_id=found.id, trigger="manual", path=path
+        connection,
+        workspace_id=found.id,
+        trigger="manual",
+        path=path,
+        requested_by=credential.user.id,
     )
     # Converging on a pending scheduled run is the point — but the run has to report that a
-    # person asked for it, not that the hour came round.
-    await operations.expedite(
-        connection, operation_id=queued.id, payload={"trigger": "manual", "path": path}
-    )
+    # person asked for it, and which person, rather than that the hour came round.
+    await operations.expedite(connection, operation_id=queued.id, payload=reason)
     return RescanAccepted(operation=queued.id, path=path)
 
 

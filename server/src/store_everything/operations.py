@@ -550,7 +550,7 @@ async def expedite(
     operation_id: UUID,
     payload: dict[str, Any] | None = None,
 ) -> bool:
-    """Make a queued operation due now. Returns whether it moved.
+    """Make a queued operation due no later than now. Returns whether it was still queued.
 
     This is the whole mechanism behind "run it now": a manual re-scan and (later) a watcher
     event do not start a parallel traversal, they pull the pending one forward
@@ -560,18 +560,22 @@ async def expedite(
     `payload` merges into the row's own, which is how the *reason* travels: a request that
     converges on a pending scheduled run would otherwise leave that run reporting itself as
     scheduled, and "why did this happen?" is exactly what the record is for.
+
+    Due-ness moves to the *earlier* of the two times rather than to `now()`. An already-due
+    row must not be pushed back — that would let repeated requests starve work that is
+    waiting — and it still has to take the payload, because a request while the queue is
+    backed up (or the worker is stopped) is exactly when someone presses the button.
     """
-    values: dict[str, Any] = {"next_due_at": func.now(), "updated_at": func.now()}
+    values: dict[str, Any] = {
+        "next_due_at": func.least(operation.c.next_due_at, func.now()),
+        "updated_at": func.now(),
+    }
     if payload is not None:
         values["payload"] = operation.c.payload.op("||")(literal(payload, JSONB))
 
     result = await connection.execute(
         update(operation)
-        .where(
-            operation.c.id == operation_id,
-            operation.c.state == "queued",
-            operation.c.next_due_at > func.now(),
-        )
+        .where(operation.c.id == operation_id, operation.c.state == "queued")
         .values(**values)
     )
     return result.rowcount == 1

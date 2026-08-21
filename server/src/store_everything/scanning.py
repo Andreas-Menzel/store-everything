@@ -57,6 +57,7 @@ from store_everything import (
     files,
     filestore,
     folders,
+    identity,
     mediatypes,
     names,
     scans,
@@ -433,7 +434,7 @@ async def scan(job: Job) -> dict[str, Any]:
         action=events.WORKSPACE_SCANNED,
         resource_type=events.RESOURCE_WORKSPACE,
         resource_id=workspace.id,
-        actor=Actor.system(),
+        actor=await _requester(job.connection, job.payload.get("requested_by")),
         details={
             "run": str(run.id),
             "trigger": run.trigger,
@@ -452,6 +453,27 @@ async def scan(job: Job) -> dict[str, Any]:
         "directories": processed,
         "files_registered": 0 if finished is None else finished.files_registered,
     }
+
+
+async def _requester(connection: AsyncConnection, requested_by: object) -> Actor:
+    """Who to attribute the *run* to: the person who asked, or the instance itself.
+
+    Only the run. The files a scan registers were already on the disk, so `file.created` stays
+    a `system` act — recording that a person created a file they merely caused us to notice
+    would be a worse falsehood than the anonymity it replaced.
+
+    The requester is confirmed to still exist before being named: the event log's actor is a
+    foreign key that refuses to dangle (F-011/FR-2), and a scan must not fail because the
+    account that asked for it is gone.
+    """
+    if not isinstance(requested_by, str):
+        return Actor.system()
+    try:
+        candidate = UUID(requested_by)
+    except ValueError:
+        return Actor.system()
+    found = await identity.get_user(connection, candidate)
+    return Actor.system() if found is None else Actor.user(found.id)
 
 
 async def _root_folder(

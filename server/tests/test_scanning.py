@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from store_everything import (
@@ -552,3 +552,153 @@ async def test_another_users_workspace_reports_nothing(
 
     assert report.status_code == 404
     assert rescan.status_code == 404
+
+
+async def test_a_rescan_of_an_overdue_scan_still_reports_who_asked(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The case a simpler `expedite` missed: the pending scan is *already* due.
+
+    That is precisely when a person presses the button — the queue is backed up, or the
+    orchestrator is stopped — and the run must still say a person asked for it rather than
+    reporting that the hour came round.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"one.txt": b"file"})
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database)
+
+        # The pending successor becomes overdue, and nothing has claimed it.
+        engine = create_async_engine(identity_database)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE operation SET next_due_at = now() - interval '1 hour' "
+                        "WHERE kind = :kind AND state = 'queued'"
+                    ),
+                    {"kind": scans.KIND},
+                )
+                await connection.commit()
+        finally:
+            await engine.dispose()
+
+        accepted = await client.post(
+            f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
+        )
+        assert accepted.status_code == 202, accepted.text
+        await scan_pending(identity_database)
+        report = await status(client, workspace)
+
+    assert report["recent"][0]["trigger"] == "manual"
+
+
+async def test_a_rescan_never_pushes_a_due_scan_further_out(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """Repeated requests must not starve work that is already waiting."""
+    tree = tmp_path / "nas"
+    build(tree, {"one.txt": b"file"})
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database)
+        engine = create_async_engine(identity_database)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE operation SET next_due_at = now() - interval '1 hour' "
+                        "WHERE kind = :kind AND state = 'queued'"
+                    ),
+                    {"kind": scans.KIND},
+                )
+                await connection.commit()
+
+            for _ in range(3):
+                await client.post(
+                    f"{API_V1_PREFIX}/workspaces/{workspace}/rescan",
+                    json={},
+                    headers=SAME_ORIGIN,
+                )
+
+            async with engine.connect() as connection:
+                overdue = (
+                    await connection.execute(
+                        text(
+                            "SELECT next_due_at < now() FROM operation "
+                            "WHERE kind = :kind AND state = 'queued'"
+                        ),
+                        {"kind": scans.KIND},
+                    )
+                ).scalar_one()
+        finally:
+            await engine.dispose()
+
+    assert overdue is True, "an expedite pushed an already-due operation back"
+
+
+async def test_a_manually_requested_scan_names_the_person_who_asked(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """ "Who caused this?" is what an audit trail is for (ADR-0007, F-011/FR-9).
+
+    Only the *run* is attributed: the files it registered were already on the disk, so
+    recording that a person created them would be a worse falsehood than anonymity.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"one.txt": b"file"})
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database)
+        me = (await client.get(f"{API_V1_PREFIX}/auth/me")).json()["user"]["id"]
+        (tree / "two.txt").write_bytes(b"added by hand")
+
+        await client.post(
+            f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
+        )
+        await scan_pending(identity_database)
+
+    scanned = await read_events(identity_database, action="workspace.scanned")
+    initial, manual = scanned[0], scanned[1]
+    # The import nobody asked for is the instance's own work.
+    assert (initial["actor_type"], initial["details"]["trigger"]) == ("system", "initial")
+    # The one a person asked for names them.
+    assert manual["actor_type"] == "user"
+    assert str(manual["details"]["trigger"]) == "manual"
+
+    created = await read_events(identity_database, action="file.created")
+    # Both files appeared on disk on their own, whoever asked us to look.
+    assert {event["actor_type"] for event in created} == {"system"}
+    assert me
+
+
+async def test_a_scan_survives_a_requester_who_no_longer_exists(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The actor is a foreign key that refuses to dangle, so a stale id must not fail a scan."""
+    tree = tmp_path / "nas"
+    build(tree, {"one.txt": b"file"})
+
+    async with adopt(identity_settings, identity_database, tree) as (_client, workspace):
+        await scan_pending(identity_database)
+
+        # Exactly what the endpoint does — including the `expedite`, which is what carries the
+        # reason onto a run that a request converges on.
+        engine = create_async_engine(identity_database)
+        try:
+            async with engine.connect() as connection:
+                stale = scans.request_payload(trigger="manual", path="", requested_by=uuid4())
+                queued = await scans.ensure_scheduled(
+                    connection, workspace_id=workspace, trigger="manual"
+                )
+                await operations.expedite(connection, operation_id=queued.id, payload=stale)
+                await connection.commit()
+        finally:
+            await engine.dispose()
+
+        results = await scan_pending(identity_database)
+
+    assert [result["outcome"] for result in results] == ["completed"]
+    scanned = await read_events(identity_database, action="workspace.scanned")
+    assert scanned[-1]["actor_type"] == "system"

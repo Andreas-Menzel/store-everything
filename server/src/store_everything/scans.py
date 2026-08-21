@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import Select, delete, func, insert, select, update
@@ -383,6 +383,19 @@ async def _reconcile_stale(
     )
 
 
+def request_payload(*, trigger: Trigger, path: str, requested_by: UUID | None) -> dict[str, Any]:
+    """What a pending scan carries about why it exists.
+
+    Also merged onto a pending run that a request converges on, so the run reports the reason
+    it actually ran for. Several requests can converge on one run; the last one wins, which is
+    the honest answer for work that happens once on everyone's behalf.
+    """
+    payload: dict[str, Any] = {"trigger": trigger, "path": path}
+    if requested_by is not None:
+        payload["requested_by"] = str(requested_by)
+    return payload
+
+
 async def ensure_scheduled(
     connection: AsyncConnection,
     *,
@@ -390,19 +403,24 @@ async def ensure_scheduled(
     due_in: timedelta | None = None,
     trigger: Trigger = "scheduled",
     path: str = ROOT,
+    requested_by: UUID | None = None,
 ) -> operations.Operation:
     """Guarantee this workspace has a pending scan. Safe to call at any time.
 
     Per-workspace rather than per-kind, because every workspace carries its own cadence
     (ADR-0019): one key for the kind would let the first workspace's pending scan silence
     every other workspace's.
+
+    `requested_by` is who asked, for the runs a person asked for. It rides in the payload so
+    the run can attribute itself (ADR-0007): "the hourly pass" and "Alice pressed rescan" are
+    different facts, and only the second has someone to name.
     """
     return await operations.ensure_scheduled(
         connection,
         kind=KIND,
         max_attempts=MAX_ATTEMPTS,
         due_in=due_in,
-        payload={"trigger": trigger, "path": path},
+        payload=request_payload(trigger=trigger, path=path, requested_by=requested_by),
         priority=operations.PRIORITY_HEAVY,
         subject_type="workspace",
         # The path is part of the identity: a rescan of the whole workspace *is* the pending
