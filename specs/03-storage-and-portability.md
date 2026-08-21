@@ -34,25 +34,31 @@ Every `local` workspace has a **root directory** on disk plus a **placement** sa
 
 | Placement | Root directory | Created by |
 |---|---|---|
-| `managed` | `{data-root}/users/{user}/workspaces/{workspace}/data` — ours to shape | any member, for themselves |
+| `managed` | `SE_DATA_ROOT/users/{owner-id}/workspaces/{name}/data` — ours to shape | any member, for themselves |
 | `adopted` | an existing directory, indexed in place with **nothing moved or copied** | **admin only**, and only inside the `SE_ADOPTION_ROOTS` allow-list |
 
 Everything downstream — scanning, folders, uploads, versions, permissions — treats the two identically. Only two behaviors differ:
 
-- **Creation.** An adopted root is accepted only if it resolves (`realpath`) inside an allow-listed root, is a directory, neither contains nor is contained by another workspace root, and passes the filesystem probe ([§ filesystem requirements](#filesystem-requirements)). Members never submit filesystem paths.
+- **Creation.** An adopted root is accepted only if it resolves (`realpath`) inside an allow-listed root, is a directory, does not overlap the app-owned areas, neither contains nor is contained by another workspace root, and passes the filesystem probe ([§ filesystem requirements](#filesystem-requirements)). Members never submit filesystem paths.
 - **Rename.** Renaming a `managed` workspace renames its directory. An `adopted` root path is **immutable for the workspace's lifetime** — the display name is metadata; re-pointing at another directory is a new workspace, not a rename.
+
+**A workspace is created in two steps**, because the row and the directory cannot commit together ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)). The request validates everything it can — name, placement, allow-list containment, overlap, the filesystem probe — and records the workspace in state `provisioning` together with the operation that will build it. That operation creates the root (managed) or verifies it (adopted), re-probes it, plants the control directory, registers the root folder, and flips the workspace to `active`. Consequences worth stating:
+
+- A refusal is **synchronous**: an allow-list violation, an overlap, or a failed probe is answered by the creating request, naming what failed — nothing is recorded.
+- A workspace that is still `provisioning` is not usable and says so; a crash mid-provisioning leaves that state and an operation that will be claimed again, never a row pointing at a directory that does not exist.
+- Both the pre-flight verdict and the final one are recorded on the workspace. The pre-flight probes the *filesystem* the root will live on (`SE_DATA_ROOT` for a managed placement, whose directory does not exist yet); the provisioning run probes the **real root**, and its verdict is the one the workspace keeps.
 
 ## Storage layout
 
 ```
-{data-root}/                  ← managed placement
-  users/{user}/
-    workspaces/{workspace}/
+SE_DATA_ROOT/                 ← managed placement (default /srv/store-everything)
+  users/{owner-id}/
+    workspaces/{name}/
       data/                   ← THE WORKSPACE ROOT: the file tree (local
                                 content, or the mirror of an external source)
         .workspace/           ← the one control directory the app plants in a
                                 workspace root (reserved name, scan-skipped)
-          marker              ← workspace UUID, placement, created-at
+          marker              ← workspace UUID, placement, created-at (JSON)
           staging/            ← write staging (uploads, app-mediated writes),
                                 files named by operation id: same filesystem as
                                 the destination → finalize is an atomic rename;
@@ -69,7 +75,9 @@ Everything downstream — scanning, folders, uploads, versions, permissions — 
 postgres volume               ← database
 ```
 
-The **database is authoritative** for workspace configuration; the `.workspace/marker` only makes a tree re-identifiable after a move or a backup restore — never a second config source that can drift. Folder names are human-readable (you should recognize your data without the app); the UUID lives in the marker.
+The **database is authoritative** for workspace configuration; the `.workspace/marker` only makes a tree re-identifiable after a move or a backup restore — never a second config source that can drift.
+
+**Which path segments are human-readable, and why not all of them.** The workspace's own directory carries its **name**, so that someone browsing the storage without the app recognizes what they are looking at — and so that renaming a managed workspace is a directory rename, as [ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md) requires. The owner's directory carries their **id**: an email address is neither length-bounded nor guaranteed free of `/` under [08](08-api-principles.md)'s validation, and a display name is not unique — either would turn an account edit into a directory move, or two users into one path. Whose tree a directory is answers from the workspace's own record, not from its path.
 
 `.workspace/` is the **only** thing the app writes into a user's tree, in both placements — the price of atomic renames, which require staging on the destination filesystem. It is a reserved name at the workspace root ([F-015/FR-6](../features/F-015-folders.md)), skipped by every scan, and visible to anyone browsing the tree over SMB; operator documentation names the Samba options that hide it.
 

@@ -530,6 +530,151 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Create a workspace",
+        "operationId": "create_workspace",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Only an admin may adopt a directory or act for another user"
+          },
+          "409": {
+            "description": "That name is taken, or another workspace covers that directory"
+          },
+          "422": {
+            "description": "The name, the owner, or the directory was refused"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "List your workspaces",
+        "operationId": "list_workspaces",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "exclusiveMinimum": 0,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkspaceSummary_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read one workspace",
+        "operationId": "read_workspace",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such workspace, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -571,6 +716,42 @@
         ],
         "title": "CurrentIdentity",
         "description": "Who the caller is, and how they proved it."
+      },
+      "FilesystemVerdict": {
+        "properties": {
+          "probed": {
+            "type": "string",
+            "title": "Probed"
+          },
+          "usable": {
+            "type": "boolean",
+            "title": "Usable"
+          },
+          "properties": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Properties"
+          },
+          "facts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Facts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "probed",
+          "usable",
+          "properties",
+          "facts"
+        ],
+        "title": "FilesystemVerdict",
+        "description": "What the `fs-check` probe found on the filesystem holding this workspace."
       },
       "HTTPValidationError": {
         "properties": {
@@ -650,6 +831,33 @@
           "data"
         ],
         "title": "Page[UserSummary]"
+      },
+      "Page_WorkspaceSummary_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceSummary"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Page[WorkspaceSummary]"
       },
       "ReadyResponse": {
         "properties": {
@@ -1017,6 +1225,112 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WorkspaceCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "adopt_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopt Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceCreateRequest"
+      },
+      "WorkspaceSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "owner": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source": {
+            "type": "string",
+            "const": "local",
+            "title": "Source"
+          },
+          "placement": {
+            "type": "string",
+            "enum": [
+              "managed",
+              "adopted"
+            ],
+            "title": "Placement"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active"
+            ],
+            "title": "State"
+          },
+          "root_path": {
+            "type": "string",
+            "title": "Root Path"
+          },
+          "filesystem": {
+            "$ref": "#/components/schemas/FilesystemVerdict"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "owner",
+          "name",
+          "source",
+          "placement",
+          "state",
+          "root_path",
+          "filesystem",
+          "created_at"
+        ],
+        "title": "WorkspaceSummary"
       }
     }
   }

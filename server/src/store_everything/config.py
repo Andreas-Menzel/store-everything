@@ -122,12 +122,41 @@ class Settings(BaseSettings):
 
     janitor_interval_minutes: int = Field(default=60, gt=0)
 
-    @field_validator("cors_allow_origins", mode="before")
+    # ------------------------------------------------------------------ workspace storage
+    # 03-storage-and-portability.md § storage layout. The user's own files in their own
+    # hierarchy — the data the portability promise is about, and deliberately *not* under
+    # `app_data_root`: deleting the app-owned area costs history and previews, while this is
+    # the data itself.
+
+    data_root: Path = Path("/srv/store-everything")
+    """Where `managed` workspace roots are created (ADR-0018): one directory per workspace,
+    named after it, under a directory named after its owner."""
+
+    adoption_roots: Annotated[tuple[Path, ...], NoDecode] = ()
+    """The complete set of locations a workspace may be **adopted** from — an existing tree
+    indexed in place (ADR-0018). Empty by default, which disables adoption entirely.
+
+    An allow-list rather than a trusted request field: this is what bounds the blast radius
+    of a path-traversal or "which mount is this inside the container" mistake to something an
+    operator chose. Adoption additionally requires an admin.
+    """
+
+    @field_validator("cors_allow_origins", "adoption_roots", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
         """Accept `a,b` in the environment, and an empty value as "none"."""
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator("adoption_roots", mode="after")
+    @classmethod
+    def _adoption_roots_are_absolute(cls, value: tuple[Path, ...]) -> tuple[Path, ...]:
+        """A relative allow-list entry would be resolved against the process's directory,
+        which is not something an operator can reason about."""
+        relative = sorted(str(path) for path in value if not path.is_absolute())
+        if relative:
+            raise ValueError(f"SE_ADOPTION_ROOTS must be absolute paths; these are not: {relative}")
         return value
 
     @property

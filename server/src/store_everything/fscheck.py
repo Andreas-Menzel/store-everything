@@ -25,6 +25,7 @@ import os
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from store_everything import filestore
@@ -59,6 +60,24 @@ class Verdict:
     @property
     def failures(self) -> tuple[Property, ...]:
         return tuple(item for item in self.properties if not item.satisfied)
+
+    def as_record(self) -> dict[str, Any]:
+        """The verdict as JSON, for the column that records what admitted a workspace root.
+
+        Stored whole, including the facts: when a scan conflict turns up months later, "does
+        this filesystem fold case?" is the first question, and the answer belongs next to the
+        workspace rather than in a log nobody kept.
+        """
+        return {
+            "root": str(self.root),
+            "usable": self.usable,
+            "properties": {
+                item.name: {"satisfied": item.satisfied, "detail": item.detail}
+                for item in self.properties
+            },
+            "facts": dict(self.facts),
+            "error": self.error,
+        }
 
     def explain(self) -> str:
         if self.error is not None:

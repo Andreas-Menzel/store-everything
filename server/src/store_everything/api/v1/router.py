@@ -15,7 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from store_everything.api.v1 import auth, users
+from store_everything.api.v1 import auth, users, workspaces
 from store_everything.security import enforce_request_ceiling, require_auth
 
 API_V1_PREFIX = "/api/v1"
@@ -50,6 +50,7 @@ def build_v1_router(*, api_docs_enabled: bool) -> APIRouter:
 
     router.include_router(auth.router)
     router.include_router(users.router)
+    router.include_router(workspaces.router)
     return router
 
 

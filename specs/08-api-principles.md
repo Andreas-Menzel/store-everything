@@ -65,7 +65,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/users/…                      admin user management (list, create, read, patch;
                                      no delete in v1 — an account owns data, so removing
                                      one belongs with deletion & trash, F-014)
-/api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan;
+/api/v1/workspaces/…                 CRUD, adoption (point at an existing subtree — admin,
+                                     allow-listed: ADR-0018), re-scan;
                                      DELETE requires confirm:"<name>" → restorable trash batch (F-014)
 /api/v1/workspaces/{ws}/files/…      list/tree by path; POST = upload creation
                                      (OPTIONS advertises Upload-Limit — ADR-0017)
@@ -130,7 +131,7 @@ flowchart LR
     end
 
     subgraph WSG["Workspaces"]
-        WSCRUD["GET·POST /workspaces<br/>(POST supports import_path)"]
+        WSCRUD["GET·POST /workspaces<br/>(POST supports adopt_path ⚙)"]
         UP["POST /workspaces/{ws}/files<br/>OPTIONS (Upload-Limit)<br/>(upload creation — ADR-0017)"]
         UPRES["HEAD·PATCH·DELETE /uploads/{id}<br/>(offset · append · cancel)"]
         TREE["GET /workspaces/{ws}/files?path=…"]

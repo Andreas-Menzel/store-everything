@@ -26,6 +26,34 @@ export type CurrentIdentity = {
 };
 
 /**
+ * FilesystemVerdict
+ *
+ * What the `fs-check` probe found on the filesystem holding this workspace.
+ */
+export type FilesystemVerdict = {
+    /**
+     * Probed
+     */
+    probed: string;
+    /**
+     * Usable
+     */
+    usable: boolean;
+    /**
+     * Properties
+     */
+    properties: {
+        [key: string]: boolean;
+    };
+    /**
+     * Facts
+     */
+    facts: {
+        [key: string]: string;
+    };
+};
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -67,6 +95,20 @@ export type PageUserSummary = {
      * Data
      */
     data: Array<UserSummary>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
+};
+
+/**
+ * Page[WorkspaceSummary]
+ */
+export type PageWorkspaceSummary = {
+    /**
+     * Data
+     */
+    data: Array<WorkspaceSummary>;
     /**
      * Next Cursor
      */
@@ -274,6 +316,63 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * WorkspaceCreateRequest
+ */
+export type WorkspaceCreateRequest = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Owner
+     */
+    owner?: string | null;
+    /**
+     * Adopt Path
+     */
+    adopt_path?: string | null;
+};
+
+/**
+ * WorkspaceSummary
+ */
+export type WorkspaceSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Owner
+     */
+    owner: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Source
+     */
+    source: 'local';
+    /**
+     * Placement
+     */
+    placement: 'managed' | 'adopted';
+    /**
+     * State
+     */
+    state: 'provisioning' | 'active';
+    /**
+     * Root Path
+     */
+    root_path: string;
+    filesystem: FilesystemVerdict;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 export type HealthzData = {
@@ -661,3 +760,102 @@ export type UpdateUserResponses = {
 };
 
 export type UpdateUserResponse = UpdateUserResponses[keyof UpdateUserResponses];
+
+export type ListWorkspacesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/workspaces';
+};
+
+export type ListWorkspacesErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListWorkspacesError = ListWorkspacesErrors[keyof ListWorkspacesErrors];
+
+export type ListWorkspacesResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageWorkspaceSummary;
+};
+
+export type ListWorkspacesResponse = ListWorkspacesResponses[keyof ListWorkspacesResponses];
+
+export type CreateWorkspaceData = {
+    body: WorkspaceCreateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/workspaces';
+};
+
+export type CreateWorkspaceErrors = {
+    /**
+     * Only an admin may adopt a directory or act for another user
+     */
+    403: unknown;
+    /**
+     * That name is taken, or another workspace covers that directory
+     */
+    409: unknown;
+    /**
+     * The name, the owner, or the directory was refused
+     */
+    422: unknown;
+};
+
+export type CreateWorkspaceResponses = {
+    /**
+     * Successful Response
+     */
+    201: WorkspaceSummary;
+};
+
+export type CreateWorkspaceResponse = CreateWorkspaceResponses[keyof CreateWorkspaceResponses];
+
+export type ReadWorkspaceData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}';
+};
+
+export type ReadWorkspaceErrors = {
+    /**
+     * No such workspace, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadWorkspaceError = ReadWorkspaceErrors[keyof ReadWorkspaceErrors];
+
+export type ReadWorkspaceResponses = {
+    /**
+     * Successful Response
+     */
+    200: WorkspaceSummary;
+};
+
+export type ReadWorkspaceResponse = ReadWorkspaceResponses[keyof ReadWorkspaceResponses];

@@ -36,6 +36,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 
+from store_everything.names import MAX_NAME_BYTES, MAX_PATH_BYTES
+
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",
@@ -272,3 +274,133 @@ operation = Table(
 )
 """One table for every effectful operation (ADR-0013). A feature that invents its own job
 handling is a review-blocker, exactly as ad-hoc file IO is."""
+
+
+#: Where a workspace's files come from (03 § workspace sources). A column rather than an
+#: assumption because `external` (mirrored Google Drive and friends — Q16) is a later
+#: source type, not a later redesign.
+WORKSPACE_SOURCES = ("local",)
+
+#: Who chose the root directory (ADR-0018): `managed` is ours to shape under `SE_DATA_ROOT`,
+#: `adopted` is the user's own directory indexed in place with nothing moved or copied.
+WORKSPACE_PLACEMENTS = ("managed", "adopted")
+
+#: A workspace row exists before its directory does — creation records the intent and the
+#: `workspace.provision` operation makes it true (ADR-0010). `active` means the root, the
+#: control directory and the root folder are all there.
+WORKSPACE_STATES = ("provisioning", "active")
+
+
+workspace = Table(
+    "workspace",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    # RESTRICT for the same reason as the event log's actor: a user owns files, so removing
+    # one is a data-lifecycle decision (phase 4), never a foreign key's side effect.
+    Column(
+        "owner_id",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    # `name` as the user typed it, `name_key` what uniqueness and lookups compare
+    # (03 § names on disk). Deriving the key in Python is deliberate: case folding is a
+    # Unicode operation with a policy behind it (`names.comparison_key`), not `lower()`.
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False),
+    Column("source", Text, nullable=False, server_default=text("'local'")),
+    Column("placement", Text, nullable=False),
+    # Absolute and resolved (`realpath`), so containment checks compare what the kernel
+    # would open rather than what a request said.
+    Column("root_path", Text, nullable=False),
+    Column("state", Text, nullable=False, server_default=text("'provisioning'")),
+    # The `fs-check` verdict that admitted this root (ADR-0019). Recorded, not assumed: when
+    # a guarantee later turns out not to hold, this says what was probed and what it answered.
+    Column("fs_check", JSONB, nullable=False),
+    Column("fs_checked_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # One user's workspace names are unique on the comparison key, which is also what keeps
+    # their managed directories from colliding — the name is a path segment.
+    UniqueConstraint("owner_id", "name_key"),
+    # Overlap (one root inside another) needs a query; equality is caught structurally here,
+    # which is what makes the check-then-insert race harmless.
+    UniqueConstraint("root_path"),
+    CheckConstraint(one_of("source", WORKSPACE_SOURCES), name="source_known"),
+    CheckConstraint(one_of("placement", WORKSPACE_PLACEMENTS), name="placement_known"),
+    CheckConstraint(one_of("state", WORKSPACE_STATES), name="state_known"),
+    # `octet_length`, not `length`: the policy is bytes, and a name of 255 characters can be
+    # four times that on disk.
+    CheckConstraint(f"octet_length(name) BETWEEN 1 AND {MAX_NAME_BYTES}", name="name_length"),
+    CheckConstraint(f"octet_length(name_key) BETWEEN 1 AND {MAX_NAME_BYTES}", name="key_length"),
+    CheckConstraint("root_path LIKE '/%'", name="root_path_absolute"),
+    CheckConstraint(f"octet_length(root_path) <= {MAX_PATH_BYTES}", name="root_path_length"),
+    Index("ix_workspace_owner_id_created_at", "owner_id", "created_at"),
+)
+"""A top-level container of files, owned by exactly one user (02 § workspace)."""
+
+
+folder = Table(
+    "folder",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        UUID(as_uuid=True),
+        ForeignKey("workspace.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("parent_id", UUID(as_uuid=True), ForeignKey("folder.id", ondelete="CASCADE")),
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False),
+    # Redundant with the closure table and worth it: "how deep is this" answers path
+    # assembly and the depth limit without a join.
+    Column("depth", Integer, nullable=False, server_default=text("0")),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # Sibling uniqueness on the comparison key (F-015/FR-6). Root rows have a NULL parent and
+    # never collide here — PostgreSQL treats NULLs as distinct — which the partial index below
+    # is for.
+    UniqueConstraint("workspace_id", "parent_id", "name_key"),
+    Index(
+        "uq_folder_workspace_root",
+        "workspace_id",
+        unique=True,
+        postgresql_where=text("parent_id IS NULL"),
+    ),
+    # The root folder *is* the workspace root directory, so it has no name of its own; every
+    # other folder must have one. Structural, because a root that acquired a name would make
+    # every derived path wrong.
+    CheckConstraint("(parent_id IS NULL) = (name = '')", name="root_has_no_name"),
+    CheckConstraint("(parent_id IS NULL) = (depth = 0)", name="depth_matches_parent"),
+    CheckConstraint(f"octet_length(name) <= {MAX_NAME_BYTES}", name="name_length"),
+    Index("ix_folder_parent_id", "parent_id"),
+)
+"""A directory in a workspace's tree, mirrored 1:1 from disk (F-015). Identified by its
+UUID, which survives rename and move — that is what grants and tags attach to."""
+
+
+folder_closure = Table(
+    "folder_closure",
+    metadata,
+    Column(
+        "ancestor_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "descendant_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("depth", Integer, nullable=False),
+    # "Every ancestor of X" — the direction permission evaluation reads.
+    Index("ix_folder_closure_descendant_id_depth", "descendant_id", "depth"),
+    CheckConstraint("depth >= 0", name="depth_not_negative"),
+    CheckConstraint("(ancestor_id = descendant_id) = (depth = 0)", name="self_row_at_depth_zero"),
+)
+"""Precomputed ancestry (F-015/FR-2, the ADR-0006 pattern): one indexed join answers
+"everything under folder F", which is the permission filter's hottest question. Every folder
+carries a depth-0 row for itself, so a subtree includes its own root without a special case."""

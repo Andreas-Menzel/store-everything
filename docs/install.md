@@ -97,6 +97,83 @@ Ten failed logins for one address, or from one client address, within fifteen mi
 further attempts for the rest of that window. The refusal is recorded, and it clears by
 itself.
 
+**7. Create a workspace.**
+
+A workspace is a top-level folder of files, owned by exactly one user. The simple kind is
+*managed*: the app creates the directory under `SE_DATA_ROOT`, named after the workspace, and
+any member can make one for themselves.
+
+```bash
+curl -s https://$PUBLIC_HOST/api/v1/workspaces -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" -d '{"name":"Photos"}'
+```
+
+The answer comes back with `"state": "provisioning"`: the request records the workspace, and
+the orchestrator creates its directory, plants the `.workspace/` control directory and
+registers the root folder. Read the workspace again — it flips to `active` within seconds.
+If it does not, the orchestrator is not running or its work is failing; `store-everything
+verify` and `docker compose logs orchestrator` say which.
+
+Each workspace root gets one `.workspace/` directory and nothing else
+([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)). It holds a `marker`
+identifying the tree and a `staging/` area where writes land before being renamed into
+place — which is why it has to live *inside* the tree rather than on the app volume. To hide
+it from Windows and macOS clients browsing the share over Samba, add to the share's
+`smb.conf`:
+
+```ini
+veto files = /.workspace/
+delete veto files = yes
+```
+
+**Adopting an existing folder.** To index a tree you already have — a NAS share full of
+photos — without copying a byte, mount it into **both** the `api` and `orchestrator`
+containers at the same path, allow-list it, and let an administrator create the workspace
+over it:
+
+```yaml
+# compose.override.yaml
+services:
+  api:
+    volumes: ['/mnt/nas/photos:/mnt/nas/photos']
+  orchestrator:
+    volumes: ['/mnt/nas/photos:/mnt/nas/photos']
+```
+
+```bash
+# .env
+SE_ADOPTION_ROOTS=/mnt/nas/photos
+```
+
+```bash
+curl -s https://$PUBLIC_HOST/api/v1/workspaces -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"name":"The NAS","adopt_path":"/mnt/nas/photos","owner":"<user-id>"}'
+```
+
+Three things about this are deliberate, and each one refuses rather than guesses:
+
+- **Adoption is admin-only, and the allow-list is empty by default.** A member can never
+  submit a filesystem path at all. The blast radius of a mistaken or hostile path is
+  whatever you listed, nothing more.
+- **The path is the one inside the container.** This is the mistake that costs the most time:
+  `/mnt/nas/photos` on the host is not that path in the container unless you mounted it there.
+  A path that is not inside `SE_ADOPTION_ROOTS`, is not a directory, overlaps another
+  workspace, or resolves through a symlink to somewhere else is refused, naming which.
+- **The filesystem is checked, not assumed.** The root is probed for atomic rename and honest
+  `fsync` before it is accepted ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md));
+  a filesystem that fails is refused naming the property that failed. Run the probe yourself
+  first if you would rather know before you ask:
+
+```bash
+docker compose exec api store-everything fs-check /mnt/nas/photos
+```
+
+v1 supports filesystems local to the app host. An SMB or NFS mount is not supported until the
+probe passes against that mount with its own options — on a filesystem that lies about
+`fsync`, every durability guarantee this app makes is void, and a refused workspace is better
+than silent loss.
+
 ## Upgrading
 
 ```bash
@@ -132,15 +209,20 @@ simply inert.
 | `orchestrator` | Runs background work (`store-everything worker`). No ingress, no proxy label — nothing routes to a worker. |
 | `migrations` | Runs on request (`docker compose run --rm migrations`) and exits. |
 
-Two volumes hold state, and they are **not** equally replaceable:
+Three volumes hold state, and they are **not** equally replaceable:
 
 | Volume | Contents | If you lose it |
 |---|---|---|
 | `postgres-data` | The database: accounts, tags, permissions, the event log | Everything the app knows is gone |
+| `workspace-data` | `SE_DATA_ROOT` — the file trees of every *managed* workspace | The users' own files are gone. This is the data |
 | `app-data` | `versions/` (superseded file content) and `derived/` (previews) | `versions/` is the **only copy** of overwritten content — back it up. `derived/` rebuilds by reprocessing, at the cost of CPU |
 
-The user's own files are not in either: they live in the workspace tree, which is yours to
-back up ([ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md)).
+Files in an **adopted** workspace are in neither: they stay in the directory you pointed the
+app at, which is yours to back up
+([ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md)). If you would rather keep
+managed workspaces on your own storage too, replace the `workspace-data` volume with a bind
+mount to that path — the files are plain files in plain directories either way, which is the
+whole point ([03](../specs/03-storage-and-portability.md)).
 
 Stopping the orchestrator at any moment is safe, including `kill -9`: work is claimed
 under a lease, and an expired lease is picked up by whichever worker starts next
