@@ -11,6 +11,9 @@ moment. Those are what this audits (12-reliability.md § verification):
   claiming it — a worker that is not running, or a kind with no handler.
 - **Blobs match their names.** A blob's filename *is* its digest, so reading it back detects
   bit rot, which no write path can catch.
+- **A restorable version can actually be restored.** A superseded version whose bytes are not
+  in the blob store is a restore that would fail when someone finally tried it — years after
+  the mistake that caused it.
 
 Read-only, and honest about what it did not look at: a finding is a fact with a path, and a
 clean run says which checks were performed. It runs after every crash-injection test, and on
@@ -31,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from store_everything import filestore, janitor, operations
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
-from store_everything.tables import operation
+from store_everything.tables import file_version, operation
 
 #: A lease this far past expiry means nobody is claiming the work, not that a worker is slow.
 STUCK_LEASE_FACTOR = 10
@@ -108,7 +111,7 @@ async def audit(
     connection: AsyncConnection, *, settings: Settings, blob_sample: int = 256
 ) -> Report:
     """Run every check and report what it found."""
-    checks = ("uncollected-debris", "stuck-operations", "blob-integrity")
+    checks = ("uncollected-debris", "stuck-operations", "blob-integrity", "version-snapshots")
     findings: list[Finding] = []
     grace = timedelta(hours=settings.janitor_grace_hours)
 
@@ -155,4 +158,39 @@ async def audit(
         for digest in corrupt
     )
 
+    findings.extend(await _missing_snapshots(connection, settings=settings))
+
     return Report(checks=checks, findings=tuple(findings), blobs_read=blobs_read)
+
+
+async def _missing_snapshots(connection: AsyncConnection, *, settings: Settings) -> list[Finding]:
+    """Superseded versions that claim to be restorable but have no blob.
+
+    The other half of "app-written bytes outlive the rows that reference them"
+    ([02 § invariants](../../../specs/02-domain-model.md#invariants)): the write path is careful
+    to store bytes before the row, and this is the only check that would notice if a blob were
+    collected while a row still pointed at it. A finding here means a restore that would fail
+    when someone tried it, which is exactly what `restorable` exists to rule out.
+
+    Current versions are excluded: their bytes are the file in the tree, and whether *that* is
+    still there is re-scan's question, reported as a trash entry rather than as corruption.
+    """
+    store = BlobStore(settings.versions_root)
+    superseded = (
+        await connection.execute(
+            select(file_version.c.id, file_version.c.content_hash).where(
+                file_version.c.restorable.is_(True), file_version.c.is_current.is_(False)
+            )
+        )
+    ).all()
+    absent = await asyncio.to_thread(
+        lambda: [row for row in superseded if not store.contains(str(row[1]))]
+    )
+    return [
+        Finding(
+            "version-snapshots",
+            str(row[0]),
+            f"claims to be restorable, but {row[1]} is not in the blob store",
+        )
+        for row in absent
+    ]

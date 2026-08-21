@@ -17,9 +17,9 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from store_everything import filestore, janitor, operations
+from store_everything import filestore, handlers, janitor, operations
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -231,7 +231,7 @@ async def test_an_unreferenced_blob_is_collected_when_references_are_known(
     for digest in (kept, orphan):
         os.utime(store.path_for(digest), (LONG_AGO, LONG_AGO))
 
-    def only_kept_is_referenced() -> list[str]:
+    async def only_kept_is_referenced(_: AsyncConnection) -> list[str]:
         return [kept]
 
     result = await sweep(engine, settings, references=only_kept_is_referenced)
@@ -249,13 +249,44 @@ async def test_a_fresh_unreferenced_blob_survives(
     store = BlobStore(settings.versions_root)
     just_written = store.put_bytes(b"row not committed yet", operation_id=uuid4())
 
-    def nothing_is_referenced() -> list[str]:
+    async def nothing_is_referenced(_: AsyncConnection) -> list[str]:
         return []
 
     result = await sweep(engine, settings, references=nothing_is_referenced)
 
     assert store.contains(just_written)
     assert result["blobs_collected"] == 0
+
+
+async def test_the_worker_runs_the_janitor_with_a_reference_source(
+    engine: AsyncEngine, identity_database: str, tmp_path: Path
+) -> None:
+    """Collection is off until something registers references, so the wiring is the test.
+
+    Run through `handlers.registry` rather than calling `collect` directly: forgetting to pass
+    the source would leave `versions/` growing forever with no test failing — the janitor's
+    fail-safe is silence, which is exactly what makes it worth asserting. Against an empty
+    database nothing is restorable, so an aged blob being collected proves a source was asked.
+    """
+    settings = settings_for(identity_database, tmp_path)
+    store = BlobStore(settings.versions_root)
+    orphan = store.put_bytes(b"no version points here", operation_id=uuid4())
+    os.utime(store.path_for(orphan), (LONG_AGO, LONG_AGO))
+
+    async with engine.connect() as connection:
+        await operations.enqueue(connection, kind=janitor.KIND, max_attempts=3)
+        await connection.commit()
+        claimed = await operations.claim(
+            connection, worker="janitor/1", lease=timedelta(minutes=5), kinds=(janitor.KIND,)
+        )
+        assert claimed is not None
+        result = await handlers.registry(settings)[janitor.KIND](
+            Job(operation=claimed, connection=connection)
+        )
+        await connection.commit()
+
+    assert not store.contains(orphan)
+    assert result is not None and result["blobs_collected"] == 1
 
 
 # ------------------------------------------------------------------ scheduling

@@ -6,12 +6,16 @@ registrations" — and the reason F-001/FR-5 declares `*(verify: fault-injection
 import runs for hours across deploys and power cuts, so "resumable" has to be a property of
 the schema rather than a hope about timing.
 
-The seam under attack is the checkpoint: one directory's registrations, its discoveries and
-its removal from the frontier commit together. A crash **before** that commit must cost only
-that directory; a crash **after** it must not repeat the directory. The crash is a real
-`os._exit(137)` inside a real `Runner`, so there is no unwinding and no `finally` — exactly
-what a power cut does — and the fault points are armed in the production code path, not in a
-test's own copy of the loop.
+Two seams are under attack, and both are checkpoints. The **traversal's**: one directory's
+registrations, its discoveries and its removal from the frontier commit together, so a crash
+before that commit costs only that directory and a crash after it must not repeat the
+directory. The **sweep's**: one batch of vanished files becomes trash entries in one
+transaction, and a crash on either side must leave exactly one entry per file — no file half
+deleted, no deletion concluded twice.
+
+The crash is a real `os._exit(137)` inside a real `Runner`, so there is no unwinding and no
+`finally` — exactly what a power cut does — and the fault points are armed in the production
+code path, not in a test's own copy of the loop.
 """
 
 from __future__ import annotations
@@ -27,7 +31,14 @@ from sqlalchemy import create_engine, func, select, text
 
 from store_everything.config import Settings
 from store_everything.faults import CRASH_EXIT_STATUS, FAULT_POINT_VARIABLE
-from store_everything.tables import file, folder, scan_frontier, scan_run
+from store_everything.tables import (
+    file,
+    folder,
+    folder_closure,
+    scan_frontier,
+    scan_run,
+    trash_entry,
+)
 from tests.test_scanning import adopt, build
 
 pytestmark = [pytest.mark.integration, pytest.mark.fault_injection, pytest.mark.asyncio]
@@ -36,6 +47,10 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 
 #: Both sides of the checkpoint, in execution order.
 CHECKPOINT_FAULT_POINTS = ("scan.after-batch", "scan.after-commit")
+
+#: Both sides of the *sweep's* checkpoint — the transaction that turns "this file is gone" into
+#: trash entries (F-001/FR-6).
+SWEEP_FAULT_POINTS = ("scan.after-sweep-batch", "scan.after-sweep-commit")
 
 #: Wide and deep enough that a crash lands mid-tree rather than before or after all of it.
 TREE = {
@@ -49,7 +64,7 @@ TREE = {
 
 _WORKER_SCRIPT = """
 import asyncio, sys
-from store_everything import scanning
+from store_everything import handlers
 from store_everything.config import Settings
 from store_everything.db import create_engine
 from store_everything.runner import Runner
@@ -57,11 +72,18 @@ from store_everything.runner import Runner
 
 async def main(url: str) -> None:
     settings = Settings(
-        database_url=url, app_env="development", log_level="CRITICAL", worker_concurrency=1
+        database_url=url,
+        app_env="development",
+        log_level="CRITICAL",
+        worker_concurrency=1,
+        app_data_root=sys.argv[3],
     )
     engine = create_engine(settings)
     try:
-        runner = Runner(engine, settings, {scanning.KIND: scanning.scan}, worker=sys.argv[2])
+        # The registry's own closure, so this crashes the real thing — but only the scan kind
+        # is registered, or this worker could claim the janitor instead and exit cleanly.
+        scan = {"workspace.scan": handlers.registry(settings)["workspace.scan"]}
+        runner = Runner(engine, settings, scan, worker=sys.argv[2])
         await runner.run_once()
     finally:
         await engine.dispose()
@@ -71,7 +93,7 @@ asyncio.run(main(sys.argv[1]))
 """
 
 
-def run_worker(database_url: str, *, worker: str, crash_at: str | None) -> int:
+def run_worker(database_url: str, *, worker: str, crash_at: str | None, app_data_root: Path) -> int:
     """One claim-and-execute cycle in a fresh process, optionally killed mid-scan."""
     environment = dict(os.environ)
     environment["SE_APP_ENV"] = "development"
@@ -82,7 +104,7 @@ def run_worker(database_url: str, *, worker: str, crash_at: str | None) -> int:
         environment.pop(FAULT_POINT_VARIABLE, None)
 
     completed = subprocess.run(  # noqa: S603 - fixed argv
-        [sys.executable, "-c", _WORKER_SCRIPT, database_url, worker],
+        [sys.executable, "-c", _WORKER_SCRIPT, database_url, worker, str(app_data_root)],
         cwd=SERVER_ROOT,
         env=environment,
         capture_output=True,
@@ -153,7 +175,12 @@ async def test_an_importer_killed_mid_tree_converges_on_restart(
     # only on a fresh one.
     for attempt in range(2):
         assert (
-            run_worker(identity_database, worker=f"crash/{attempt}", crash_at=crash_at)
+            run_worker(
+                identity_database,
+                worker=f"crash/{attempt}",
+                crash_at=crash_at,
+                app_data_root=identity_settings.app_data_root,
+            )
             == CRASH_EXIT_STATUS
         ), "the worker was expected to be killed at the fault point"
         # Whatever was registered before the crash is a prefix of the truth, never a duplicate.
@@ -168,7 +195,15 @@ async def test_an_importer_killed_mid_tree_converges_on_restart(
             assert interrupted["file"] >= 1
         expire_lease(identity_database)
 
-    assert run_worker(identity_database, worker="finish", crash_at=None) == 0
+    assert (
+        run_worker(
+            identity_database,
+            worker="finish",
+            crash_at=None,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == 0
+    )
 
     counted = observe(identity_database)
     assert counted["file"] == len(TREE), "a restart duplicated or lost a registration"
@@ -184,3 +219,125 @@ async def test_an_importer_killed_mid_tree_converges_on_restart(
         for path in sorted(tree.rglob("*"))
         if path.is_file() and not str(path.relative_to(tree)).startswith(".workspace")
     } == before
+
+
+def make_due(database_url: str) -> None:
+    """Bring the workspace's next scheduled scan forward, so a worker claims it now.
+
+    The equivalent of `operations.expedite`, in SQL because this module drives the database
+    directly and has no app to ask.
+    """
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text(
+                    "UPDATE operation SET next_due_at = now() "
+                    "WHERE kind = 'workspace.scan' AND state = 'queued'"
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
+
+
+def trashed_paths(database_url: str) -> list[str]:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return sorted(connection.execute(select(trash_entry.c.path)).scalars().all())
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.fr("F-001/FR-5", "F-001/FR-6")
+@pytest.mark.parametrize("crash_at", SWEEP_FAULT_POINTS)
+async def test_a_reconciling_scan_killed_mid_sweep_converges(
+    identity_settings: Settings, identity_database: str, tmp_path: Path, crash_at: str
+) -> None:
+    """Kill the worker while it is turning vanished files into trash entries.
+
+    The sweep is the other half of the same promise: a crash may not leave a file half-deleted —
+    trashed with no entry, or an entry with no state — and a restart may not conclude the
+    deletion twice. It carries no cursor of its own, so this is really a test that the query
+    ("live files this run did not see") *is* the cursor.
+    """
+    tree = tmp_path / "nas"
+    build(tree, TREE)
+    gone = ["Photos/b.txt", "Photos/2026/c.txt", "Documents/e.txt"]
+
+    async with adopt(identity_settings, identity_database, tree) as (_client, _workspace):
+        pass
+    assert (
+        run_worker(
+            identity_database,
+            worker="import",
+            crash_at=None,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == 0
+    )
+    assert observe(identity_database)["file"] == len(TREE)
+
+    for relative in gone:
+        (tree / relative).unlink()
+
+    make_due(identity_database)
+    assert (
+        run_worker(
+            identity_database,
+            worker="crash",
+            crash_at=crash_at,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == CRASH_EXIT_STATUS
+    ), "the worker was expected to be killed in the sweep"
+    # A crash *before* the commit costs the batch; after it, the work is already durable.
+    interrupted = trashed_paths(identity_database)
+    assert interrupted == ([] if crash_at == "scan.after-sweep-batch" else sorted(gone))
+    expire_lease(identity_database)
+
+    assert (
+        run_worker(
+            identity_database,
+            worker="finish",
+            crash_at=None,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == 0
+    )
+
+    # Exactly the files that vanished, exactly once each, whichever side of the commit died.
+    assert trashed_paths(identity_database) == sorted(gone)
+    assert observe(identity_database)["file"] == len(TREE), "no registration was lost"
+    live = live_paths(identity_database)
+    assert sorted(live) == sorted(set(TREE) - set(gone))
+
+
+def live_paths(database_url: str) -> list[str]:
+    """The paths still live, derived the way the app derives them."""
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                select(file.c.id, file.c.name, file.c.folder_id).where(file.c.state == "live")
+            ).all()
+            names: list[str] = []
+            for _, name, folder_id in rows:
+                segments = (
+                    connection.execute(
+                        select(folder.c.name)
+                        .join(
+                            folder_closure,
+                            folder_closure.c.ancestor_id == folder.c.id,
+                        )
+                        .where(folder_closure.c.descendant_id == folder_id)
+                        .order_by(folder_closure.c.depth.desc())
+                    )
+                    .scalars()
+                    .all()
+                )
+                names.append("/".join([*(part for part in segments if part), name]))
+            return names
+    finally:
+        engine.dispose()

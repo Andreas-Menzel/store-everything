@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import operations
 from store_everything.ids import new_id
-from store_everything.tables import scan_finding, scan_frontier, scan_run
+from store_everything.tables import scan_blocked, scan_finding, scan_frontier, scan_run
 
 type Trigger = Literal["initial", "scheduled", "manual", "watcher"]
 type State = Literal["running", "completed", "failed", "cancelled"]
@@ -76,6 +76,10 @@ class Run:
     directories_scanned: int
     files_seen: int
     files_registered: int
+    files_changed: int
+    files_moved: int
+    files_trashed: int
+    files_restored: int
     conflicts: int
     skipped: int
     started_at: datetime
@@ -112,6 +116,10 @@ _COLUMNS = (
     scan_run.c.directories_scanned,
     scan_run.c.files_seen,
     scan_run.c.files_registered,
+    scan_run.c.files_changed,
+    scan_run.c.files_moved,
+    scan_run.c.files_trashed,
+    scan_run.c.files_restored,
     scan_run.c.conflicts,
     scan_run.c.skipped,
     scan_run.c.started_at,
@@ -126,6 +134,10 @@ type _Row = tuple[
     State,
     str,
     UUID,
+    int,
+    int,
+    int,
+    int,
     int,
     int,
     int,
@@ -244,6 +256,10 @@ async def record_progress(
     directories: int = 0,
     files_seen: int = 0,
     files_registered: int = 0,
+    files_changed: int = 0,
+    files_moved: int = 0,
+    files_trashed: int = 0,
+    files_restored: int = 0,
     conflicts: int = 0,
     skipped: int = 0,
 ) -> None:
@@ -255,6 +271,10 @@ async def record_progress(
             directories_scanned=scan_run.c.directories_scanned + directories,
             files_seen=scan_run.c.files_seen + files_seen,
             files_registered=scan_run.c.files_registered + files_registered,
+            files_changed=scan_run.c.files_changed + files_changed,
+            files_moved=scan_run.c.files_moved + files_moved,
+            files_trashed=scan_run.c.files_trashed + files_trashed,
+            files_restored=scan_run.c.files_restored + files_restored,
             conflicts=scan_run.c.conflicts + conflicts,
             skipped=scan_run.c.skipped + skipped,
         )
@@ -307,6 +327,29 @@ async def complete_directory(connection: AsyncConnection, *, run_id: UUID, path:
     await connection.execute(
         delete(scan_frontier).where(scan_frontier.c.run_id == run_id, scan_frontier.c.path == path)
     )
+
+
+async def block(connection: AsyncConnection, *, run_id: UUID, folder_id: UUID) -> None:
+    """Record that this run could not read this directory.
+
+    The whole of [F-001/FR-16](../../../features/F-001-upload-and-import.md) rests on this row:
+    the reconciliation sweep excludes every descendant of a blocked folder, so a share whose
+    permissions changed — or a mount that went away under one subtree — yields no registrations
+    and, above all, **no deletions**. Idempotent, because a batch can be replayed after a crash.
+    """
+    await connection.execute(
+        pg_insert(scan_blocked)
+        .values(run_id=run_id, folder_id=folder_id)
+        .on_conflict_do_nothing(index_elements=[scan_blocked.c.run_id, scan_blocked.c.folder_id])
+    )
+
+
+async def blocked_directories(connection: AsyncConnection, run_id: UUID) -> int:
+    return (
+        await connection.execute(
+            select(func.count()).select_from(scan_blocked).where(scan_blocked.c.run_id == run_id)
+        )
+    ).scalar_one()
 
 
 async def pending_directories(connection: AsyncConnection, run_id: UUID) -> int:

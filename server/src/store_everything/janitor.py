@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -50,9 +50,13 @@ _logger = logging.getLogger(__name__)
 
 KIND = "maintenance.janitor"
 
-ReferenceSource = Callable[[], Iterable[str]]
-"""Returns every blob digest something still points at. Registered by the feature that
-creates the references; until one exists, blobs are never collected."""
+ReferenceSource = Callable[[AsyncConnection], Awaitable[Iterable[str]]]
+"""Returns every blob digest something still points at, given a connection to ask.
+
+Takes the connection because the answer is a query — `files.restorable_digests` — and the
+sweep must read it *inside* the job's transaction, immediately before deciding what is
+unreferenced. A snapshot taken any earlier could miss a version created while the sweep was
+walking the store."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,8 +181,9 @@ async def collect(
         # every superseded version.
         _logger.debug("blob collection skipped: no reference source is registered")
     else:
+        referenced = set(await references(job.connection))
         blobs_collected = await asyncio.to_thread(
-            _collect_blobs, settings.versions_root, set(references()), grace=grace
+            _collect_blobs, settings.versions_root, referenced, grace=grace
         )
 
     await operations.ensure_scheduled(

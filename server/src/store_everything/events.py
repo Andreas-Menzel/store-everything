@@ -55,6 +55,18 @@ WORKSPACE_PROVISIONED = "workspace.provisioned"
 FOLDER_CREATED = "folder.created"
 
 FILE_CREATED = "file.created"
+#: A new current version, from an upload onto an existing path or from content that changed on
+#: the storage. Carries whether the version it superseded kept its bytes (F-007/FR-9), because
+#: that is the difference between history and a gap in it.
+FILE_VERSION_CREATED = "file.version_created"
+#: The same content at a different path. Written by re-scan's move heuristic now (02 § file)
+#: and by an in-app move later (F-015/FR-4), which is why it names both paths rather than a
+#: direction.
+FILE_MOVED = "file.moved"
+FILE_TRASHED = "file.trashed"
+#: Out of the trash and back at its path. Phase 1 writes this only for content that reappeared
+#: on the storage (F-014/FR-10); restoring on request arrives with the trash surface.
+FILE_RESTORED = "file.restored"
 
 #: One per completed scan, carrying its tallies — so "why did this file appear?" and "did the
 #: hourly pass run?" are both answerable from the log alone.

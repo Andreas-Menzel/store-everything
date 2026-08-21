@@ -77,6 +77,7 @@ export type FileSummary = {
      * Modified At
      */
     modified_at: string | null;
+    trash?: TrashInfo | null;
 };
 
 /**
@@ -292,6 +293,22 @@ export type ScanSummary = {
      */
     files_registered: number;
     /**
+     * Files Changed
+     */
+    files_changed: number;
+    /**
+     * Files Moved
+     */
+    files_moved: number;
+    /**
+     * Files Trashed
+     */
+    files_trashed: number;
+    /**
+     * Files Restored
+     */
+    files_restored: number;
+    /**
      * Conflicts
      */
     conflicts: number;
@@ -404,6 +421,35 @@ export type TokenSummary = {
      * Expires At
      */
     expires_at: string | null;
+};
+
+/**
+ * TrashInfo
+ *
+ * Why a file is in the trash, and until when
+ * ([F-014/FR-3](../../../../features/F-014-deletion-and-trash.md)).
+ */
+export type TrashInfo = {
+    /**
+     * Origin
+     */
+    origin: 'in_app' | 'detected_on_disk';
+    /**
+     * Trashed At
+     */
+    trashed_at: string;
+    /**
+     * Purge After
+     */
+    purge_after: string;
+    /**
+     * Batch
+     */
+    batch: string;
+    /**
+     * Restorable
+     */
+    restorable: boolean;
 };
 
 /**
@@ -1187,6 +1233,12 @@ export type CreateUploadData = {
          * Optional SHA-256 of the content; verified before anything is published.
          */
         content_hash?: string | null;
+        /**
+         * If Exists
+         *
+         * What to do if a file already holds that path: refuse the upload, or keep the current content as a version and make this the new one.
+         */
+        if_exists?: 'reject' | 'new_version';
     };
     url: '/api/v1/workspaces/{workspace_id}/files';
 };
@@ -1401,6 +1453,10 @@ export type ReadFileContentErrors = {
      * No such file, or not yours
      */
     404: unknown;
+    /**
+     * The file is in the trash
+     */
+    410: unknown;
     /**
      * The requested range lies outside the file
      */

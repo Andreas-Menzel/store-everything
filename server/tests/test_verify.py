@@ -57,8 +57,14 @@ async def test_a_healthy_instance_audits_clean(
 
     assert report.clean, report.render()
     assert "clean" in report.render()
-    # It says what it checked, so a clean result is not mistaken for "nothing ran".
-    assert len(report.checks) == 3
+    # It says what it checked, so a clean result is not mistaken for "nothing ran" — named
+    # rather than counted, so adding a check has to be a deliberate change here too.
+    assert report.checks == (
+        "uncollected-debris",
+        "stuck-operations",
+        "blob-integrity",
+        "version-snapshots",
+    )
 
 
 async def test_a_healthy_instance_with_data_audits_clean(

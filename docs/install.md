@@ -262,6 +262,33 @@ The distinction between a directory that is **gone** and one that could not be *
 deliberate: only the first is a statement about the files inside it. A share that fails to
 mount produces skipped entries, never deletions.
 
+### What a rescan does about files that changed
+
+Every pass after the first reconciles what it finds against what the app already knows, and
+`import-status` counts each outcome — `files_changed`, `files_moved`, `files_trashed`,
+`files_restored`:
+
+| On the share | In the app |
+|---|---|
+| A file was edited | A new version. The previous one keeps its extracted data and is marked `restorable: false` — its bytes were overwritten before the app could copy them, and saying so beats promising a restore that would fail |
+| A file was moved or its folder renamed | The same file at a new path: same id, same history, nothing re-imported. Recognised by content, and among identical files by name |
+| A file was deleted | A trash entry badged *removed outside the app*, kept for 30 days. Never dropped from the index silently |
+| A deleted file came back | The original entry is reactivated, with its history |
+
+Overwriting **through** the app is the one case where nothing is ever lost: upload with
+`?if_exists=new_version` and the previous content is copied into the app-owned `versions/` area
+before the new bytes land, so it stays restorable. Without that parameter an upload to an
+occupied path is refused (`409`).
+
+**If a share is not mounted, the app notices rather than reacting.** Every workspace root
+carries a `.workspace/marker` file written when the workspace was created. A scan that does not
+find it — or finds one belonging to a different workspace — registers nothing, reconciles
+nothing, and reports the reason in `import-status`; the next scheduled pass tries again. Without
+that check, one pass over an empty mount point would move an entire library into the trash. So:
+if scans start failing with a marker complaint, check the mount, not the app. Deleting
+`.workspace/` from a root has the same effect, which is why it is the one directory in your tree
+that belongs to the app.
+
 ## Upgrading
 
 ```bash

@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import janitor, operations, scanning, workspaces
+from store_everything import files, janitor, operations, scanning, workspaces
 from store_everything.config import Settings
 from store_everything.runner import Handler, Job
 
@@ -63,14 +63,22 @@ def registry(settings: Settings) -> dict[str, Handler]:
     """Every operation kind this build can execute, bound to what it needs."""
 
     async def sweep(job: Job) -> dict[str, Any]:
-        return await janitor.collect(job, settings=settings)
+        # The reference source exists as of the version write path (F-007): every digest a
+        # restorable version still points at is off limits, and the janitor refuses to collect
+        # blobs at all without one — `versions/` holds the only copy of a superseded original.
+        return await janitor.collect(job, settings=settings, references=files.restorable_digests)
+
+    async def walk(job: Job) -> dict[str, Any]:
+        # A workspace's root and cadence are on its row; the blob store's root is not, and
+        # reconciliation has to ask it whether a superseded version's bytes are held.
+        return await scanning.scan(job, settings=settings)
 
     return {
         HEARTBEAT: instance_heartbeat,
         janitor.KIND: sweep,
-        # Neither needs the settings: a workspace's root and its scan cadence are on its row.
+        # Provisioning needs no settings: a workspace's root is on its row.
         workspaces.KIND: workspaces.provision,
-        scanning.KIND: scanning.scan,
+        scanning.KIND: walk,
     }
 
 

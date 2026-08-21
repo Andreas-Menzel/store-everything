@@ -1,4 +1,4 @@
-"""Files and their versions: the rows an upload — and later a scan — produces.
+"""Files and their versions: every row an upload or a scan produces about one file.
 
 A file is *(folder, name)* with a UUID that outlives both (02 § file). Its **path is derived**
 from the folder chain and never stored, so a rename or a move cannot leave a stale string
@@ -6,27 +6,38 @@ behind; `path_of` is that derivation, and it is the first real consumer of the f
 ([F-015/FR-2](../../../features/F-015-folders.md)) — one indexed join instead of a walk.
 
 A version is an immutable snapshot identified by its content hash. Exactly one version per
-file is current, enforced by a partial unique index rather than maintained by code.
+file is current, enforced by a partial unique index rather than maintained by code. What a
+version *also* records is whether its bytes can still be produced: `restorable` is
+[F-007/FR-9](../../../features/F-007-versioning.md), and it is set by whoever knew — the write
+path that took a snapshot, or the scan that found the bytes already overwritten.
+
+Sibling uniqueness covers `live` rows only, so a trashed file stops reserving its path
+([F-014/FR-1](../../../features/F-014-deletion-and-trash.md)). Every query here therefore says
+which state it means, and `find_in_folder` defaults to `live` because that is the file anyone
+can open.
 
 **No event for the upload session, one for the file.** The session is mechanism — a durable
 row in the same sense as an `operation` record (ADR-0017), and those are not individually
-audited either. What the audit trail owes a reader is that a file appeared, with the path,
-size and hash it appeared with, which is what `file.created` carries.
+audited either. What the audit trail owes a reader is what happened to the file: it appeared,
+gained a version, moved. Reading the tree is not one of those things, which is why a scan that
+merely confirms a file is still there writes no event and only stamps `last_seen_at`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Select, func, insert, select, update
+from sqlalchemy import Select, Text, any_, func, insert, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import events, mediatypes, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
-from store_everything.tables import file, file_version, folder, folder_closure
+from store_everything.tables import file, file_version, folder, folder_closure, scan_blocked
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +64,20 @@ class Version:
     media_class: str
     origin: str
     is_current: bool
+    restorable: bool
+    """Whether these bytes can still be produced — from the tree while this version is
+    current, from `versions/` once it is not (F-007/FR-9)."""
+
     modified_at: datetime | None
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class Known:
+    """A file the app already holds, with the version a scan compares the disk against."""
+
+    file: File
+    version: Version
 
 
 _FILE_COLUMNS = (
@@ -75,12 +98,13 @@ _VERSION_COLUMNS = (
     file_version.c.media_class,
     file_version.c.origin,
     file_version.c.is_current,
+    file_version.c.restorable,
     file_version.c.modified_at,
     file_version.c.created_at,
 )
 
 type _FileRow = tuple[UUID, UUID, UUID, str, str, datetime]
-type _VersionRow = tuple[UUID, UUID, str, int, str, str, str, bool, datetime | None, datetime]
+type _VersionRow = tuple[UUID, UUID, str, int, str, str, str, bool, bool, datetime | None, datetime]
 
 
 def _as_file(row: _FileRow) -> File:
@@ -100,17 +124,134 @@ async def get(connection: AsyncConnection, file_id: UUID) -> File | None:
     return None if row is None else _as_file(tuple(row))
 
 
-async def find_in_folder(connection: AsyncConnection, *, folder_id: UUID, name: str) -> File | None:
+async def find_in_folder(
+    connection: AsyncConnection, *, folder_id: UUID, name: str, state: str = "live"
+) -> File | None:
     """The folder's file of that name, compared on the key — so `Report.pdf` finds
-    `report.pdf` ([F-001/FR-7](../../../features/F-001-upload-and-import.md))."""
+    `report.pdf` ([F-001/FR-7](../../../features/F-001-upload-and-import.md)).
+
+    Live by default, because a trashed row does not reserve its path
+    ([F-014/FR-1](../../../features/F-014-deletion-and-trash.md)) and must not be reported as
+    a collision. Asking for `trashed` is how the reappearance of deleted content finds the row
+    to reactivate (F-014/FR-10); several may exist there, and the newest is the answer.
+    """
     row = (
         await connection.execute(
-            _file_query().where(
-                file.c.folder_id == folder_id, file.c.name_key == names.comparison_key(name)
+            _file_query()
+            .where(
+                file.c.folder_id == folder_id,
+                file.c.name_key == names.comparison_key(name),
+                file.c.state == state,
             )
+            .order_by(file.c.created_at.desc())
+            .limit(1)
         )
     ).first()
     return None if row is None else _as_file(tuple(row))
+
+
+async def in_folder(connection: AsyncConnection, folder_id: UUID) -> list[Known]:
+    """Every file the app holds in this folder, with its current version. One query.
+
+    What a scan needs to reconcile a directory: the per-entry alternative is two round trips
+    per file, and a directory with 50 000 photos in it turns an hourly pass into a round-trip
+    storm. Trashed rows are included — the reappearance of deleted content is recognised from
+    them (F-014/FR-10).
+    """
+    rows = (
+        await connection.execute(
+            select(*_FILE_COLUMNS, *_VERSION_COLUMNS)
+            .join(file_version, file_version.c.file_id == file.c.id)
+            .where(file.c.folder_id == folder_id, file_version.c.is_current.is_(True))
+            .order_by(file.c.created_at)
+        )
+    ).all()
+    return [
+        Known(
+            file=_as_file(tuple(row)[: len(_FILE_COLUMNS)]),
+            version=_as_version(tuple(row)[len(_FILE_COLUMNS) :]),
+        )
+        for row in rows
+    ]
+
+
+async def unseen_under(
+    connection: AsyncConnection,
+    *,
+    root_folder_id: UUID,
+    run_id: UUID,
+    started_at: datetime,
+    limit: int,
+) -> list[Known]:
+    """Live files in this subtree that the run did not see — the deletions to reconcile.
+
+    Four conditions, and each one is a rule rather than an optimization
+    ([F-001/FR-6](../../../features/F-001-upload-and-import.md)):
+
+    - **In the subtree**, by the folder closure: a rescan of one directory must never conclude
+      anything about the rest of the workspace.
+    - **Not stamped by this run.** Every name a directory mentioned was stamped, so what is
+      left was in no listing this run read.
+    - **Registered before the run started.** A file uploaded while the scan was walking is not
+      missing — the traversal simply passed its directory earlier. Scans are convergent, not
+      snapshot-perfect (12 § job atomicity), so the next pass covers it.
+    - **Not under a directory this run could not read** (F-001/FR-16). "I could not look" says
+      nothing about what is inside, and the sweep's whole job is concluding things about the
+      inside.
+
+    Returned with the current version because deciding restorability needs its digest, and the
+    trash entry needs its path.
+    """
+    # Its own alias of the closure: the outer query joins it too, for the subtree bound.
+    under_blocked = folder_closure.alias("blocked_closure")
+    blocked = (
+        select(scan_blocked.c.folder_id)
+        .join(under_blocked, under_blocked.c.ancestor_id == scan_blocked.c.folder_id)
+        .where(scan_blocked.c.run_id == run_id, under_blocked.c.descendant_id == file.c.folder_id)
+    )
+    rows = (
+        await connection.execute(
+            select(*_FILE_COLUMNS, *_VERSION_COLUMNS)
+            .join(file_version, file_version.c.file_id == file.c.id)
+            .join(folder_closure, folder_closure.c.descendant_id == file.c.folder_id)
+            .where(
+                folder_closure.c.ancestor_id == root_folder_id,
+                file.c.state == "live",
+                file_version.c.is_current.is_(True),
+                or_(file.c.last_seen_at.is_(None), file.c.last_seen_at < started_at),
+                file.c.created_at < started_at,
+                ~blocked.exists(),
+            )
+            .order_by(file.c.id)
+            .limit(limit)
+        )
+    ).all()
+    return [
+        Known(
+            file=_as_file(tuple(row)[: len(_FILE_COLUMNS)]),
+            version=_as_version(tuple(row)[len(_FILE_COLUMNS) :]),
+        )
+        for row in rows
+    ]
+
+
+async def holds_any_content(connection: AsyncConnection, file_id: UUID) -> bool:
+    """Whether the app can still produce *some* version of this file's content.
+
+    What restorability means for a trash entry (F-014/FR-10): derived rather than stored, so it
+    cannot go stale behind a snapshot taken later or a blob collected earlier.
+    """
+    return bool(
+        (
+            await connection.execute(
+                select(
+                    select(file_version.c.id)
+                    .where(file_version.c.file_id == file_id, file_version.c.restorable.is_(True))
+                    .exists()
+                )
+            )
+        ).scalar_one()
+    )
 
 
 async def current_version(connection: AsyncConnection, file_id: UUID) -> Version | None:
@@ -229,11 +370,273 @@ async def register(
     return created, version
 
 
-async def mark_seen(connection: AsyncConnection, *, file_id: UUID, seen_at: datetime) -> None:
-    """Record that a scan found this file on disk.
+async def stamp_seen(
+    connection: AsyncConnection, *, folder_id: UUID, name_keys: Sequence[str], seen_at: datetime
+) -> int:
+    """Record that a scan found these names in this folder. Returns how many rows it stamped.
 
     Stamped with the *run's* start rather than `now()`, so "what did this run not see" is an
     exact comparison however long the run took — and a run interrupted halfway leaves a
     consistent answer rather than a moving one.
+
+    Every name the directory *mentioned* is stamped, not only the ones that registered: an
+    entry the scan saw and refused — a symlink where a file used to be, the loser of a name
+    collision, something it could not `stat` — is not an absence, and only an absence may
+    conclude a deletion ([F-001/FR-18](../../../features/F-001-upload-and-import.md)).
     """
-    await connection.execute(update(file).where(file.c.id == file_id).values(last_seen_at=seen_at))
+    if not name_keys:
+        return 0
+    result = await connection.execute(
+        update(file)
+        .where(
+            file.c.folder_id == folder_id,
+            file.c.state == "live",
+            # One array parameter rather than an `IN` list of them: a directory can hold more
+            # entries than PostgreSQL allows bind parameters (65 535), and a photo folder that
+            # large should scan slowly, not fail.
+            file.c.name_key == any_(literal(list(name_keys), ARRAY(Text))),
+        )
+        .values(last_seen_at=seen_at)
+    )
+    return result.rowcount
+
+
+async def candidates_with_content(
+    connection: AsyncConnection,
+    *,
+    workspace_id: UUID,
+    content_hash: str,
+    unseen_since: datetime,
+    limit: int,
+) -> list[Known]:
+    """Live files in this workspace whose current content is this, oldest registration first.
+
+    The move heuristic's first step (02 § file). Restricted to files this run has **not**
+    stamped, which is what keeps it cheap: during an import every duplicate already seen is
+    excluded, so the common case finds nothing and reads no disk. A file the run has not
+    reached yet is still a candidate — one `lstat` says it is there, and that is the answer.
+
+    The current version comes along because a move updates the timestamp it recorded, and
+    fetching it again per candidate would be a round trip for something already joined.
+    """
+    rows = (
+        await connection.execute(
+            select(*_FILE_COLUMNS, *_VERSION_COLUMNS)
+            .join(file_version, file_version.c.file_id == file.c.id)
+            .where(
+                file.c.workspace_id == workspace_id,
+                file.c.state == "live",
+                file_version.c.is_current.is_(True),
+                file_version.c.content_hash == content_hash,
+                or_(file.c.last_seen_at.is_(None), file.c.last_seen_at < unseen_since),
+            )
+            .order_by(file.c.created_at, file.c.id)
+            .limit(limit)
+        )
+    ).all()
+    return [
+        Known(
+            file=_as_file(tuple(row)[: len(_FILE_COLUMNS)]),
+            version=_as_version(tuple(row)[len(_FILE_COLUMNS) :]),
+        )
+        for row in rows
+    ]
+
+
+async def add_version(
+    connection: AsyncConnection,
+    *,
+    found: File,
+    content_hash: str,
+    size_bytes: int,
+    media_type: str,
+    modified_at: datetime | None,
+    origin: str,
+    actor: Actor,
+    predecessor_restorable: bool,
+    seen_at: datetime | None = None,
+) -> Version:
+    """Make new content this file's current version, keeping the old one as history.
+
+    `predecessor_restorable` is [F-007/FR-9](../../../features/F-007-versioning.md) in one
+    argument: `True` when the app snapshotted the previous bytes into `versions/` before
+    writing, `False` when it is only *noticing* a change that already overwrote them. Passed in
+    rather than inferred, because the only code that knows is the code that had the chance to
+    take a copy.
+
+    The partial unique index is what keeps "exactly one current version" true here: the
+    predecessor is demoted in the same statement batch, and a second attempt after a crash
+    finds the new version already current and the old one already demoted.
+    """
+    await connection.execute(
+        update(file_version)
+        .where(file_version.c.file_id == found.id, file_version.c.is_current.is_(True))
+        .values(is_current=False, restorable=predecessor_restorable)
+    )
+    version = _as_version(
+        tuple(
+            (
+                await connection.execute(
+                    insert(file_version)
+                    .values(
+                        id=new_id(),
+                        file_id=found.id,
+                        content_hash=content_hash,
+                        size_bytes=size_bytes,
+                        media_type=media_type,
+                        media_class=mediatypes.media_class(media_type),
+                        origin=origin,
+                        is_current=True,
+                        modified_at=modified_at,
+                    )
+                    .returning(*_VERSION_COLUMNS)
+                )
+            ).one()
+        )
+    )
+    await connection.execute(
+        update(file)
+        .where(file.c.id == found.id)
+        .values(
+            updated_at=func.now(),
+            last_seen_at=func.now() if seen_at is None else seen_at,
+        )
+    )
+
+    await events.record(
+        connection,
+        action=events.FILE_VERSION_CREATED,
+        resource_type=events.RESOURCE_FILE,
+        resource_id=found.id,
+        actor=actor,
+        details={
+            "workspace": str(found.workspace_id),
+            "path": await path_of(connection, found),
+            "version": str(version.id),
+            "size": version.size_bytes,
+            "content_hash": version.content_hash,
+            "origin": origin,
+            # The reader's question about the version this one replaced: is it still there to
+            # go back to, or is this all that is left?
+            "predecessor_restorable": predecessor_restorable,
+        },
+    )
+    return version
+
+
+async def refresh_observed_mtime(
+    connection: AsyncConnection, *, version_id: UUID, modified_at: datetime | None
+) -> None:
+    """Record the timestamp the unchanged content now carries on disk.
+
+    A touch, or a copy restored from a backup, changes the mtime without changing a byte. The
+    version is not a new one — the hash proves it — but the recorded timestamp has to follow,
+    or every later pass re-reads the whole file to reach the same conclusion.
+    """
+    await connection.execute(
+        update(file_version).where(file_version.c.id == version_id).values(modified_at=modified_at)
+    )
+
+
+async def relocate(
+    connection: AsyncConnection,
+    *,
+    found: File,
+    folder_id: UUID,
+    name: str,
+    modified_at: datetime | None,
+    version_id: UUID,
+    seen_at: datetime,
+    actor: Actor,
+    match: str,
+    from_path: str,
+) -> File:
+    """Move this file's identity to a new folder and name, keeping its UUID.
+
+    The other half of the move heuristic (02 § file): the content is the same, so this is one
+    file that changed place, not a deletion and an arrival. Everything attached to the UUID —
+    versions now, tags and grants later — travels with it for free, which is the entire reason
+    the app addresses files by UUID rather than by path.
+    """
+    moved = _as_file(
+        tuple(
+            (
+                await connection.execute(
+                    update(file)
+                    .where(file.c.id == found.id)
+                    .values(
+                        folder_id=folder_id,
+                        name=name,
+                        name_key=names.comparison_key(name),
+                        last_seen_at=seen_at,
+                        updated_at=func.now(),
+                    )
+                    .returning(*_FILE_COLUMNS)
+                )
+            ).one()
+        )
+    )
+    # A move usually preserves the mtime and sometimes does not; either way the stat-scan has
+    # to compare against what is on the disk now.
+    await refresh_observed_mtime(connection, version_id=version_id, modified_at=modified_at)
+
+    await events.record(
+        connection,
+        action=events.FILE_MOVED,
+        resource_type=events.RESOURCE_FILE,
+        resource_id=moved.id,
+        actor=actor,
+        details={
+            "workspace": str(moved.workspace_id),
+            "from": from_path,
+            "to": await path_of(connection, moved),
+            "detected": "external",
+            # Which rule matched, so "why does this file carry those tags?" has an answer when
+            # several identical files could have been the one that moved.
+            "match": match,
+        },
+    )
+    return moved
+
+
+async def set_state(connection: AsyncConnection, *, file_id: UUID, state: str) -> bool:
+    """Flip a file's lifecycle state, guarded on it not already being there."""
+    result = await connection.execute(
+        update(file)
+        .where(file.c.id == file_id, file.c.state != state)
+        .values(state=state, updated_at=func.now())
+    )
+    return result.rowcount == 1
+
+
+async def set_current_restorable(
+    connection: AsyncConnection, *, file_id: UUID, restorable: bool
+) -> None:
+    """Record whether the current version's bytes can still be produced.
+
+    Called when the answer changes without the content changing: the file vanished from the
+    storage, or came back to it.
+    """
+    await connection.execute(
+        update(file_version)
+        .where(file_version.c.file_id == file_id, file_version.c.is_current.is_(True))
+        .values(restorable=restorable)
+    )
+
+
+async def restorable_digests(connection: AsyncConnection) -> set[str]:
+    """Every content digest the app must not delete from the blob store.
+
+    The janitor's reference source (12 § debris & the janitor). Current versions are included
+    even though their bytes live in the tree: a snapshot taken *before* its version becomes the
+    predecessor would otherwise be unreferenced for the length of an upload, and a long upload
+    outlives the grace window.
+    """
+    rows = (
+        await connection.execute(
+            select(file_version.c.content_hash)
+            .where(file_version.c.restorable.is_(True))
+            .distinct()
+        )
+    ).scalars()
+    return set(rows)

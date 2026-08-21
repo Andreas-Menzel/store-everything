@@ -34,6 +34,7 @@ from store_everything import (
     workspaces,
 )
 from store_everything.api.v1.router import API_V1_PREFIX
+from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.tables import file, folder
 from tests.identity_helpers import SAME_ORIGIN, read_events
@@ -156,7 +157,7 @@ async def test_an_adopted_tree_imports_itself(
     before = fingerprint(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        results = await scan_pending(identity_database)
+        results = await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     assert [result["outcome"] for result in results] == ["completed"]
@@ -188,7 +189,7 @@ async def test_the_control_directory_is_neither_registered_nor_reported(
     build(tree, {"notes.txt": b"only file"})
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     assert await registered(identity_database) == {
@@ -206,14 +207,14 @@ async def test_a_second_pass_registers_nothing_new(
     contents = build(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         first = await status(client, workspace)
 
         accepted = await client.post(
             f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
         )
         assert accepted.status_code == 202, accepted.text
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         second = await status(client, workspace)
 
     assert first["recent"][0]["files_registered"] == len(contents)
@@ -233,14 +234,14 @@ async def test_a_file_added_between_passes_is_registered(
     build(tree, {"notes.txt": b"first"})
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         (tree / "Photos").mkdir()
         (tree / "Photos" / "later.jpg").write_bytes(b"copied on by hand")
 
         await client.post(
             f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
         )
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     assert "Photos/later.jpg" in await registered(identity_database)
 
@@ -288,7 +289,7 @@ async def test_colliding_siblings_are_reported_and_the_tree_is_untouched(
     before = user_files(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     # Two names, four entries: one of each pair registers.
@@ -320,7 +321,7 @@ async def test_symlinks_are_skipped_and_their_targets_never_read(
     (tree / "dangling").symlink_to(tree / "gone.txt")
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     # Only the real file is registered; nothing behind a link, at any depth.
@@ -344,7 +345,7 @@ async def test_a_name_the_policy_refuses_is_reported_rather_than_registered(
         pytest.skip("this filesystem refuses the over-long name itself")
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     assert set(await registered(identity_database)) == {"fine.txt"}
@@ -360,7 +361,7 @@ async def test_something_that_is_not_a_file_or_a_directory_is_skipped(
     os.mkfifo(tree / "pipe")
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     assert set(await registered(identity_database)) == {"real.txt"}
@@ -385,7 +386,7 @@ async def test_a_directory_that_vanished_is_an_empty_listing(
     build(tree, {"Keep/one.txt": b"kept"})
 
     async with adopt(identity_settings, identity_database, tree) as (_client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     engine = create_async_engine(identity_database)
     try:
@@ -407,6 +408,7 @@ async def test_a_directory_that_vanished_is_an_empty_listing(
                 run=run,
                 workspace=found,
                 pending=scans.Pending("Vanished", root.id),
+                store=BlobStore(identity_settings.versions_root),
             )
             await connection.commit()
     finally:
@@ -430,7 +432,7 @@ async def test_a_scan_resumes_where_it_stopped(
     contents = build(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        results = await scan_pending(identity_database)
+        results = await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     # One run, and it covered everything: the resumption path is exercised by the frontier
@@ -447,7 +449,7 @@ async def test_a_subtree_rescan_only_visits_that_subtree(
     build(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         (tree / "Photos" / "new.jpg").write_bytes(b"added under Photos")
         (tree / "Documents" / "new.txt").write_bytes(b"added under Documents")
 
@@ -458,7 +460,7 @@ async def test_a_subtree_rescan_only_visits_that_subtree(
         )
         assert accepted.status_code == 202, accepted.text
         assert accepted.json()["path"] == "Photos"
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     found = await registered(identity_database)
     assert "Photos/new.jpg" in found
@@ -472,7 +474,7 @@ async def test_an_unknown_subtree_is_refused(
     build(tree)
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         missing = await client.post(
             f"{API_V1_PREFIX}/workspaces/{workspace}/rescan",
             json={"path": "Nowhere"},
@@ -496,7 +498,7 @@ async def test_a_completed_scan_arms_the_next_one(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (_client, _workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     engine = create_async_engine(identity_database)
     try:
@@ -508,7 +510,7 @@ async def test_a_completed_scan_arms_the_next_one(
     # One finished run, and exactly one pending successor — due in an hour, so a second
     # `scan_pending` right now would find nothing to do.
     assert depth == {"succeeded": 1, "queued": 1}
-    assert await scan_pending(identity_database) == []
+    assert await scan_pending(identity_database, identity_settings) == []
 
 
 async def test_the_scan_is_recorded_in_the_event_log(
@@ -518,7 +520,7 @@ async def test_the_scan_is_recorded_in_the_event_log(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (_client, _workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     scanned = await read_events(identity_database, action="workspace.scanned")
     assert len(scanned) == 1
@@ -567,7 +569,7 @@ async def test_a_rescan_of_an_overdue_scan_still_reports_who_asked(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
         # The pending successor becomes overdue, and nothing has claimed it.
         engine = create_async_engine(identity_database)
@@ -588,7 +590,7 @@ async def test_a_rescan_of_an_overdue_scan_still_reports_who_asked(
             f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
         )
         assert accepted.status_code == 202, accepted.text
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         report = await status(client, workspace)
 
     assert report["recent"][0]["trigger"] == "manual"
@@ -602,7 +604,7 @@ async def test_a_rescan_never_pushes_a_due_scan_further_out(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         engine = create_async_engine(identity_database)
         try:
             async with engine.connect() as connection:
@@ -650,14 +652,14 @@ async def test_a_manually_requested_scan_names_the_person_who_asked(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
         me = (await client.get(f"{API_V1_PREFIX}/auth/me")).json()["user"]["id"]
         (tree / "two.txt").write_bytes(b"added by hand")
 
         await client.post(
             f"{API_V1_PREFIX}/workspaces/{workspace}/rescan", json={}, headers=SAME_ORIGIN
         )
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
     scanned = await read_events(identity_database, action="workspace.scanned")
     initial, manual = scanned[0], scanned[1]
@@ -681,7 +683,7 @@ async def test_a_scan_survives_a_requester_who_no_longer_exists(
     build(tree, {"one.txt": b"file"})
 
     async with adopt(identity_settings, identity_database, tree) as (_client, workspace):
-        await scan_pending(identity_database)
+        await scan_pending(identity_database, identity_settings)
 
         # Exactly what the endpoint does — including the `expedite`, which is what carries the
         # reason onto a run that a request converges on.
@@ -697,7 +699,7 @@ async def test_a_scan_survives_a_requester_who_no_longer_exists(
         finally:
             await engine.dispose()
 
-        results = await scan_pending(identity_database)
+        results = await scan_pending(identity_database, identity_settings)
 
     assert [result["outcome"] for result in results] == ["completed"]
     scanned = await read_events(identity_database, action="workspace.scanned")

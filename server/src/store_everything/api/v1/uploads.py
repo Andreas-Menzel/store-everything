@@ -25,9 +25,9 @@ the upload resource from the `201 Created` instead; see `resumable` and Q58.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
@@ -40,10 +40,12 @@ from store_everything import (
     mediatypes,
     names,
     resumable,
+    trash,
     uploads,
     workspaces,
 )
 from store_everything.api.v1.files import FileSummary
+from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
@@ -116,6 +118,19 @@ def _invalid(reason: str, pointer: str) -> ProblemException:
     )
 
 
+def _vanished() -> ProblemException:
+    """The content this upload meant to keep as a version is not on the storage any more."""
+    return ProblemException(
+        status=409,
+        slug="conflict",
+        title="Conflict",
+        detail=(
+            "The content of this file is no longer on the storage, so it cannot be kept as a "
+            "version. A re-scan will record that it is gone."
+        ),
+    )
+
+
 def _occupied(path: str) -> ProblemException:
     """F-001/FR-7: a collision is refused rather than resolved. On the comparison key, so
     `Report.pdf` collides with `report.pdf` (ADR-0019)."""
@@ -145,31 +160,44 @@ async def _writable_workspace(
 
 
 async def _existing_target(
-    connection: DatabaseConnection, workspace: workspaces.Workspace, segments: tuple[str, ...]
-) -> None:
-    """Refuse now what finalize would refuse later, without creating anything.
+    connection: DatabaseConnection,
+    workspace: workspaces.Workspace,
+    segments: tuple[str, ...],
+    *,
+    if_exists: uploads.ConflictMode = "reject",
+) -> files.File | None:
+    """The live file this upload would replace, or `None` — refusing what must be refused.
 
-    Only folders that already exist are consulted: if the parent chain is incomplete then
-    nothing can be in the way, so there is nothing to check.
+    Refuses now what finalize would refuse later, without creating anything. Only folders that
+    already exist are consulted: if the parent chain is incomplete then nothing can be in the
+    way, so there is nothing to check.
+
+    With `if_exists="new_version"` a file at the *final* segment stops being a collision and
+    becomes the target (F-001/FR-7). Everything else still is: a folder of that name, or a file
+    part-way along the path, because neither can be turned into a version of anything.
     """
     *parents, name = segments
     parent = await folders.root_of(connection, workspace.id)
     for depth, segment in enumerate(parents):
         if parent is None:
-            return
+            return None
         # A path cannot lead *through* a file. Caught here so the answer is a `409` rather
         # than a `mkdir` failing halfway through an upload.
         if await files.find_in_folder(connection, folder_id=parent.id, name=segment) is not None:
             raise _occupied("/".join(segments[: depth + 1]))
         parent = await folders.child_by_name(connection, parent_id=parent.id, name=segment)
     if parent is None:
-        return
+        return None
 
-    if await files.find_in_folder(connection, folder_id=parent.id, name=name) is not None:
-        raise _occupied("/".join(segments))
-    # The other direction: a folder already holds the name this file wants.
+    # The other direction: a folder already holds the name this file wants. Checked first,
+    # because no `if_exists` mode can make a directory into a file's new version.
     if await folders.child_by_name(connection, parent_id=parent.id, name=name) is not None:
         raise _occupied("/".join(segments))
+
+    existing = await files.find_in_folder(connection, folder_id=parent.id, name=name)
+    if existing is not None and if_exists == "reject":
+        raise _occupied("/".join(segments))
+    return existing
 
 
 async def _receive(request: Request, staging: Path, *, limit: int) -> int:
@@ -199,13 +227,14 @@ async def _finalize(
     *,
     session: uploads.Session,
     workspace: workspaces.Workspace,
+    settings: Settings,
     actor: Actor,
 ) -> FileSummary:
     """Turn staged bytes into a registered file. The last step, and the only publishing one."""
     segments = names.split_path(session.target_path)
     *parents, name = segments
 
-    await _existing_target(connection, workspace, segments)
+    replacing = await _existing_target(connection, workspace, segments, if_exists=session.if_exists)
     try:
         folder = await folders.ensure_path(
             connection,
@@ -229,6 +258,16 @@ async def _finalize(
     destination = await asyncio.to_thread(
         filestore.resolve_within, workspace.root_path, Path(*segments)
     )
+    # Before a byte of the destination is overwritten: the content it holds now becomes a
+    # version, or this upload is refused (F-007/FR-9, F-001/FR-20).
+    snapshot = (
+        None
+        if replacing is None
+        else await _snapshot(
+            connection, replacing=replacing, source=destination, settings=settings, session=session
+        )
+    )
+
     try:
         assembled = await asyncio.to_thread(
             uploads.assemble, staging, destination, declared_hash=session.declared_hash
@@ -241,6 +280,44 @@ async def _finalize(
         raise _invalid(
             "the uploaded content does not match the declared content_hash", "/query/content_hash"
         ) from mismatch
+
+    if replacing is not None:
+        version = await files.add_version(
+            connection,
+            found=replacing,
+            content_hash=assembled.content_hash,
+            size_bytes=assembled.size_bytes,
+            media_type=mediatypes.detect(name, session.media_type),
+            modified_at=assembled.modified_at,
+            origin="upload",
+            actor=actor,
+            # The bytes are in the blob store, so history is real: this is the difference
+            # between an app-mediated change and one the app merely noticed afterwards.
+            predecessor_restorable=snapshot is not None,
+        )
+        await uploads.complete(connection, session=session, file_id=replacing.id)
+        return FileSummary.of(replacing, version, await files.path_of(connection, replacing))
+
+    revived = await _reappeared(
+        connection, folder_id=folder.id, name=name, content_hash=assembled.content_hash
+    )
+    if revived is not None:
+        await trash.reactivate(
+            connection,
+            found=revived,
+            path=session.target_path,
+            actor=actor,
+            reason="the same content was uploaded to its old path",
+            seen_at=datetime.now(tz=UTC),
+        )
+        current = await files.current_version(connection, revived.id)
+        # Re-read rather than reuse: the row the reactivation just changed is the one to report,
+        # and `revived` still says `trashed`.
+        live = await files.get(connection, revived.id)
+        if current is None or live is None:  # pragma: no cover - both were just written
+            raise RuntimeError(f"file {revived.id} vanished while being restored")
+        await uploads.complete(connection, session=session, file_id=live.id)
+        return FileSummary.of(live, current, await files.path_of(connection, live))
 
     found, version = await files.register(
         connection,
@@ -256,6 +333,81 @@ async def _finalize(
     )
     await uploads.complete(connection, session=session, file_id=found.id)
     return FileSummary.of(found, version, await files.path_of(connection, found))
+
+
+async def _snapshot(
+    connection: DatabaseConnection,
+    *,
+    replacing: files.File,
+    source: Path,
+    settings: Settings,
+    session: uploads.Session,
+) -> str:
+    """Copy the content this upload is about to replace into `versions/`. Returns its digest.
+
+    A **copy**, not the cheaper move: a move empties the destination path until the new bytes
+    are renamed in, and a scan interleaving there would read an absent name as a deletion — it
+    would trash the file mid-upload, and a concurrent download would `404`. Copying keeps the
+    path holding valid content at every instant, and costs one extra read of the old file.
+
+    The digest is taken from the bytes as they are copied, and compared with the version this
+    upload means to supersede. A difference means the file was edited on the storage without the
+    app seeing it, and the upload is refused (F-001/FR-20): recording a version for content that
+    is about to be destroyed would either mutate an immutable version row or lose that edit
+    silently, and a `409` naming the cause costs the client one rescan instead.
+
+    The blob is written before any row changes, and the version that still points at it is
+    `restorable`, so the janitor cannot collect it in the window before the new version lands.
+    That is also what makes a crash here safe: the next scan finds the content changed, asks
+    whether the app holds the predecessor's bytes, and finds that it does.
+    """
+    current = await files.current_version(connection, replacing.id)
+    if current is None:  # pragma: no cover - a file always has a current version
+        raise RuntimeError(f"file {replacing.id} has no current version")
+
+    store = BlobStore(settings.versions_root)
+    if not await asyncio.to_thread(source.is_file):
+        # The row says the content is there and the filesystem disagrees. Reconciling that is
+        # re-scan's job; refusing to overwrite what it cannot preserve is this one's. Asked
+        # explicitly rather than caught, so that a `FileNotFoundError` from anywhere else in the
+        # snapshot stays the bug it is instead of being reported as this.
+        raise _vanished()
+    try:
+        digest = await asyncio.to_thread(store.put_copy_of, source, operation_id=session.id)
+    except FileNotFoundError as vanished:
+        # The same thing, one instant later: deleted between the check and the copy.
+        raise _vanished() from vanished
+
+    if digest != current.content_hash:
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail=(
+                "This file changed on the storage since the app last saw it. A re-scan has to "
+                "record that change as its own version before it can be overwritten."
+            ),
+        )
+    return digest
+
+
+async def _reappeared(
+    connection: DatabaseConnection, *, folder_id: UUID, name: str, content_hash: str
+) -> files.File | None:
+    """A trashed file at this path whose content this upload just restored.
+
+    [F-014/FR-10](../../../../features/F-014-deletion-and-trash.md): content with the same hash
+    reappearing at the same path reactivates the original row rather than creating a second
+    identity, so the tags and history of a file someone deleted on the NAS and re-copied come
+    back with it.
+    """
+    trashed = await files.find_in_folder(
+        connection, folder_id=folder_id, name=name, state="trashed"
+    )
+    if trashed is None:
+        return None
+    version = await files.current_version(connection, trashed.id)
+    return trashed if version is not None and version.content_hash == content_hash else None
 
 
 def _protocol_headers(
@@ -364,6 +516,15 @@ async def create_upload(
             description="Optional SHA-256 of the content; verified before anything is published.",
         ),
     ] = None,
+    if_exists: Annotated[
+        Literal["reject", "new_version"],
+        Query(
+            description=(
+                "What to do if a file already holds that path: refuse the upload, or keep the "
+                "current content as a version and make this the new one."
+            ),
+        ),
+    ] = "reject",
 ) -> Response:
     settings = settings_of(request)
     workspace = await _writable_workspace(connection, workspace_id, credential)
@@ -372,7 +533,7 @@ async def create_upload(
         segments = names.split_path(path)
     except names.InvalidNameError as invalid:
         raise _invalid(invalid.reason, "/query/path") from invalid
-    await _existing_target(connection, workspace, segments)
+    await _existing_target(connection, workspace, segments, if_exists=if_exists)
 
     dialect = resumable.dialect_for(request.headers.get(resumable.INTEROP_VERSION_HEADER))
     # Absent means "an ordinary upload": the client is not speaking the protocol, so this
@@ -394,6 +555,7 @@ async def create_upload(
         declared_hash=content_hash,
         media_type=request.headers.get("content-type"),
         interop_version=None if dialect is None else dialect.interop_version,
+        if_exists=if_exists,
         expires_in=timedelta(days=settings.upload_expiry_days),
     )
 
@@ -420,7 +582,11 @@ async def create_upload(
             "/header/upload-length",
         )
     summary = await _finalize(
-        connection, session=session, workspace=workspace, actor=Actor.user(credential.user.id)
+        connection,
+        session=session,
+        workspace=workspace,
+        settings=settings,
+        actor=Actor.user(credential.user.id),
     )
     return JSONResponse(
         summary.model_dump(mode="json"),
@@ -546,7 +712,11 @@ async def append_to_upload(
             "/header/upload-complete",
         )
     summary = await _finalize(
-        connection, session=session, workspace=workspace, actor=Actor.user(credential.user.id)
+        connection,
+        session=session,
+        workspace=workspace,
+        settings=settings,
+        actor=Actor.user(credential.user.id),
     )
     return JSONResponse(
         summary.model_dump(mode="json"),
