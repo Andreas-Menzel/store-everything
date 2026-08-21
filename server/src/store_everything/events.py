@@ -42,11 +42,14 @@ RATE_LIMITED = "auth.rate_limited"
 
 SESSION_REVOKED = "session.revoked"
 
+OPERATION_DEAD_LETTERED = "operation.dead_lettered"
+
 TOKEN_CREATED = "token.created"  # noqa: S105 - an action name, not a secret
 TOKEN_REVOKED = "token.revoked"  # noqa: S105 - an action name, not a secret
 
 RESOURCE_USER = "user"
 RESOURCE_SESSION = "session"
+RESOURCE_OPERATION = "operation"
 RESOURCE_TOKEN = "token"  # noqa: S105 - a resource name, not a secret
 
 #: Detail keys that would put a credential into the permanent record. The log is the one

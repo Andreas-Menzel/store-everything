@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from typing import Any
 
 import pytest
@@ -126,3 +127,31 @@ def test_create_admin_refuses_a_weak_password(
 
     assert status == 1
     assert "at least" in capsys.readouterr().err
+
+
+def test_the_parser_offers_exactly_the_documented_subcommands() -> None:
+    """The compose file invokes `store-everything worker` by name; a typo here breaks a
+    service that otherwise looks healthy until its queue never drains."""
+    parser = __main__.build_parser()
+    subparsers = [
+        action
+        for action in parser._actions  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert len(subparsers) == 1
+    assert set(subparsers[0].choices) == {"serve", "worker", "create-admin"}
+
+
+def test_the_worker_subcommand_runs_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SE_DATABASE_URL", "postgresql://u:p@db/store")
+    ran: list[str] = []
+
+    def fake_work(settings: Any) -> int:
+        ran.append("worker")
+        return 0
+
+    monkeypatch.setattr(__main__, "work", fake_work)
+
+    assert __main__.main(["worker"]) == 0
+    assert ran == ["worker"]

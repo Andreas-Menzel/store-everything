@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -83,6 +83,30 @@ class Settings(BaseSettings):
     """Per-credential (or per-address, unauthenticated) request ceiling for `/api/v1`.
     Volumetric abuse is the edge's job; this is the app-level backstop."""
 
+    # ------------------------------------------------------------------ operations
+    # 12-reliability.md § tuning defaults (Q30). Conservative on purpose, and revisited at
+    # phase-2 entry against real extractor runtimes — a re-tune is configuration, not design.
+
+    lease_seconds: int = Field(default=300, gt=0)
+    """How long a claim owns its operation before anyone may reclaim it."""
+
+    heartbeat_seconds: int = Field(default=60, gt=0)
+    """Renewal cadence — five chances inside one lease, so a slow cycle is survivable."""
+
+    max_attempts: int = Field(default=4, gt=0)
+    """Attempts before dead-lettering. Counted on claim, so a worker-killing job converges."""
+
+    retry_base_seconds: float = Field(default=10.0, gt=0)
+    retry_max_seconds: float = Field(default=3600.0, gt=0)
+    """Exponential backoff bounds; the delay itself is jittered."""
+
+    worker_concurrency: int = Field(default=4, gt=0)
+    """Operations one worker process runs at once."""
+
+    worker_poll_seconds: float = Field(default=5.0, gt=0)
+    """How long an idle worker waits before looking again. Claiming writes nothing when
+    there is nothing to claim, so idling here costs one indexed read."""
+
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -101,6 +125,16 @@ class Settings(BaseSettings):
         if scheme in {"postgresql", "postgres"}:
             return f"{_ASYNC_DRIVER}://{rest}"
         return url
+
+    @model_validator(mode="after")
+    def _heartbeat_fits_inside_the_lease(self) -> Settings:
+        """A cadence longer than the lease would let an active worker lose its own claim."""
+        if self.heartbeat_seconds >= self.lease_seconds:
+            raise ValueError(
+                "SE_HEARTBEAT_SECONDS must be shorter than SE_LEASE_SECONDS, "
+                "or a worker's lease expires while it is still working"
+            )
+        return self
 
     @property
     def trust_proxy_headers(self) -> bool:
