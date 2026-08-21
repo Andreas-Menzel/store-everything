@@ -29,6 +29,7 @@ Installable on a private home machine *or* a public server. Therefore: real auth
 - **App-level rate limiting** per token→IP (client IP as forwarded by the edge — [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md)), strict on `/auth/login` and on share-link **password attempts** (exponential backoff / temporary lockout). Public endpoints (share links) are limited most aggressively.
 - Volumetric/DDoS-class abuse is absorbed at the edge (Traefik), never in the app ([10](10-deployment-and-operations.md#edge-vs-app-responsibilities)).
 - Failed logins, lockouts, and rate-limit trips are security events in the event log ([F-011](../features/F-011-audit-trail.md)).
+- **Upload appends are charged by size, not by count.** An append carrying at least `Upload-Limit: min-append-size` does not count against the per-credential ceiling, because what that ceiling rations is per-request overhead — one `fsync` each — rather than throughput. The asymmetry is what makes the exemption safe: a *small* append can only breach a per-minute count if the link is fast, and a fast link has no reason to send small appends, while an attacker sending kilobyte appends spends the ordinary budget and stops. Session creation is counted normally, so nobody accumulates sessions to append to ([ADR-0017](../decisions/ADR-0017-resumable-upload-protocol.md)).
 
 ## Ownership and permissions
 

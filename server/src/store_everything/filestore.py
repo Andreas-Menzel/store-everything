@@ -188,22 +188,41 @@ def write_atomically(destination: Path, data: bytes, *, staging: Path) -> None:
         handle.write(data)
 
 
-def append_to_staging(staging: Path, chunk: bytes) -> int:
-    """Append to a staging file and make the bytes durable. Returns the new size.
+def open_staging_append(staging: Path) -> BinaryIO:
+    """Open a staging file for appending, creating its directory. Caller closes it.
+
+    Exists so one request can stream many chunks into one handle and pay for **one** `fsync`
+    at the end: a resumable upload's append can carry tens of megabytes, and fsyncing per
+    read would turn one durability barrier into hundreds. The handle is written from a worker
+    thread (`filestore` is synchronous by design) one chunk at a time, never concurrently.
+    """
+    ensure_directory(staging.parent)
+    return staging.open("ab")
+
+
+def commit_appended(handle: BinaryIO) -> int:
+    """Make everything written to `handle` durable, and report the file's new size.
 
     Durability before acknowledgement is the point: a resumable upload tells the client
     "I have your first N bytes" (ADR-0017), and that promise must survive a power cut, not
-    just a process restart.
+    just a process restart. So this runs *before* the offset is committed, never after.
     """
-    ensure_directory(staging.parent)
-    with staging.open("ab") as handle:
-        handle.write(chunk)
-        handle.flush()
-        fault_point("filestore.after-append-write")
-        os.fsync(handle.fileno())
-        size = handle.tell()
+    handle.flush()
+    fault_point("filestore.after-append-write")
+    os.fsync(handle.fileno())
+    size = handle.tell()
     fault_point("filestore.after-append-fsync")
     return size
+
+
+def append_to_staging(staging: Path, chunk: bytes) -> int:
+    """Append one chunk and make it durable. Returns the new size."""
+    handle = open_staging_append(staging)
+    try:
+        handle.write(chunk)
+        return commit_appended(handle)
+    finally:
+        handle.close()
 
 
 def truncate_staging(staging: Path, offset: int) -> None:

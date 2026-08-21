@@ -23,6 +23,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -371,6 +372,10 @@ folder = Table(
     # The root folder *is* the workspace root directory, so it has no name of its own; every
     # other folder must have one. Structural, because a root that acquired a name would make
     # every derived path wrong.
+    # The target of `file`'s composite foreign key. Redundant with the primary key as an
+    # index, and load-bearing as a constraint: a foreign key can only reference a uniquely
+    # constrained set of columns.
+    UniqueConstraint("id", "workspace_id"),
     CheckConstraint("(parent_id IS NULL) = (name = '')", name="root_has_no_name"),
     CheckConstraint("(parent_id IS NULL) = (depth = 0)", name="depth_matches_parent"),
     CheckConstraint(f"octet_length(name) <= {MAX_NAME_BYTES}", name="name_length"),
@@ -404,3 +409,140 @@ folder_closure = Table(
 """Precomputed ancestry (F-015/FR-2, the ADR-0006 pattern): one indexed join answers
 "everything under folder F", which is the permission filter's hottest question. Every folder
 carries a depth-0 row for itself, so a subtree includes its own root without a special case."""
+
+
+#: A file's lifecycle (02 § file, [F-014](../../../features/F-014-deletion-and-trash.md)).
+#: Phase 1 records `trashed` only so a re-scan can capture a deletion that already happened on
+#: disk; deleting *through* the app arrives with the trash surface in phase 4.
+FILE_STATES = ("live", "trashed")
+
+#: Who wrote the bytes this version describes (F-007/FR-3). `external` is what a re-scan
+#: records when a file changed on disk without the app mediating it.
+VERSION_ORIGINS = ("upload", "external")
+
+#: 04 § identification. Assigned by the core from the detected media type before any
+#: extractor runs, which is what makes type-scoped listings work on a brand-new file.
+MEDIA_CLASSES = ("image", "video", "audio", "document", "archive", "other")
+
+#: Stored beside every hash so a future algorithm is an additive change (02 § FileVersion).
+DIGEST_ALGORITHMS = ("sha256",)
+
+
+file = Table(
+    "file",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("workspace_id", UUID(as_uuid=True), nullable=False),
+    Column("folder_id", UUID(as_uuid=True), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False),
+    Column("state", Text, nullable=False, server_default=text("'live'")),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # A composite foreign key, not two independent ones: it makes invariant 1 structural —
+    # a file's workspace *is* its folder's workspace, so no code path can file a row into
+    # another workspace's tree, which would be a permission leak rather than a typo.
+    ForeignKeyConstraint(
+        ["folder_id", "workspace_id"],
+        ["folder.id", "folder.workspace_id"],
+        ondelete="CASCADE",
+    ),
+    UniqueConstraint("folder_id", "name_key"),
+    CheckConstraint(one_of("state", FILE_STATES), name="state_known"),
+    CheckConstraint(f"octet_length(name) BETWEEN 1 AND {MAX_NAME_BYTES}", name="name_length"),
+    Index("ix_file_workspace_id_state", "workspace_id", "state"),
+)
+"""A logical file, addressed as *(folder, name)* — its path is derived from the folder chain,
+never stored (02 § file). The UUID survives rename, move and new versions."""
+
+
+file_version = Table(
+    "file_version",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "file_id", UUID(as_uuid=True), ForeignKey("file.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("digest_algorithm", Text, nullable=False, server_default=text("'sha256'")),
+    Column("content_hash", Text, nullable=False),
+    Column("size_bytes", BigInteger, nullable=False),
+    Column("media_type", Text, nullable=False),
+    Column("media_class", Text, nullable=False),
+    Column("origin", Text, nullable=False),
+    Column("is_current", Boolean, nullable=False, server_default=text("true")),
+    # The mtime the file carried on disk when this version was recorded. The stat-scan
+    # compares size and mtime before it hashes anything (ADR-0019), so recording it here is
+    # what keeps a scan of 10 TB from being a re-hash of 10 TB.
+    Column("modified_at", DateTime(timezone=True), nullable=True),
+    _created_at(),
+    # Exactly one current version per file, enforced rather than maintained: the alternative
+    # — a `current_version_id` on `file` — is a circular foreign key that has to be deferred.
+    Index("uq_file_version_current", "file_id", unique=True, postgresql_where=text("is_current")),
+    # Reuse of extraction results and duplicate detection both start from "who else has these
+    # bytes?" (04 § identification, F-013).
+    Index("ix_file_version_content_hash", "content_hash"),
+    CheckConstraint("size_bytes >= 0", name="size_not_negative"),
+    CheckConstraint(one_of("origin", VERSION_ORIGINS), name="origin_known"),
+    CheckConstraint(one_of("media_class", MEDIA_CLASSES), name="media_class_known"),
+    CheckConstraint(one_of("digest_algorithm", DIGEST_ALGORITHMS), name="digest_algorithm_known"),
+)
+"""An immutable snapshot of a file's content, identified by its hash (02 § FileVersion)."""
+
+
+#: An upload session's life. `open` is the only state a client can act on; the rest are
+#: terminal, which is what lets the janitor collect the staged bytes.
+UPLOAD_STATES = ("open", "completed", "cancelled", "expired", "failed")
+
+
+upload_session = Table(
+    "upload_session",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        UUID(as_uuid=True),
+        ForeignKey("workspace.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # Only its creator may drive a session. Not derived from the workspace's owner because
+    # grants (phase 4) will let someone else upload into a workspace they do not own.
+    Column(
+        "created_by",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    # Resolved once, at creation: `HEAD` and `PATCH` then need no re-validation, and finalize
+    # knows exactly where the bytes are going.
+    Column("target_path", Text, nullable=False),
+    Column("declared_length", BigInteger, nullable=True),
+    Column("declared_hash", Text, nullable=True),
+    Column("media_type", Text, nullable=True),
+    Column("interop_version", SmallInteger, nullable=True),
+    # The offset the client may rely on: bytes are fsync'd before this advances, never after
+    # (ADR-0017). Staged bytes beyond it were never acknowledged and are truncated on resume.
+    Column("committed_offset", BigInteger, nullable=False, server_default=text("0")),
+    Column("state", Text, nullable=False, server_default=text("'open'")),
+    Column("file_id", UUID(as_uuid=True), ForeignKey("file.id", ondelete="SET NULL")),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(one_of("state", UPLOAD_STATES), name="state_known"),
+    CheckConstraint("committed_offset >= 0", name="offset_not_negative"),
+    CheckConstraint(
+        "declared_length IS NULL OR committed_offset <= declared_length",
+        name="offset_within_length",
+    ),
+    CheckConstraint(f"octet_length(target_path) <= {MAX_PATH_BYTES}", name="target_path_length"),
+    # The expiry sweep reads only live sessions, which is the whole table's hot query.
+    Index(
+        "ix_upload_session_expires_at",
+        "expires_at",
+        postgresql_where=text("state = 'open'"),
+    ),
+    Index("ix_upload_session_workspace_id_created_at", "workspace_id", "created_at"),
+)
+"""A resumable upload in progress: the durable row that makes an interrupted multi-gigabyte
+upload resumable across restarts (ADR-0017, 03 § uploads). Its staged bytes live in the
+workspace's own `.workspace/staging/` area, named after this id, so the janitor can attribute
+and collect them."""

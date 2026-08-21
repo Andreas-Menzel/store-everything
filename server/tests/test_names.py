@@ -134,3 +134,50 @@ def test_the_reservation_holds_however_it_is_spelled() -> None:
 def test_the_control_directory_is_an_ordinary_name_further_down() -> None:
     """Nothing of ours lives below the root, so the name is the user's there."""
     names.validate_name(names.CONTROL_DIRECTORY)
+
+
+# ---------------------------------------------------------------------------- paths
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("beach.jpg", ("beach.jpg",)),
+        ("Photos/2026/beach.jpg", ("Photos", "2026", "beach.jpg")),
+        ("a b/c d.txt", ("a b", "c d.txt")),
+    ],
+)
+def test_a_path_splits_into_validated_segments(path: str, expected: tuple[str, ...]) -> None:
+    assert names.split_path(path) == expected
+
+
+def test_a_path_is_normalized_on_the_way_in() -> None:
+    decomposed = unicodedata.normalize("NFD", "café/menu.txt")
+
+    assert names.split_path(decomposed) == (unicodedata.normalize("NFC", "café"), "menu.txt")
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/absolute", "relative"),
+        ("a//b", "empty segment"),
+        ("trailing/", "empty segment"),
+        ("", "empty"),
+        ("../escape", "names"),
+        ("a/../b", "names"),
+        ("a/./b", "names"),
+        (".workspace/anything", "reserved"),
+        ("x" * (names.MAX_PATH_BYTES + 1), "4096 bytes"),
+    ],
+)
+def test_a_path_that_is_not_one_is_refused(path: str, expected: str) -> None:
+    with pytest.raises(names.InvalidNameError) as refused:
+        names.split_path(path)
+
+    assert expected in refused.value.reason
+
+
+def test_the_control_directory_is_only_reserved_at_the_root() -> None:
+    """Deeper down the name is the user's: nothing of ours lives there (ADR-0018)."""
+    assert names.split_path("sub/.workspace/notes.txt") == ("sub", ".workspace", "notes.txt")

@@ -675,6 +675,377 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/files": {
+      "options": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Advertise the upload limits",
+        "description": "The protocol's preflight: how large a body may be, and how long a session lives.\n\nA server that does not implement the protocol answers `501` here, so answering `200` with\n`Upload-Limit` is the signal that resumable uploads are available (ADR-0017).",
+        "operationId": "upload_limits",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Upload a file, resumably",
+        "operationId": "create_upload",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Workspace-relative destination, e.g. `Photos/2026/beach.jpg`.",
+              "title": "Path"
+            },
+            "description": "Workspace-relative destination, e.g. `Photos/2026/beach.jpg`."
+          },
+          {
+            "name": "content_hash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional SHA-256 of the content; verified before anything is published.",
+              "title": "Content Hash"
+            },
+            "description": "Optional SHA-256 of the content; verified before anything is published."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The file was stored, or the upload was created",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No such workspace, or not yours"
+          },
+          "409": {
+            "description": "Something already exists at that path"
+          },
+          "413": {
+            "description": "The body exceeds Upload-Limit: max-append-size"
+          },
+          "422": {
+            "description": "The path or the declared hash was refused"
+          }
+        },
+        "requestBody": {
+          "description": "The file's bytes, or a leading part of them.",
+          "required": false,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{upload_id}": {
+      "head": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Report an upload's offset",
+        "description": "Where to resume from. The answer a client trusts after any interruption.",
+        "operationId": "upload_offset",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The current offset, in Upload-Offset"
+          },
+          "404": {
+            "description": "No such upload, or not yours"
+          },
+          "410": {
+            "description": "The upload expired"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Append to an upload",
+        "operationId": "append_to_upload",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The upload completed and the file is registered",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "204": {
+            "description": "The bytes were stored; Upload-Offset carries the new offset"
+          },
+          "400": {
+            "description": "Upload-Offset is missing or unintelligible"
+          },
+          "404": {
+            "description": "No such upload, or not yours"
+          },
+          "409": {
+            "description": "The offset does not match; Upload-Offset carries the real one"
+          },
+          "410": {
+            "description": "The upload expired"
+          },
+          "413": {
+            "description": "The body exceeds Upload-Limit: max-append-size"
+          },
+          "415": {
+            "description": "An append must be application/partial-upload"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "description": "The next bytes of the file.",
+          "required": true,
+          "content": {
+            "application/partial-upload": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Cancel an upload",
+        "operationId": "cancel_upload",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The upload is cancelled and its staged content discarded"
+          },
+          "404": {
+            "description": "No such upload, or it already completed"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Read one file",
+        "operationId": "read_file",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/content": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Download a file's content",
+        "operationId": "read_file_content",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The original bytes, unmodified",
+            "content": {
+              "*/*": {}
+            }
+          },
+          "206": {
+            "description": "The requested byte range"
+          },
+          "304": {
+            "description": "The caller's copy matches the current content hash"
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "416": {
+            "description": "The requested range lies outside the file"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -716,6 +1087,99 @@
         ],
         "title": "CurrentIdentity",
         "description": "Who the caller is, and how they proved it."
+      },
+      "FileSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "workspace": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Workspace"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "const": "sha256",
+            "title": "Digest Algorithm",
+            "default": "sha256"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "media_class": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "document",
+              "archive",
+              "other"
+            ],
+            "title": "Media Class"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "live",
+              "trashed"
+            ],
+            "title": "State"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "workspace",
+          "path",
+          "name",
+          "size",
+          "content_hash",
+          "media_type",
+          "media_class",
+          "state",
+          "created_at",
+          "modified_at"
+        ],
+        "title": "FileSummary"
       },
       "FilesystemVerdict": {
         "properties": {

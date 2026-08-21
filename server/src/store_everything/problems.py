@@ -69,6 +69,7 @@ class ProblemException(Exception):  # noqa: N818 - named for the envelope it pro
         detail: str | None = None,
         errors: Sequence[FieldProblem] = (),
         headers: Mapping[str, str] | None = None,
+        type_uri: str | None = None,
     ) -> None:
         super().__init__(f"{status} {title}")
         self.status = status
@@ -77,6 +78,14 @@ class ProblemException(Exception):  # noqa: N818 - named for the envelope it pro
         self.detail = detail
         self.errors = tuple(errors)
         self.headers = dict(headers) if headers else None
+        self.type_uri = type_uri
+        """A registered type URI to use instead of ours.
+
+        The one case is a wire protocol whose own problem types are registered with IANA
+        (ADR-0017): a client that recognises `mismatching-upload-offset` recognises *that*
+        URI, and interoperating with clients we did not write outranks keeping one namespace
+        tidy. The envelope's shape is unchanged either way (08 § errors).
+        """
 
 
 def problem_response(
@@ -87,9 +96,10 @@ def problem_response(
     detail: str | None = None,
     errors: Sequence[FieldProblem] = (),
     headers: Mapping[str, str] | None = None,
+    type_uri: str | None = None,
 ) -> JSONResponse:
     body: dict[str, Any] = {
-        "type": problem_type(slug),
+        "type": type_uri if type_uri is not None else problem_type(slug),
         "title": title,
         "status": status,
     }
@@ -136,6 +146,7 @@ async def _handle_problem(_request: Request, exc: Exception) -> Response:
         detail=problem.detail,
         errors=problem.errors,
         headers=problem.headers,
+        type_uri=problem.type_uri,
     )
 
 

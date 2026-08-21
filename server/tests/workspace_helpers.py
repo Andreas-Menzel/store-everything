@@ -141,3 +141,20 @@ async def provisioning_states(database_url: str, workspace_id: UUID) -> Sequence
             return list(rows)
     finally:
         await engine.dispose()
+
+
+@asynccontextmanager
+async def workspace_ready(
+    settings: Settings, database_url: str, *, name: str = "Photos", **overrides: Any
+) -> AsyncGenerator[tuple[httpx.AsyncClient, UUID, Path]]:
+    """A signed-in owner and one **active** workspace: the state uploads need.
+
+    Provisioning runs for real rather than being faked, so these tests exercise the directory
+    and control area an upload actually writes into.
+    """
+    async with as_admin(settings, **overrides) as client:
+        response = await create_workspace(client, name)
+        assert response.status_code == 201, response.text
+        body = response.json()
+        await provision_pending(database_url)
+        yield client, UUID(body["id"]), Path(body["root_path"])

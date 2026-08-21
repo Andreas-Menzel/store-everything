@@ -141,6 +141,32 @@ class Settings(BaseSettings):
     operator chose. Adoption additionally requires an admin.
     """
 
+    # ------------------------------------------------------------------ uploads
+    # ADR-0017. The three sizes are published to clients in `Upload-Limit`, so a proxy's body
+    # limit becomes a negotiated number rather than a mystery failure mid-upload.
+
+    upload_expiry_days: int = Field(default=7, gt=0)
+    """How long an interrupted upload can be resumed before its session and staged bytes are
+    collected (12 § tuning defaults). Long enough to survive a weekend."""
+
+    upload_max_size: int = Field(default=0, ge=0)
+    """Largest single upload, in bytes. `0` means no app-level limit — the storage is the
+    limit — and omits `max-size` from `Upload-Limit` rather than publishing a fiction."""
+
+    upload_max_append_size: int = Field(default=64 * 1024 * 1024, gt=0)
+    """Largest body one append may carry. Published so a client chunks to fit the edge."""
+
+    upload_min_append_size: int = Field(default=1024 * 1024, gt=0)
+    """Smallest body an append should carry — and the line the request ceiling uses.
+
+    An append at least this large does not count against the per-credential ceiling: what
+    that ceiling rations is per-request overhead (one `fsync` each), not throughput. The
+    asymmetry is what makes this safe: a *small* append only breaches a per-minute count if
+    the link is fast, and a fast link has no reason to send small appends, while an attacker
+    sending kilobyte appends spends the ordinary budget and stops
+    (07 § abuse protection).
+    """
+
     @field_validator("cors_allow_origins", "adoption_roots", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -169,6 +195,13 @@ class Settings(BaseSettings):
         if scheme in {"postgresql", "postgres"}:
             return f"{_ASYNC_DRIVER}://{rest}"
         return url
+
+    @model_validator(mode="after")
+    def _append_sizes_are_ordered(self) -> Settings:
+        """A minimum above the maximum would publish limits no client can satisfy."""
+        if self.upload_min_append_size > self.upload_max_append_size:
+            raise ValueError("SE_UPLOAD_MIN_APPEND_SIZE must not exceed SE_UPLOAD_MAX_APPEND_SIZE")
+        return self
 
     @model_validator(mode="after")
     def _heartbeat_fits_inside_the_lease(self) -> Settings:
