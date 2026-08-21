@@ -70,6 +70,13 @@ services:
       SE_RETRY_MAX_SECONDS: ${SE_RETRY_MAX_SECONDS:-3600}
       SE_WORKER_CONCURRENCY: ${SE_WORKER_CONCURRENCY:-4}
       SE_WORKER_POLL_SECONDS: ${SE_WORKER_POLL_SECONDS:-5}
+      # App-owned storage (03 § storage layout): `versions/` holds the only copy of every
+      # superseded version, `derived/` is regenerable. Both live on the app-data volume.
+      SE_APP_DATA_ROOT: ${SE_APP_DATA_ROOT:-/var/lib/store-everything}
+      SE_JANITOR_GRACE_HOURS: ${SE_JANITOR_GRACE_HOURS:-24}
+      SE_JANITOR_INTERVAL_MINUTES: ${SE_JANITOR_INTERVAL_MINUTES:-60}
+    volumes:
+      - app-data:/var/lib/store-everything
     healthcheck:
       # Readiness, not liveness: an instance whose migrations are pending must not be
       # sent traffic (10-deployment-and-operations.md § health & readiness).
@@ -122,6 +129,13 @@ services:
       SE_RETRY_MAX_SECONDS: ${SE_RETRY_MAX_SECONDS:-3600}
       SE_WORKER_CONCURRENCY: ${SE_WORKER_CONCURRENCY:-4}
       SE_WORKER_POLL_SECONDS: ${SE_WORKER_POLL_SECONDS:-5}
+      # App-owned storage (03 § storage layout): `versions/` holds the only copy of every
+      # superseded version, `derived/` is regenerable. Both live on the app-data volume.
+      SE_APP_DATA_ROOT: ${SE_APP_DATA_ROOT:-/var/lib/store-everything}
+      SE_JANITOR_GRACE_HOURS: ${SE_JANITOR_GRACE_HOURS:-24}
+      SE_JANITOR_INTERVAL_MINUTES: ${SE_JANITOR_INTERVAL_MINUTES:-60}
+    volumes:
+      - app-data:/var/lib/store-everything
     command: ['store-everything', 'worker']
     # Sized for stop-claiming-and-release, never for job duration (ADR-0010).
     stop_grace_period: 30s
@@ -152,6 +166,9 @@ services:
 
 volumes:
   postgres-data:
+  # `versions/` inside this volume is the only copy of superseded file content, so it is
+  # mandatory backup scope — unlike `derived/`, which reprocessing can rebuild (Q13).
+  app-data:
 
 networks:
   internal:

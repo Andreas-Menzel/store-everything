@@ -131,7 +131,8 @@ def test_create_admin_refuses_a_weak_password(
 
 def test_the_parser_offers_exactly_the_documented_subcommands() -> None:
     """The compose file invokes `store-everything worker` by name; a typo here breaks a
-    service that otherwise looks healthy until its queue never drains."""
+    service that otherwise looks healthy until its queue never drains. The audits are named
+    in the operator documentation, which is just as breakable."""
     parser = __main__.build_parser()
     subparsers = [
         action
@@ -140,7 +141,13 @@ def test_the_parser_offers_exactly_the_documented_subcommands() -> None:
     ]
 
     assert len(subparsers) == 1
-    assert set(subparsers[0].choices) == {"serve", "worker", "create-admin"}
+    assert set(subparsers[0].choices) == {
+        "serve",
+        "worker",
+        "create-admin",
+        "verify",
+        "fs-check",
+    }
 
 
 def test_the_worker_subcommand_runs_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -132,12 +132,42 @@ simply inert.
 | `orchestrator` | Runs background work (`store-everything worker`). No ingress, no proxy label — nothing routes to a worker. |
 | `migrations` | Runs on request (`docker compose run --rm migrations`) and exits. |
 
+Two volumes hold state, and they are **not** equally replaceable:
+
+| Volume | Contents | If you lose it |
+|---|---|---|
+| `postgres-data` | The database: accounts, tags, permissions, the event log | Everything the app knows is gone |
+| `app-data` | `versions/` (superseded file content) and `derived/` (previews) | `versions/` is the **only copy** of overwritten content — back it up. `derived/` rebuilds by reprocessing, at the cost of CPU |
+
+The user's own files are not in either: they live in the workspace tree, which is yours to
+back up ([ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md)).
+
 Stopping the orchestrator at any moment is safe, including `kill -9`: work is claimed
 under a lease, and an expired lease is picked up by whichever worker starts next
 ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)). It is also fine to run
 none — the API keeps serving and queued work simply waits.
 
 The extractor containers join this file in phase 2, when there is something to run them on.
+
+## Checking an instance
+
+```bash
+docker compose exec api store-everything verify
+```
+
+Read-only. It reports debris the janitor should have collected, operations stuck without a
+worker, and blobs whose content no longer matches their digest — the invariants that relate
+rows to bytes, which nothing can enforce at the moment of use. Clean output names the checks
+it ran, so a quiet result is not mistaken for a check that did not happen.
+
+```bash
+docker compose exec api store-everything fs-check /path/to/a/directory
+```
+
+Asks whether a directory can safely hold data: `fsync` on files and directories, rename onto
+an existing file, consistent listings, and staging on the same device as its destination. It
+also reports whether the filesystem folds case or normalizes Unicode, which decides what
+counts as the same filename ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)).
 
 ## Logs
 

@@ -6,6 +6,7 @@ never logged (10-deployment-and-operations.md § configuration & secrets).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -107,6 +108,20 @@ class Settings(BaseSettings):
     """How long an idle worker waits before looking again. Claiming writes nothing when
     there is nothing to claim, so idling here costs one indexed read."""
 
+    # ------------------------------------------------------------------ app-owned storage
+    # 03-storage-and-portability.md § storage layout. Separate from the user's own tree: this
+    # is what "the app can be removed at any time" means in practice — deleting this area
+    # loses history and previews, never current data.
+
+    app_data_root: Path = Path("/var/lib/store-everything")
+    """Root of everything the app owns: `versions/` and the derived store."""
+
+    janitor_grace_hours: int = Field(default=24, gt=0)
+    """How long debris is left alone before collection. The window exists so the janitor
+    cannot race an in-flight operation between its bytes-write and its row-commit."""
+
+    janitor_interval_minutes: int = Field(default=60, gt=0)
+
     @field_validator("cors_allow_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -139,6 +154,18 @@ class Settings(BaseSettings):
     @property
     def trust_proxy_headers(self) -> bool:
         return bool(self.forwarded_allow_ips.strip())
+
+    @property
+    def versions_root(self) -> Path:
+        """Superseded file content, content-addressed. **Not regenerable** — the bytes exist
+        nowhere else, which is why this is mandatory backup scope (Q13)."""
+        return self.app_data_root / "versions"
+
+    @property
+    def derived_root(self) -> Path:
+        """Previews, keyframes, transcripts: regenerable by reprocessing, so losing it costs
+        CPU rather than data."""
+        return self.app_data_root / "derived"
 
     @property
     def session_cookie_name(self) -> str:

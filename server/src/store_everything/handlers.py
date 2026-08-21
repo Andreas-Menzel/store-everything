@@ -3,11 +3,12 @@
 Kept separate from the runner so that adding a capability is adding a handler, and so the
 worker's dependencies are visible in one place rather than discovered by import side effects.
 
-It is deliberately near-empty in this change: the operation layer arrives before the
-operations do, because every later feature is specified to ride it (ADR-0013) and retrofitting
-a substrate under working features is how substrates end up bypassed. The `heartbeat` kind is
-the exception that proves the layer works end to end — a periodic no-op that claims, runs,
-re-arms its own schedule, and shows up in the queue-depth counters.
+Handlers are built *with* the settings they need rather than reaching for globals, which
+keeps them testable against a temporary directory instead of `/var/lib`.
+
+Two kinds so far. `instance.heartbeat` is a periodic no-op that proves the layer works end to
+end on a real instance; `maintenance.janitor` collects the debris a crash-only system leaks by
+design (12 § debris & the janitor). Every later feature adds its kind here.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import operations
+from store_everything import janitor, operations
 from store_everything.config import Settings
 from store_everything.runner import Handler, Job
 
@@ -46,9 +47,13 @@ async def instance_heartbeat(job: Job) -> dict[str, Any]:
     return {"queue_depth": depth}
 
 
-def registry() -> dict[str, Handler]:
-    """Every operation kind this build can execute."""
-    return {HEARTBEAT: instance_heartbeat}
+def registry(settings: Settings) -> dict[str, Handler]:
+    """Every operation kind this build can execute, bound to what it needs."""
+
+    async def sweep(job: Job) -> dict[str, Any]:
+        return await janitor.collect(job, settings=settings)
+
+    return {HEARTBEAT: instance_heartbeat, janitor.KIND: sweep}
 
 
 async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
@@ -58,10 +63,11 @@ async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
     rows, so racing workers converge on one row instead of queueing a run each.
     """
     async with engine.connect() as connection:
-        await operations.ensure_scheduled(
-            connection,
-            kind=HEARTBEAT,
-            max_attempts=3,
-            priority=operations.PRIORITY_HEAVY,
-        )
+        for kind in (HEARTBEAT, janitor.KIND):
+            await operations.ensure_scheduled(
+                connection,
+                kind=kind,
+                max_attempts=3,
+                priority=operations.PRIORITY_HEAVY,
+            )
         await connection.commit()
