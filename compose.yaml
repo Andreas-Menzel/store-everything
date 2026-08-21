@@ -52,6 +52,15 @@ services:
       # Only the proxy's address on the shared network is trusted; a spoofed client IP
       # would poison rate limiting and the audit trail (ADR-0009).
       SE_FORWARDED_ALLOW_IPS: ${SE_FORWARDED_ALLOW_IPS:-}
+      # Identity (07-identity-permissions-sharing.md). The bootstrap pair creates the first
+      # administrator on an instance that has no accounts, and is ignored afterwards.
+      SE_BOOTSTRAP_ADMIN_EMAIL: ${SE_BOOTSTRAP_ADMIN_EMAIL:-}
+      SE_BOOTSTRAP_ADMIN_PASSWORD: ${SE_BOOTSTRAP_ADMIN_PASSWORD:-}
+      SE_SESSION_IDLE_EXPIRY_DAYS: ${SE_SESSION_IDLE_EXPIRY_DAYS:-14}
+      SE_SESSION_COOKIE_SECURE: ${SE_SESSION_COOKIE_SECURE:-true}
+      SE_LOGIN_MAX_ATTEMPTS: ${SE_LOGIN_MAX_ATTEMPTS:-10}
+      SE_LOGIN_LOCKOUT_MINUTES: ${SE_LOGIN_LOCKOUT_MINUTES:-15}
+      SE_RATE_LIMIT_PER_MINUTE: ${SE_RATE_LIMIT_PER_MINUTE:-300}
     healthcheck:
       # Readiness, not liveness: an instance whose migrations are pending must not be
       # sent traffic (10-deployment-and-operations.md § health & readiness).

@@ -5,6 +5,37 @@ export type ClientOptions = {
 };
 
 /**
+ * CurrentIdentity
+ *
+ * Who the caller is, and how they proved it.
+ */
+export type CurrentIdentity = {
+    user: UserSummary;
+    /**
+     * Credential Kind
+     */
+    credential_kind: 'session' | 'token';
+    /**
+     * Credential Id
+     */
+    credential_id: string;
+    /**
+     * Scope
+     */
+    scope: 'read' | 'full';
+};
+
+/**
+ * HTTPValidationError
+ */
+export type HttpValidationError = {
+    /**
+     * Detail
+     */
+    detail?: Array<ValidationError>;
+};
+
+/**
  * HealthResponse
  */
 export type HealthResponse = {
@@ -15,6 +46,34 @@ export type HealthResponse = {
 };
 
 /**
+ * LoginRequest
+ */
+export type LoginRequest = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Password
+     */
+    password: string;
+};
+
+/**
+ * Page[UserSummary]
+ */
+export type PageUserSummary = {
+    /**
+     * Data
+     */
+    data: Array<UserSummary>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
+};
+
+/**
  * ReadyResponse
  */
 export type ReadyResponse = {
@@ -22,6 +81,199 @@ export type ReadyResponse = {
      * Status
      */
     status: 'ready';
+};
+
+/**
+ * SessionSummary
+ */
+export type SessionSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * User Agent
+     */
+    user_agent: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Last Used At
+     */
+    last_used_at: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Current
+     */
+    current: boolean;
+};
+
+/**
+ * TokenCreateRequest
+ */
+export type TokenCreateRequest = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Scope
+     */
+    scope?: 'read' | 'full';
+    /**
+     * Expires In Days
+     */
+    expires_in_days?: number | null;
+};
+
+/**
+ * TokenCreated
+ */
+export type TokenCreated = {
+    /**
+     * Token
+     */
+    token: string;
+    access_token: TokenSummary;
+};
+
+/**
+ * TokenSummary
+ */
+export type TokenSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Scope
+     */
+    scope: 'read' | 'full';
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Last Used At
+     */
+    last_used_at: string | null;
+    /**
+     * Expires At
+     */
+    expires_at: string | null;
+};
+
+/**
+ * UserCreateRequest
+ */
+export type UserCreateRequest = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Password
+     */
+    password: string;
+    /**
+     * Role
+     */
+    role?: 'admin' | 'member';
+};
+
+/**
+ * UserSummary
+ */
+export type UserSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Role
+     */
+    role: 'admin' | 'member';
+    /**
+     * Is Active
+     */
+    is_active: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * UserUpdateRequest
+ *
+ * Every field is optional; omitting one leaves it alone.
+ */
+export type UserUpdateRequest = {
+    /**
+     * Display Name
+     */
+    display_name?: string | null;
+    /**
+     * Role
+     */
+    role?: 'admin' | 'member' | null;
+    /**
+     * Is Active
+     */
+    is_active?: boolean | null;
+    /**
+     * Password
+     */
+    password?: string | null;
+};
+
+/**
+ * ValidationError
+ */
+export type ValidationError = {
+    /**
+     * Location
+     */
+    loc: Array<string | number>;
+    /**
+     * Message
+     */
+    msg: string;
+    /**
+     * Error Type
+     */
+    type: string;
+    /**
+     * Input
+     */
+    input?: unknown;
+    /**
+     * Context
+     */
+    ctx?: {
+        [key: string]: unknown;
+    };
 };
 
 export type HealthzData = {
@@ -63,6 +315,39 @@ export type ReadyzResponses = {
 
 export type ReadyzResponse = ReadyzResponses[keyof ReadyzResponses];
 
+export type LoginData = {
+    body: LoginRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/login';
+};
+
+export type LoginErrors = {
+    /**
+     * Unknown credentials, or a disabled account
+     */
+    401: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many failed attempts
+     */
+    429: unknown;
+};
+
+export type LoginError = LoginErrors[keyof LoginErrors];
+
+export type LoginResponses = {
+    /**
+     * Successful Response
+     */
+    200: CurrentIdentity;
+};
+
+export type LoginResponse = LoginResponses[keyof LoginResponses];
+
 export type OpenapiSchemaData = {
     body?: never;
     path?: never;
@@ -76,3 +361,303 @@ export type OpenapiSchemaResponses = {
      */
     200: unknown;
 };
+
+export type CurrentIdentityData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/me';
+};
+
+export type CurrentIdentityResponses = {
+    /**
+     * Successful Response
+     */
+    200: CurrentIdentity;
+};
+
+export type CurrentIdentityResponse = CurrentIdentityResponses[keyof CurrentIdentityResponses];
+
+export type LogoutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/logout';
+};
+
+export type LogoutResponses = {
+    /**
+     * Session revoked
+     */
+    204: void;
+};
+
+export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
+
+export type ListSessionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/sessions';
+};
+
+export type ListSessionsResponses = {
+    /**
+     * Response List Sessions
+     *
+     * Successful Response
+     */
+    200: Array<SessionSummary>;
+};
+
+export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsResponses];
+
+export type RevokeSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/auth/sessions/{session_id}';
+};
+
+export type RevokeSessionErrors = {
+    /**
+     * No such session for this user
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RevokeSessionError = RevokeSessionErrors[keyof RevokeSessionErrors];
+
+export type RevokeSessionResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RevokeSessionResponse = RevokeSessionResponses[keyof RevokeSessionResponses];
+
+export type ListTokensData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/tokens';
+};
+
+export type ListTokensResponses = {
+    /**
+     * Response List Tokens
+     *
+     * Successful Response
+     */
+    200: Array<TokenSummary>;
+};
+
+export type ListTokensResponse = ListTokensResponses[keyof ListTokensResponses];
+
+export type CreateTokenData = {
+    body: TokenCreateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/tokens';
+};
+
+export type CreateTokenErrors = {
+    /**
+     * A token of that name already exists
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateTokenError = CreateTokenErrors[keyof CreateTokenErrors];
+
+export type CreateTokenResponses = {
+    /**
+     * Successful Response
+     */
+    201: TokenCreated;
+};
+
+export type CreateTokenResponse = CreateTokenResponses[keyof CreateTokenResponses];
+
+export type RevokeTokenData = {
+    body?: never;
+    path: {
+        /**
+         * Token Id
+         */
+        token_id: string;
+    };
+    query?: never;
+    url: '/api/v1/auth/tokens/{token_id}';
+};
+
+export type RevokeTokenErrors = {
+    /**
+     * No such token for this user
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RevokeTokenError = RevokeTokenErrors[keyof RevokeTokenErrors];
+
+export type RevokeTokenResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RevokeTokenResponse = RevokeTokenResponses[keyof RevokeTokenResponses];
+
+export type ListUsersData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/users';
+};
+
+export type ListUsersErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListUsersError = ListUsersErrors[keyof ListUsersErrors];
+
+export type ListUsersResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageUserSummary;
+};
+
+export type ListUsersResponse = ListUsersResponses[keyof ListUsersResponses];
+
+export type CreateUserData = {
+    body: UserCreateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/users';
+};
+
+export type CreateUserErrors = {
+    /**
+     * That email address is already registered
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateUserError = CreateUserErrors[keyof CreateUserErrors];
+
+export type CreateUserResponses = {
+    /**
+     * Successful Response
+     */
+    201: UserSummary;
+};
+
+export type CreateUserResponse = CreateUserResponses[keyof CreateUserResponses];
+
+export type ReadUserData = {
+    body?: never;
+    path: {
+        /**
+         * User Id
+         */
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/users/{user_id}';
+};
+
+export type ReadUserErrors = {
+    /**
+     * No such account
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadUserError = ReadUserErrors[keyof ReadUserErrors];
+
+export type ReadUserResponses = {
+    /**
+     * Successful Response
+     */
+    200: UserSummary;
+};
+
+export type ReadUserResponse = ReadUserResponses[keyof ReadUserResponses];
+
+export type UpdateUserData = {
+    body: UserUpdateRequest;
+    path: {
+        /**
+         * User Id
+         */
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/users/{user_id}';
+};
+
+export type UpdateUserErrors = {
+    /**
+     * No such account
+     */
+    404: unknown;
+    /**
+     * The change would leave the instance without an admin
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateUserError = UpdateUserErrors[keyof UpdateUserErrors];
+
+export type UpdateUserResponses = {
+    /**
+     * Successful Response
+     */
+    200: UserSummary;
+};
+
+export type UpdateUserResponse = UpdateUserResponses[keyof UpdateUserResponses];

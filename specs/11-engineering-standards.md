@@ -166,6 +166,7 @@ The feature template links this checklist; feature-specific criteria come **on t
 - **A PR is one reviewable step, not one commit and not one phase.** Several commits per PR is normal; a [roadmap](../ROADMAP.md) phase spans several PRs and is closed by a tag, never by a single merge. A PR whose diff cannot be reviewed in one sitting should have been two.
 - **Conventional Commits are required:** `type(scope): subject` with types `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert`; breaking changes marked `feat!:` or a `BREAKING CHANGE:` footer; issues referenced in footers (`Refs: #123` / `Resolves: #123`).
 - **Configured AND enforced:** commit format, lint, types, tests, coverage — every declared convention is a CI gate. An unenforced convention is a suggestion that rots.
+- **Verify the tree you are about to push, not the one you are working in.** `make check` runs against the working tree; `make check-staged` exports the *staged* tree to a scratch directory, builds a cold environment from the committed lockfile, and runs the pipeline's server, contract and docs checks there. The two differ exactly where it hurts: a modification that never made it into the index, a dependency missing from the lockfile, a generated artefact left unstaged. All three are invisible locally and fatal in CI, so the last check before a push is the staged one.
 
 ## Versioning & releases
 

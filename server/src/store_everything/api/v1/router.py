@@ -1,7 +1,13 @@
 """The `/api/v1` router.
 
-Every route mounted here inherits `require_auth`. That is the deny-by-default rule made
+Two routers, one prefix. Everything mounted on the authenticated one inherits
+`require_auth` plus the request ceiling — that is the deny-by-default rule made
 structural: a route added without an auth decision is closed, not open.
+
+The public one carries the documented exceptions, and there is exactly one today:
+`POST /auth/login`, which cannot require a credential because it issues them. Anything
+else appearing there is a spec bug (08-api-principles.md § endpoint map), and a test
+asserts the whole public surface rather than trusting review to notice.
 """
 
 from __future__ import annotations
@@ -9,7 +15,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from store_everything.security import require_auth
+from store_everything.api.v1 import auth, users
+from store_everything.security import enforce_request_ceiling, require_auth
 
 API_V1_PREFIX = "/api/v1"
 
@@ -25,7 +32,11 @@ async def openapi_schema(request: Request) -> JSONResponse:
 
 
 def build_v1_router(*, api_docs_enabled: bool) -> APIRouter:
-    router = APIRouter(prefix=API_V1_PREFIX, dependencies=[Depends(require_auth)])
+    """The authenticated half of `/api/v1`."""
+    router = APIRouter(
+        prefix=API_V1_PREFIX,
+        dependencies=[Depends(require_auth), Depends(enforce_request_ceiling)],
+    )
 
     if api_docs_enabled:
         router.add_api_route(
@@ -37,4 +48,17 @@ def build_v1_router(*, api_docs_enabled: bool) -> APIRouter:
             response_model=None,
         )
 
+    router.include_router(auth.router)
+    router.include_router(users.router)
+    return router
+
+
+def build_public_v1_router() -> APIRouter:
+    """The documented unauthenticated surface under `/api/v1`.
+
+    Deliberately assembled separately so that "which endpoints are public" is a list one
+    can read, not a property emerging from decorators scattered across modules.
+    """
+    router = APIRouter(prefix=API_V1_PREFIX)
+    router.include_router(auth.public_router)
     return router

@@ -51,15 +51,20 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 - **Field-level validation** returns *all* problems in one response; each item is `{detail, pointer}` with an RFC 6901 JSON Pointer whose first segment names the location (`body` / `query` / `path` / `header`). Echo the field and the violated rule — **never the submitted value** (nothing sensitive is reflected back).
 - **Nothing internal leaks** — no stack traces, no SQL, no dependency error strings. The request id is the only bridge: the caller quotes `instance`, the operator finds the matching log line ([10](10-deployment-and-operations.md#logging)).
-- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `5xx` server fault. Never `200` with an error body.
+- **Status codes are honest**: `2xx` success · `400` malformed · `401`/`403` auth · `404` absent, *hidden by permissions*, or **purged** — existence is never leaked, and a purged id is indistinguishable from one that never existed ([F-008](../features/F-008-sharing-and-public-links.md), [F-014](../features/F-014-deletion-and-trash.md)) · `409` conflict · `410` expired/revoked share link (trashed targets: Q21) · `422` validation · `429` rate-limited, always with `Retry-After` so a client knows when to return ([07 § abuse protection](07-identity-permissions-sharing.md#abuse-protection)) · `5xx` server fault. Never `200` with an error body.
 - **Auth failures are typed for cache policy**: a `401`'s problem `type` distinguishes re-authenticatable failures (token expired/revoked) from **terminal account states** (`account_disabled`, `account_deleted`), because clients react differently — lock-and-keep vs. immediate local wipe ([F-026/FR-11–13](../features/F-026-offline-cache-and-prefetch.md), [14 § auth-state policy](14-client-sync-and-caching.md#auth-state-policy-why-lock-then-wipe)). Terminal types reveal only what the failed login itself proves; they carry no further account data.
 
 ## Resource sketch (v1 surface, non-exhaustive)
 
 ```
-/api/v1/auth/…                       login, tokens; device pairing: POST /auth/pairing-codes
-                                     (create one-time code) · POST /auth/pairing (exchange, public — F-019)
-/api/v1/users/…                      admin user management
+/api/v1/auth/…                       POST /auth/login (public, rate-limited) · GET /auth/me ·
+                                     POST /auth/logout · GET·DELETE /auth/sessions ·
+                                     GET·POST·DELETE /auth/tokens; device pairing:
+                                     POST /auth/pairing-codes (create one-time code) ·
+                                     POST /auth/pairing (exchange, public — F-019)
+/api/v1/users/…                      admin user management (list, create, read, patch;
+                                     no delete in v1 — an account owns data, so removing
+                                     one belongs with deletion & trash, F-014)
 /api/v1/workspaces/…                 CRUD, import (point at existing subtree), re-scan;
                                      DELETE requires confirm:"<name>" → restorable trash batch (F-014)
 /api/v1/workspaces/{ws}/files/…      list/tree by path; POST = upload creation
@@ -109,14 +114,16 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 
 ## Endpoint map (visual)
 
-⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `GET /shares/{token}`, `POST /auth/pairing` (one-time code is the credential — [07](07-identity-permissions-sharing.md#tokens--credentials), [F-019/FR-3](../features/F-019-mobile-connection.md)), `/healthz`, `/readyz` — any other public endpoint is a spec bug.
+⚙ = admin-only · 🌐 = public (no account). Everything else requires an authenticated user and is permission-checked. The complete unauthenticated surface is deliberately tiny and documented: `POST /auth/login` (it is how a caller *obtains* a credential, so it cannot require one — shielded by rate limiting instead, [07](07-identity-permissions-sharing.md#abuse-protection)), `GET /shares/{token}`, `POST /auth/pairing` (one-time code is the credential — [07](07-identity-permissions-sharing.md#tokens--credentials), [F-019/FR-3](../features/F-019-mobile-connection.md)), `/healthz`, `/readyz` — any other public endpoint is a spec bug, and the test suite asserts the whole set by request rather than trusting review.
 
 ```mermaid
 flowchart LR
     API(("api/v1"))
 
     subgraph AUTHG["Auth & Users"]
-        LOGIN["POST /auth/login"]
+        LOGIN["POST /auth/login 🌐<br/>(rate-limited; sets the session cookie)"]
+        ME["GET /auth/me<br/>POST /auth/logout"]
+        SESSIONS["GET·DELETE /auth/sessions<br/>(own sessions, revocable)"]
         TOKENS["GET·POST·DELETE /auth/tokens<br/>(scoped personal access tokens)"]
         PAIR["POST /auth/pairing-codes<br/>POST /auth/pairing 🌐<br/>(one-time QR device pairing, F-019)"]
         USERS["GET·POST·PATCH /users ⚙"]

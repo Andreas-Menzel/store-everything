@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { HealthzData, HealthzResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadyzData, ReadyzErrors, ReadyzResponses } from './types.gen';
+import type { CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -29,6 +29,25 @@ export const healthz = <ThrowOnError extends boolean = false>(options?: Options<
 export const readyz = <ThrowOnError extends boolean = false>(options?: Options<ReadyzData, ThrowOnError>): RequestResult<ReadyzResponses, ReadyzErrors, ThrowOnError> => (options?.client ?? client).get<ReadyzResponses, ReadyzErrors, ThrowOnError>({ url: '/readyz', ...options });
 
 /**
+ * Log in with email and password
+ *
+ * Exchange a password for a session cookie.
+ *
+ * Failed attempts are recorded and counted (07 § abuse protection). Because a failure
+ * answers `4xx`, its event has to be committed explicitly — the request's transaction is
+ * about to be rolled back by the exception, and an audit record that disappears when the
+ * thing it describes fails is worse than none.
+ */
+export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>): RequestResult<LoginResponses, LoginErrors, ThrowOnError> => (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
+    url: '/api/v1/auth/login',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * OpenAPI schema
  *
  * The machine-readable API contract — for authenticated users only.
@@ -38,3 +57,81 @@ export const readyz = <ThrowOnError extends boolean = false>(options?: Options<R
  * `SE_API_DOCS_ENABLED=false` removes the route entirely.
  */
 export const openapiSchema = <ThrowOnError extends boolean = false>(options?: Options<OpenapiSchemaData, ThrowOnError>): RequestResult<OpenapiSchemaResponses, unknown, ThrowOnError> => (options?.client ?? client).get<OpenapiSchemaResponses, unknown, ThrowOnError>({ url: '/api/v1/openapi.json', ...options });
+
+/**
+ * The authenticated caller
+ */
+export const currentIdentity = <ThrowOnError extends boolean = false>(options?: Options<CurrentIdentityData, ThrowOnError>): RequestResult<CurrentIdentityResponses, unknown, ThrowOnError> => (options?.client ?? client).get<CurrentIdentityResponses, unknown, ThrowOnError>({ url: '/api/v1/auth/me', ...options });
+
+/**
+ * Log out of the current session
+ *
+ * Revoke the current session. A token-authenticated caller has nothing to log out of.
+ */
+export const logout = <ThrowOnError extends boolean = false>(options?: Options<LogoutData, ThrowOnError>): RequestResult<LogoutResponses, unknown, ThrowOnError> => (options?.client ?? client).post<LogoutResponses, unknown, ThrowOnError>({ url: '/api/v1/auth/logout', ...options });
+
+/**
+ * List your sessions
+ */
+export const listSessions = <ThrowOnError extends boolean = false>(options?: Options<ListSessionsData, ThrowOnError>): RequestResult<ListSessionsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListSessionsResponses, unknown, ThrowOnError>({ url: '/api/v1/auth/sessions', ...options });
+
+/**
+ * Revoke one of your sessions
+ */
+export const revokeSession = <ThrowOnError extends boolean = false>(options: Options<RevokeSessionData, ThrowOnError>): RequestResult<RevokeSessionResponses, RevokeSessionErrors, ThrowOnError> => (options.client ?? client).delete<RevokeSessionResponses, RevokeSessionErrors, ThrowOnError>({ url: '/api/v1/auth/sessions/{session_id}', ...options });
+
+/**
+ * List your access tokens
+ */
+export const listTokens = <ThrowOnError extends boolean = false>(options?: Options<ListTokensData, ThrowOnError>): RequestResult<ListTokensResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListTokensResponses, unknown, ThrowOnError>({ url: '/api/v1/auth/tokens', ...options });
+
+/**
+ * Create an access token
+ */
+export const createToken = <ThrowOnError extends boolean = false>(options: Options<CreateTokenData, ThrowOnError>): RequestResult<CreateTokenResponses, CreateTokenErrors, ThrowOnError> => (options.client ?? client).post<CreateTokenResponses, CreateTokenErrors, ThrowOnError>({
+    url: '/api/v1/auth/tokens',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Revoke an access token
+ */
+export const revokeToken = <ThrowOnError extends boolean = false>(options: Options<RevokeTokenData, ThrowOnError>): RequestResult<RevokeTokenResponses, RevokeTokenErrors, ThrowOnError> => (options.client ?? client).delete<RevokeTokenResponses, RevokeTokenErrors, ThrowOnError>({ url: '/api/v1/auth/tokens/{token_id}', ...options });
+
+/**
+ * List accounts
+ */
+export const listUsers = <ThrowOnError extends boolean = false>(options?: Options<ListUsersData, ThrowOnError>): RequestResult<ListUsersResponses, ListUsersErrors, ThrowOnError> => (options?.client ?? client).get<ListUsersResponses, ListUsersErrors, ThrowOnError>({ url: '/api/v1/users', ...options });
+
+/**
+ * Create an account
+ */
+export const createUser = <ThrowOnError extends boolean = false>(options: Options<CreateUserData, ThrowOnError>): RequestResult<CreateUserResponses, CreateUserErrors, ThrowOnError> => (options.client ?? client).post<CreateUserResponses, CreateUserErrors, ThrowOnError>({
+    url: '/api/v1/users',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one account
+ */
+export const readUser = <ThrowOnError extends boolean = false>(options: Options<ReadUserData, ThrowOnError>): RequestResult<ReadUserResponses, ReadUserErrors, ThrowOnError> => (options.client ?? client).get<ReadUserResponses, ReadUserErrors, ThrowOnError>({ url: '/api/v1/users/{user_id}', ...options });
+
+/**
+ * Change an account
+ */
+export const updateUser = <ThrowOnError extends boolean = false>(options: Options<UpdateUserData, ThrowOnError>): RequestResult<UpdateUserResponses, UpdateUserErrors, ThrowOnError> => (options.client ?? client).patch<UpdateUserResponses, UpdateUserErrors, ThrowOnError>({
+    url: '/api/v1/users/{user_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});

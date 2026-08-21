@@ -4,10 +4,10 @@ Everything runs as one Docker Compose deployment on a single server, behind a re
 proxy you already run ([ADR-0005](../decisions/ADR-0005-single-server-docker-network.md),
 [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md)).
 
-> **Phase 0.** The instance starts, answers its health probes, and refuses every API call
-> for want of an identity provider. Accounts, files and search arrive in phase 1
-> ([ROADMAP](../ROADMAP.md)). Installing now is useful for verifying your proxy and
-> backup arrangements, not for storing anything.
+> **Phase 1, in progress.** Accounts exist: you can log in, manage users, and issue access
+> tokens. Files and search do not exist yet ([ROADMAP](../ROADMAP.md)). Installing now is
+> useful for verifying your proxy, your backups and your first admin account — not for
+> storing anything.
 
 ## Requirements
 
@@ -60,7 +60,40 @@ curl -s https://$PUBLIC_HOST/readyz
 ```
 
 `{"status":"ready"}` means the database is reachable and the schema matches the running
-code. Every `/api/v1/…` path answers `401` until phase 1 adds accounts.
+code. Every `/api/v1/…` path answers `401` except the login endpoint.
+
+**5. Create the first administrator.**
+
+An instance with no accounts cannot create one through the API — only administrators may,
+and there is no self-registration. Break the circle once, either way:
+
+```bash
+docker compose exec api store-everything create-admin you@example.com
+```
+
+The command prompts for the password twice and never echoes it. It refuses once any
+account exists, so it is not a way in later.
+
+The unattended alternative is `SE_BOOTSTRAP_ADMIN_EMAIL` and
+`SE_BOOTSTRAP_ADMIN_PASSWORD` in `.env`: the account is created at start-up, the event is
+audited, and the variables are ignored from then on. Remove the password afterwards — a
+secret that no longer does anything is still a secret sitting in a file.
+
+**6. Log in.**
+
+```bash
+curl -si https://$PUBLIC_HOST/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"..."}'
+```
+
+The response carries a `__Host-se_session` cookie — `HttpOnly`, `Secure`, `SameSite=Lax`.
+Browsers keep it; scripts should not. For anything programmatic, log in once and create a
+personal access token (`POST /api/v1/auth/tokens`, scope `read` unless it must write): it
+travels in `Authorization: Bearer …`, is shown exactly once, and can be revoked on its own.
+
+Ten failed logins for one address, or from one client address, within fifteen minutes stop
+further attempts for the rest of that window. The refusal is recorded, and it clears by
+itself.
 
 ## Upgrading
 

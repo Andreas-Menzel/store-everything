@@ -13,6 +13,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.44",
     "psycopg[binary,pool]>=3.2",
     "alembic>=1.16",
+    "argon2-cffi>=25.1",
 ]
 
 [project.scripts]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 from tools.export_openapi import OPENAPI_PATH, build_document, render
@@ -49,8 +50,21 @@ def test_operation_ids_are_unique() -> None:
 
 
 def test_operation_ids_are_readable() -> None:
-    """They become function names in every generated client."""
-    assert set(_operation_ids(build_document())) == {"healthz", "readyz", "openapi_schema"}
+    """They become function names in every generated client.
+
+    Asserted as a property rather than as a list of names: a list would have to be edited
+    every time an endpoint is added, and an assertion nobody can read stops being read.
+    What must never come back is FastAPI's default shape (`healthz_healthz_get`).
+    """
+    ids = _operation_ids(build_document())
+
+    assert len(ids) > 10, "expected the identity surface to be published"
+    for operation_id in ids:
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", operation_id), operation_id
+        assert not re.search(r"_(get|post|patch|put|delete)$", operation_id), operation_id
+
+    # Anchors: one from each router, so a wholesale renaming still fails here.
+    assert {"healthz", "openapi_schema", "login", "list_users"} <= set(ids)
 
 
 def test_the_contract_version_is_the_api_major_not_the_app_release() -> None:
