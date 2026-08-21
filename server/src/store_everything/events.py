@@ -56,6 +56,10 @@ FOLDER_CREATED = "folder.created"
 
 FILE_CREATED = "file.created"
 
+#: One per completed scan, carrying its tallies — so "why did this file appear?" and "did the
+#: hourly pass run?" are both answerable from the log alone.
+WORKSPACE_SCANNED = "workspace.scanned"
+
 RESOURCE_USER = "user"
 RESOURCE_SESSION = "session"
 RESOURCE_OPERATION = "operation"

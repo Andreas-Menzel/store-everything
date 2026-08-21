@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     """Where `managed` workspace roots are created (ADR-0018): one directory per workspace,
     named after it, under a directory named after its owner."""
 
+    workspace_scan_interval_minutes: int = Field(default=60, gt=0)
+    """The scan cadence a new workspace starts with (12 § tuning defaults). ADR-0019's
+    correctness backstop for external changes: the watcher and a manual rescan are the fast
+    paths, and this is the one that cannot be missed. Stored per workspace, so changing it
+    here affects workspaces created afterwards."""
+
     adoption_roots: Annotated[tuple[Path, ...], NoDecode] = ()
     """The complete set of locations a workspace may be **adopted** from — an existing tree
     indexed in place (ADR-0018). Empty by default, which disables adoption entirely.

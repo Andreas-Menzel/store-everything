@@ -90,7 +90,9 @@ Users bring an existing folder tree ("we will import the file structure the user
 - Point a workspace at an existing subtree → the app scans it, registers every file (path, size, hash, mtime), and queues ingestion. Nothing is moved or renamed.
 - Import is resumable and incremental; at 10 TB the initial scan+ingest runs for a long time and must survive restarts.
 - Re-scan detects on-disk changes made *outside* the app (files added/modified/deleted directly on the NAS) and reconciles: new file → ingest; changed hash → new version; missing → a trash entry badged "removed outside the app" ([F-014/FR-10](../features/F-014-deletion-and-trash.md)) — never silently purged.
-- Two kinds of entry are **reported instead of registered**: siblings whose names collide on the comparison key ([§ names on disk](#names-on-disk)) and symlinks ([§ symlinks](#symlinks)). Both appear in the scan report; neither is ever resolved by touching the user's files.
+- Two kinds of entry are **reported instead of registered**: siblings whose names collide on the comparison key ([§ names on disk](#names-on-disk)) and symlinks ([§ symlinks](#symlinks)). Both appear in the scan report; neither is ever resolved by touching the user's files. A third joins them for the same reason: a name the policy refuses outright — over 255 bytes, or carrying a control character — and anything that is neither a regular file nor a directory.
+- **Progress is queryable while it runs** ([F-001/FR-5](../features/F-001-upload-and-import.md)): directories scanned, files seen, files registered, conflicts, skipped entries, and how much of the tree is still queued. At 10 TB the initial pass runs for a long time, and "is it working?" has to be answerable without reading logs.
+- **The initial import reads every byte once.** A new file is hashed on registration, because the hash is the version's identity and the only thing that makes a move or a duplicate detectable later. Subsequent passes read almost nothing: they compare size and mtime and hash only what looks changed.
 
 ### Change detection
 

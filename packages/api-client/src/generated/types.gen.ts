@@ -128,6 +128,26 @@ export type HealthResponse = {
 };
 
 /**
+ * ImportStatus
+ */
+export type ImportStatus = {
+    /**
+     * Workspace
+     */
+    workspace: string;
+    /**
+     * Scan Interval Minutes
+     */
+    scan_interval_minutes: number;
+    active: ScanSummary | null;
+    /**
+     * Recent
+     */
+    recent: Array<ScanSummary>;
+    findings: PageScanFinding;
+};
+
+/**
  * LoginRequest
  */
 export type LoginRequest = {
@@ -139,6 +159,20 @@ export type LoginRequest = {
      * Password
      */
     password: string;
+};
+
+/**
+ * Page[ScanFinding]
+ */
+export type PageScanFinding = {
+    /**
+     * Data
+     */
+    data: Array<ScanFinding>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
 };
 
 /**
@@ -177,6 +211,110 @@ export type ReadyResponse = {
      * Status
      */
     status: 'ready';
+};
+
+/**
+ * RescanAccepted
+ */
+export type RescanAccepted = {
+    /**
+     * Operation
+     */
+    operation: string;
+    /**
+     * Path
+     */
+    path: string;
+};
+
+/**
+ * RescanRequest
+ */
+export type RescanRequest = {
+    /**
+     * Path
+     */
+    path?: string | null;
+};
+
+/**
+ * ScanFinding
+ *
+ * Something the scan reported instead of registering.
+ */
+export type ScanFinding = {
+    /**
+     * Kind
+     */
+    kind: 'conflict' | 'skipped';
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Detail
+     */
+    detail: string;
+};
+
+/**
+ * ScanSummary
+ *
+ * One traversal, as a client watching an import sees it.
+ */
+export type ScanSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Trigger
+     */
+    trigger: 'initial' | 'scheduled' | 'manual' | 'watcher';
+    /**
+     * State
+     */
+    state: 'running' | 'completed' | 'failed' | 'cancelled';
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Directories Scanned
+     */
+    directories_scanned: number;
+    /**
+     * Files Seen
+     */
+    files_seen: number;
+    /**
+     * Files Registered
+     */
+    files_registered: number;
+    /**
+     * Conflicts
+     */
+    conflicts: number;
+    /**
+     * Skipped
+     */
+    skipped: number;
+    /**
+     * Directories Pending
+     */
+    directories_pending: number;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Finished At
+     */
+    finished_at: string | null;
+    /**
+     * Error
+     */
+    error: string | null;
 };
 
 /**
@@ -423,6 +561,10 @@ export type WorkspaceSummary = {
      */
     root_path: string;
     filesystem: FilesystemVerdict;
+    /**
+     * Scan Interval Minutes
+     */
+    scan_interval_minutes: number;
     /**
      * Created At
      */
@@ -913,6 +1055,85 @@ export type ReadWorkspaceResponses = {
 };
 
 export type ReadWorkspaceResponse = ReadWorkspaceResponses[keyof ReadWorkspaceResponses];
+
+export type RescanWorkspaceData = {
+    body: RescanRequest;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/rescan';
+};
+
+export type RescanWorkspaceErrors = {
+    /**
+     * No such workspace, or not yours
+     */
+    404: unknown;
+    /**
+     * The workspace is still being provisioned
+     */
+    409: unknown;
+    /**
+     * No such path in this workspace
+     */
+    422: unknown;
+};
+
+export type RescanWorkspaceResponses = {
+    /**
+     * A scan is pending; poll import-status for its progress
+     */
+    202: RescanAccepted;
+};
+
+export type RescanWorkspaceResponse = RescanWorkspaceResponses[keyof RescanWorkspaceResponses];
+
+export type ImportStatusData = {
+    body?: never;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/import-status';
+};
+
+export type ImportStatusErrors = {
+    /**
+     * No such workspace, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ImportStatusError = ImportStatusErrors[keyof ImportStatusErrors];
+
+export type ImportStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: ImportStatus;
+};
+
+export type ImportStatusResponse = ImportStatusResponses[keyof ImportStatusResponses];
 
 export type UploadLimitsData = {
     body?: never;

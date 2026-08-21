@@ -319,6 +319,10 @@ workspace = Table(
     # a guarantee later turns out not to hold, this says what was probed and what it answered.
     Column("fs_check", JSONB, nullable=False),
     Column("fs_checked_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # ADR-0019's scan schedule: the correctness backstop for external changes, hourly by
+    # default and per-workspace because a photo archive and a working directory do not want
+    # the same cadence.
+    Column("scan_interval_minutes", Integer, nullable=False, server_default=text("60")),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # One user's workspace names are unique on the comparison key, which is also what keeps
@@ -335,6 +339,7 @@ workspace = Table(
     CheckConstraint(f"octet_length(name) BETWEEN 1 AND {MAX_NAME_BYTES}", name="name_length"),
     CheckConstraint(f"octet_length(name_key) BETWEEN 1 AND {MAX_NAME_BYTES}", name="key_length"),
     CheckConstraint("root_path LIKE '/%'", name="root_path_absolute"),
+    CheckConstraint("scan_interval_minutes > 0", name="scan_interval_positive"),
     CheckConstraint(f"octet_length(root_path) <= {MAX_PATH_BYTES}", name="root_path_length"),
     Index("ix_workspace_owner_id_created_at", "owner_id", "created_at"),
 )
@@ -437,6 +442,10 @@ file = Table(
     Column("name", Text, nullable=False),
     Column("name_key", Text, nullable=False),
     Column("state", Text, nullable=False, server_default=text("'live'")),
+    # When a scan last found this file on disk. One column instead of a per-run table of
+    # millions of rows: "what did this run *not* see" is then a single indexed comparison
+    # against the run's start, and it stays correct when a crash interrupts the run.
+    Column("last_seen_at", DateTime(timezone=True), nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # A composite foreign key, not two independent ones: it makes invariant 1 structural —
@@ -546,3 +555,113 @@ upload_session = Table(
 upload resumable across restarts (ADR-0017, 03 § uploads). Its staged bytes live in the
 workspace's own `.workspace/staging/` area, named after this id, so the janitor can attribute
 and collect them."""
+
+
+#: What started a scan. `initial` is the import a freshly provisioned workspace arms for
+#: itself; the others are ADR-0019's three paths, which are all the same operation.
+SCAN_TRIGGERS = ("initial", "scheduled", "manual", "watcher")
+
+#: A scan's life. `running` covers a scan that a crash interrupted, because the operation
+#: that owns it will be claimed again and resume from the frontier.
+SCAN_STATES = ("running", "completed", "failed", "cancelled")
+
+#: What a scan reports instead of registering (ADR-0019). Both are *facts about the tree*,
+#: never errors: a collision means two names the app cannot tell apart, a skipped entry means
+#: a symlink, and neither is ever resolved by touching the user's files.
+SCAN_FINDING_KINDS = ("conflict", "skipped")
+
+
+scan_run = Table(
+    "scan_run",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        UUID(as_uuid=True),
+        ForeignKey("workspace.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("trigger", Text, nullable=False),
+    Column("state", Text, nullable=False, server_default=text("'running'")),
+    # The subtree this run covers, workspace-relative; empty means the whole workspace
+    # (F-001's API surface offers a subtree rescan).
+    Column("root_path", Text, nullable=False, server_default=text("''")),
+    # The operation that owns this run. Not a foreign key on purpose: terminal operation rows
+    # are pruned (12 § queue hygiene), and a finished run's history must outlive that.
+    Column("operation_id", UUID(as_uuid=True), nullable=False),
+    # Progress, updated with each batch so a 10 TB import is observable while it runs
+    # (F-001/FR-5) rather than only when it finishes.
+    Column("directories_scanned", BigInteger, nullable=False, server_default=text("0")),
+    Column("files_seen", BigInteger, nullable=False, server_default=text("0")),
+    Column("files_registered", BigInteger, nullable=False, server_default=text("0")),
+    Column("conflicts", BigInteger, nullable=False, server_default=text("0")),
+    Column("skipped", BigInteger, nullable=False, server_default=text("0")),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    Column("error", Text, nullable=True),
+    CheckConstraint(one_of("trigger", SCAN_TRIGGERS), name="trigger_known"),
+    CheckConstraint(one_of("state", SCAN_STATES), name="state_known"),
+    # One run per operation, which is what makes a re-claimed operation resume its own run
+    # instead of starting a second one.
+    UniqueConstraint("operation_id"),
+    Index("ix_scan_run_workspace_id_started_at", "workspace_id", "started_at"),
+    # At most one scan per workspace at a time: a second concurrent traversal of the same
+    # tree would double the IO and race its own registrations.
+    Index(
+        "uq_scan_run_active",
+        "workspace_id",
+        unique=True,
+        postgresql_where=text("state = 'running'"),
+    ),
+)
+"""One traversal of a workspace (or a subtree of one). Holds the progress a client polls and
+the durable state a crash resumes from (12 § job atomicity)."""
+
+
+scan_frontier = Table(
+    "scan_frontier",
+    metadata,
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("scan_run.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    # Workspace-relative; the empty string is the workspace root.
+    Column("path", Text, primary_key=True),
+    # The folder row for *this* directory, resolved when the directory was discovered — so
+    # processing it costs no walk from the root, and a 100k-directory tree does not pay
+    # O(depth) queries per batch.
+    Column(
+        "folder_id", UUID(as_uuid=True), ForeignKey("folder.id", ondelete="CASCADE"), nullable=False
+    ),
+    _created_at(),
+    CheckConstraint(f"octet_length(path) <= {MAX_PATH_BYTES}", name="path_length"),
+)
+"""**The durable cursor.** Directories a run has discovered and not yet processed: one batch
+pops a directory, registers what is in it, pushes its subdirectories and deletes its own row —
+all in one transaction, which is the checkpoint 12 § job atomicity requires.
+
+Directories that *vanished* stay on the frontier deliberately. Popping one that is no longer
+there is an empty listing, so a subtree deleted on disk needs no special case at any depth."""
+
+
+scan_finding = Table(
+    "scan_finding",
+    metadata,
+    # An integer rather than a UUID: a symlink farm can produce a great many of these, and
+    # they are only ever read as an ordered page.
+    Column("id", BigInteger, Identity(always=True), primary_key=True),
+    Column(
+        "run_id", UUID(as_uuid=True), ForeignKey("scan_run.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("kind", Text, nullable=False),
+    Column("path", Text, nullable=False),
+    # The other spelling for a collision, the reason for a skip. Prose the user has to act on.
+    Column("detail", Text, nullable=False),
+    _created_at(),
+    CheckConstraint(one_of("kind", SCAN_FINDING_KINDS), name="kind_known"),
+    Index("ix_scan_finding_run_id_id", "run_id", "id"),
+)
+"""What a scan **reported instead of registering** (F-001/FR-11, FR-12). The user resolves a
+conflict by renaming something; the app never renames, moves or deletes a file to fix one."""

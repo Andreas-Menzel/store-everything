@@ -80,6 +80,7 @@ services:
       # and is empty — disabled — until an operator names a path they have mounted here.
       SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
       SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
+      SE_WORKSPACE_SCAN_INTERVAL_MINUTES: ${SE_WORKSPACE_SCAN_INTERVAL_MINUTES:-60}
       # Uploads (ADR-0017). The append sizes are published to clients in `Upload-Limit`, so
       # they have to fit inside whatever the proxy in front of this will pass through.
       SE_UPLOAD_EXPIRY_DAYS: ${SE_UPLOAD_EXPIRY_DAYS:-7}
@@ -151,6 +152,7 @@ services:
       # and is empty — disabled — until an operator names a path they have mounted here.
       SE_DATA_ROOT: ${SE_DATA_ROOT:-/srv/store-everything}
       SE_ADOPTION_ROOTS: ${SE_ADOPTION_ROOTS:-}
+      SE_WORKSPACE_SCAN_INTERVAL_MINUTES: ${SE_WORKSPACE_SCAN_INTERVAL_MINUTES:-60}
       # Uploads (ADR-0017). The append sizes are published to clients in `Upload-Limit`, so
       # they have to fit inside whatever the proxy in front of this will pass through.
       SE_UPLOAD_EXPIRY_DAYS: ${SE_UPLOAD_EXPIRY_DAYS:-7}

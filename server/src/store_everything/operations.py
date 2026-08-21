@@ -36,7 +36,8 @@ from datetime import timedelta
 from typing import Any, Literal, Self
 from uuid import UUID
 
-from sqlalchemy import Select, and_, func, literal_column, or_, select, text, update
+from sqlalchemy import Select, and_, func, literal, literal_column, or_, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -506,6 +507,9 @@ async def ensure_scheduled(
     due_in: timedelta | None = None,
     payload: dict[str, Any] | None = None,
     priority: int = PRIORITY_HEAVY,
+    subject_type: str | None = None,
+    subject_id: UUID | None = None,
+    scope: str | None = None,
 ) -> Operation:
     """Guarantee exactly one pending operation of a recurring kind.
 
@@ -513,18 +517,68 @@ async def ensure_scheduled(
     completes it, so the chain cannot break between the two. This call is the floor under
     that chain — it is safe to make on every start-up, and it is what restores the schedule
     after a run dead-letters and stops re-arming.
+
+    With a `subject_id` the schedule is **per subject** rather than per kind: every workspace
+    carries its own scan cadence (ADR-0019), so "one pending run" has to mean one *per
+    workspace* — a single key for the kind would let the first workspace's pending scan
+    silence every other workspace's. `scope` narrows it further, for work that concerns one
+    part of a subject.
     """
+    key = f"schedule:{kind}" if subject_id is None else f"schedule:{kind}:{subject_id}"
+    if scope is not None:
+        # A narrower slice of the same subject — a subtree rescan beside the workspace's own
+        # schedule — is different work and needs its own pending row.
+        key = f"{key}:{scope}"
     return await enqueue(
         connection,
         kind=kind,
         max_attempts=max_attempts,
         payload=payload,
         priority=priority,
-        idempotency_key=f"schedule:{kind}",
+        idempotency_key=key,
+        subject_type=subject_type,
+        subject_id=subject_id,
         due_in=due_in,
         # The caller may *be* the running instance of this schedule, queueing its successor.
         converge_with_running=False,
     )
+
+
+async def expedite(
+    connection: AsyncConnection,
+    *,
+    operation_id: UUID,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """Make a queued operation due no later than now. Returns whether it was still queued.
+
+    This is the whole mechanism behind "run it now": a manual re-scan and (later) a watcher
+    event do not start a parallel traversal, they pull the pending one forward
+    (12 § durable schedules, lossy doorbells). A running operation is left alone — it is
+    already doing the work being asked for.
+
+    `payload` merges into the row's own, which is how the *reason* travels: a request that
+    converges on a pending scheduled run would otherwise leave that run reporting itself as
+    scheduled, and "why did this happen?" is exactly what the record is for.
+
+    Due-ness moves to the *earlier* of the two times rather than to `now()`. An already-due
+    row must not be pushed back — that would let repeated requests starve work that is
+    waiting — and it still has to take the payload, because a request while the queue is
+    backed up (or the worker is stopped) is exactly when someone presses the button.
+    """
+    values: dict[str, Any] = {
+        "next_due_at": func.least(operation.c.next_due_at, func.now()),
+        "updated_at": func.now(),
+    }
+    if payload is not None:
+        values["payload"] = operation.c.payload.op("||")(literal(payload, JSONB))
+
+    result = await connection.execute(
+        update(operation)
+        .where(operation.c.id == operation_id, operation.c.state == "queued")
+        .values(**values)
+    )
+    return result.rowcount == 1
 
 
 async def get(connection: AsyncConnection, operation_id: UUID) -> Operation | None:
