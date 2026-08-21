@@ -27,7 +27,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import FileResponse
 
-from store_everything import files, filestore, mediatypes, workspaces
+from store_everything import files, filestore, mediatypes, trash, workspaces
 from store_everything.db import DatabaseConnection
 from store_everything.problems import ProblemException
 from store_everything.schemas import BaseSchema
@@ -42,6 +42,25 @@ _INLINE_EXCEPTIONS = frozenset({"image/svg+xml"})
 
 #: Belt and braces for the one response that carries content we did not write.
 _CONTENT_SECURITY = "default-src 'none'; sandbox"
+
+
+class TrashInfo(BaseSchema):
+    """Why a file is in the trash, and until when
+    ([F-014/FR-3](../../../../features/F-014-deletion-and-trash.md))."""
+
+    origin: Literal["in_app", "detected_on_disk"]
+    """`detected_on_disk` is the badge a client renders as "removed outside the app"."""
+
+    trashed_at: datetime
+    purge_after: datetime
+    """Nothing removes the entry before this, ever (F-014/FR-9)."""
+
+    batch: UUID
+    """Everything one deletion removed, restorable together — for a re-scan, the run's id."""
+
+    restorable: bool
+    """Whether the app still holds any of this file's content. `false` for the ordinary
+    external deletion: the bytes were on the storage and the storage no longer has them."""
 
 
 class FileSummary(BaseSchema):
@@ -61,8 +80,17 @@ class FileSummary(BaseSchema):
     modified_at: datetime | None
     """The file's own timestamp on disk, which is what a later scan compares against."""
 
+    trash: TrashInfo | None = None
+    """Present exactly when `state` is `trashed`."""
+
     @classmethod
-    def of(cls, found: files.File, version: files.Version, path: str) -> FileSummary:
+    def of(
+        cls,
+        found: files.File,
+        version: files.Version,
+        path: str,
+        trash: TrashInfo | None = None,
+    ) -> FileSummary:
         return cls(
             id=found.id,
             workspace=found.workspace_id,
@@ -75,6 +103,7 @@ class FileSummary(BaseSchema):
             state=found.state,  # pyright: ignore[reportArgumentType]
             created_at=found.created_at,
             modified_at=version.modified_at,
+            trash=trash,
         )
 
 
@@ -104,7 +133,33 @@ async def summarize(connection: DatabaseConnection, found: files.File) -> FileSu
     version = await files.current_version(connection, found.id)
     if version is None:  # pragma: no cover - a file is registered with its version or not at all
         raise RuntimeError(f"file {found.id} has no current version")
-    return FileSummary.of(found, version, await files.path_of(connection, found))
+    return FileSummary.of(
+        found,
+        version,
+        await files.path_of(connection, found),
+        await _trash_info(connection, found),
+    )
+
+
+async def _trash_info(connection: DatabaseConnection, found: files.File) -> TrashInfo | None:
+    """The trash entry behind a `trashed` state, so a client can say what happened and when.
+
+    Phase 1 has no trash page and no way to delete through the app, but a re-scan can put a file
+    in here — so a client asking about one file has to be able to learn that its content was
+    removed on the storage rather than see a bare `trashed` with no explanation.
+    """
+    if found.is_live:
+        return None
+    entry = await trash.entry_for(connection, found.id)
+    if entry is None:  # pragma: no cover - trashing writes the entry in the same transaction
+        return None
+    return TrashInfo(
+        origin=entry.origin,
+        trashed_at=entry.trashed_at,
+        purge_after=entry.purge_after,
+        batch=entry.batch_id,
+        restorable=await files.holds_any_content(connection, found.id),
+    )
 
 
 @router.get(
@@ -130,6 +185,7 @@ async def read_file(
         206: {"description": "The requested byte range"},
         304: {"description": "The caller's copy matches the current content hash"},
         404: {"description": "No such file, or not yours"},
+        410: {"description": "The file is in the trash"},
         416: {"description": "The requested range lies outside the file"},
     },
 )
@@ -143,6 +199,15 @@ async def read_file_content(
     version = await files.current_version(connection, found.id)
     if version is None:  # pragma: no cover - see `summarize`
         raise RuntimeError(f"file {found.id} has no current version")
+    if not found.is_live:
+        # Distinguished from a `404` on purpose: the file is a real thing with a real history,
+        # and "it is in the trash, here is why" is a different answer from "no such file".
+        raise ProblemException(
+            status=410,
+            slug="gone",
+            title="Gone",
+            detail="This file is in the trash; its content is not served while it is there.",
+        )
 
     etag = f'"{version.content_hash}"'
     headers = {

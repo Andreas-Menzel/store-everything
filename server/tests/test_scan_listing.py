@@ -6,6 +6,10 @@ case-folding filesystem like APFS: the filesystem merges the two names before th
 sees them. Feeding the classifier its entries directly is what makes the rule testable on a
 developer's Mac and on CI's ext4 alike — `test_scanning.py` covers the real-directory path
 where the filesystem allows it.
+
+The last section adds the rule reconciliation stands on: what counts as **gone**. Everything a
+re-scan concludes about a file that is not where it was — trashed, or moved — starts from that
+one answer, and answering it wrongly for an unreadable path is how an index gets destroyed.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from store_everything import names, scanning
+from store_everything import names, reconcile, scanning
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,3 +213,55 @@ def test_a_real_directory_is_listed_in_sorted_order(tmp_path: Path) -> None:
     result = scanning.inspect(tmp_path, "")
 
     assert [entry.name for entry in result.files] == ["a.txt", "b.txt", "c.txt"]
+
+
+# ------------------------------------------------------- gone, versus could not look
+
+
+@pytest.mark.fr("F-001/FR-19")
+def test_a_path_that_is_not_there_is_gone(tmp_path: Path) -> None:
+    """The only thing that makes a move a move: the file really is not where it was."""
+    assert reconcile.is_gone(tmp_path, "moved-away.jpg") is True
+
+
+@pytest.mark.fr("F-001/FR-19")
+def test_a_path_that_is_still_there_is_not_gone(tmp_path: Path) -> None:
+    (tmp_path / "still-here.jpg").write_bytes(b"x")
+
+    assert reconcile.is_gone(tmp_path, "still-here.jpg") is False
+
+
+@pytest.mark.fr("F-001/FR-16", "F-001/FR-19")
+def test_a_path_the_app_may_not_look_at_is_not_gone(tmp_path: Path) -> None:
+    """A permission denied is not an absence — for a move any more than for a deletion.
+
+    Concluding "moved" here would hand one file's identity to another file's content, which is
+    the same class of mistake as trashing a share that failed to mount.
+    """
+    closed = tmp_path / "closed"
+    closed.mkdir()
+    (closed / "secret.jpg").write_bytes(b"still there")
+    os.chmod(closed, 0o000)
+    try:
+        if os.access(closed, os.R_OK):  # pragma: no cover - running as root
+            pytest.skip("this process can read a mode-000 directory, so it cannot be tested")
+        assert reconcile.is_gone(tmp_path, "closed/secret.jpg") is False
+    finally:
+        os.chmod(closed, 0o700)
+
+
+@pytest.mark.fr("F-001/FR-12", "F-001/FR-19")
+def test_a_path_that_leaves_the_workspace_is_not_gone(tmp_path: Path) -> None:
+    """Containment first: a path that escapes is refused rather than answered."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "escape").symlink_to(tmp_path)
+
+    assert reconcile.is_gone(root, "escape/anything.jpg") is False
+
+
+def test_a_path_leading_through_a_file_is_gone(tmp_path: Path) -> None:
+    """Its parent stopped being a directory, so the file it named is certainly not there."""
+    (tmp_path / "not-a-directory").write_bytes(b"x")
+
+    assert reconcile.is_gone(tmp_path, "not-a-directory/child.jpg") is True

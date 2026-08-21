@@ -235,8 +235,48 @@ def test_a_file_moved_into_the_store_keeps_its_content(tmp_path: Path) -> None:
     digest = store.put_file(source, operation_id=uuid4())
 
     assert store.open(digest).read_bytes() == PAYLOAD
-    # The source is gone: this is a move, which is what a version snapshot needs.
+    # The source is gone: this is a move, for content that is meant to stop existing where it
+    # is — trash safeguarding, not a version snapshot.
     assert not source.exists()
+
+
+def test_a_snapshot_leaves_the_original_exactly_where_it_was(tmp_path: Path) -> None:
+    """The version snapshot copies, and that ordering is the whole point (F-007/FR-9).
+
+    A move would empty the file's path until the new content is renamed in, and a scan
+    interleaving with an upload would read that absent name as a deletion — it would trash the
+    file mid-overwrite. So the original stays readable at every instant, and the extra read is
+    the price.
+    """
+    store = BlobStore(tmp_path / "versions")
+    source = tmp_path / "draft.txt"
+    source.write_bytes(PAYLOAD)
+
+    digest = store.put_copy_of(source, operation_id=uuid4())
+
+    assert source.read_bytes() == PAYLOAD, "the snapshot moved the file it was meant to copy"
+    assert store.open(digest).read_bytes() == PAYLOAD
+    assert digest == filestore.digest_of(PAYLOAD), "the digest describes the bytes it copied"
+    # Nothing left behind in staging: the commit was a rename, not a second copy.
+    assert not any(store.staging_root.iterdir())
+
+
+def test_snapshotting_content_the_store_already_has_is_a_no_op(tmp_path: Path) -> None:
+    """Two files with the same content share one blob, and the second snapshot writes nothing
+    new — content addressing doing the refcounting the database then reasons about."""
+    store = BlobStore(tmp_path / "versions")
+    first = tmp_path / "one.txt"
+    second = tmp_path / "two.txt"
+    first.write_bytes(PAYLOAD)
+    second.write_bytes(PAYLOAD)
+
+    assert store.put_copy_of(first, operation_id=uuid4()) == store.put_copy_of(
+        second, operation_id=uuid4()
+    )
+
+    assert first.exists() and second.exists()
+    assert len(list(store.iter_digests())) == 1
+    assert not any(store.staging_root.iterdir())
 
 
 def test_storing_a_file_whose_content_is_already_there_drops_the_source(tmp_path: Path) -> None:

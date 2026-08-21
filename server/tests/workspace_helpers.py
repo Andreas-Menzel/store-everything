@@ -8,7 +8,7 @@ on its own connection, committing with the transition.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -20,11 +20,11 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import operations, scanning, workspaces
+from store_everything import handlers, operations, scanning, workspaces
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.app import create_app
 from store_everything.config import Settings
-from store_everything.runner import Job
+from store_everything.runner import Handler, Job
 from store_everything.tables import operation
 from tests.identity_helpers import (
     ADMIN_EMAIL,
@@ -95,9 +95,7 @@ async def create_workspace(
     return await client.post(WORKSPACES, json=body, headers=SAME_ORIGIN)
 
 
-async def run_pending(
-    database_url: str, handlers: dict[str, Callable[[Job], Awaitable[dict[str, Any]]]]
-) -> list[dict[str, Any]]:
+async def run_pending(database_url: str, kinds: dict[str, Handler]) -> list[dict[str, Any]]:
     """Claim and run every due operation of these kinds, exactly as the worker would.
 
     Deliberately not a call to a handler with a hand-made job: claiming counts the attempt and
@@ -113,13 +111,14 @@ async def run_pending(
                     connection,
                     worker="test/worker",
                     lease=timedelta(minutes=5),
-                    kinds=tuple(sorted(handlers)),
+                    kinds=tuple(sorted(kinds)),
                 )
                 if claimed is None:
                     return results
-                result = await handlers[claimed.kind](Job(operation=claimed, connection=connection))
+                result = await kinds[claimed.kind](Job(operation=claimed, connection=connection))
                 await operations.succeed(connection, claimed=claimed, result=result)
                 await connection.commit()
+                assert result is not None, f"{claimed.kind} reported nothing"
                 results.append(result)
     finally:
         await engine.dispose()
@@ -130,9 +129,16 @@ async def provision_pending(database_url: str) -> list[dict[str, Any]]:
     return await run_pending(database_url, {workspaces.KIND: workspaces.provision})
 
 
-async def scan_pending(database_url: str) -> list[dict[str, Any]]:
-    """Run every due `workspace.scan` — the traversal, as the orchestrator runs it."""
-    return await run_pending(database_url, {scanning.KIND: scanning.scan})
+async def scan_pending(database_url: str, settings: Settings) -> list[dict[str, Any]]:
+    """Run every due `workspace.scan` — the traversal, as the orchestrator runs it.
+
+    Bound through `handlers.registry`, so a test runs the same closure the worker does: the scan
+    needs the instance's blob-store root to decide whether a superseded version kept its bytes,
+    and a test that hand-assembled that would not be testing the thing that runs.
+    """
+    return await run_pending(
+        database_url, {scanning.KIND: handlers.registry(settings)[scanning.KIND]}
+    )
 
 
 async def provisioning_states(database_url: str, workspace_id: UUID) -> Sequence[str]:

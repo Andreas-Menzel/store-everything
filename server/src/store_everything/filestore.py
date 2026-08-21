@@ -66,6 +66,31 @@ def digest_of(data: bytes) -> str:
     return hashlib.new(DIGEST_ALGORITHM, data).hexdigest()
 
 
+def stage_copy(source: Path, staging: Path) -> str:
+    """Copy a file into staging without disturbing it, and return its digest. **Blocking.**
+
+    Hashed as it is copied rather than in a second pass: the digest then describes the bytes
+    that were actually written, and a multi-gigabyte original is read once. The staging file is
+    durable when this returns, so the caller's `commit_staged` is the only step left.
+
+    Used by the version snapshot (`blobs.put_copy_of`), which is why this is a copy and not
+    the cheaper `journaled_move`: the original has to stay where it is until the new content
+    replaces it.
+    """
+    ensure_directory(staging.parent)
+    digest = hashlib.new(DIGEST_ALGORITHM)
+
+    fault_point("filestore.before-staging")
+    with source.open("rb") as reading, staging.open("wb") as writing:
+        while chunk := reading.read(CHUNK_SIZE):
+            digest.update(chunk)
+            writing.write(chunk)
+        writing.flush()
+        fault_point("filestore.after-staging-write")
+        os.fsync(writing.fileno())
+    return digest.hexdigest()
+
+
 def digest_of_file(path: Path) -> str:
     """Stream the file through the hash — a version may be larger than memory."""
     digest = hashlib.new(DIGEST_ALGORITHM)

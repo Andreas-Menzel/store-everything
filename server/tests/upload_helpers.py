@@ -38,6 +38,7 @@ async def create_upload(
     interop: int | None = CURRENT_INTEROP,
     content_hash: str | None = None,
     content_type: str | None = None,
+    if_exists: str | None = None,
 ) -> httpx.Response:
     """Create an upload. `complete=None` omits the header entirely — a plain upload."""
     headers: dict[str, str] = dict(SAME_ORIGIN)
@@ -53,6 +54,8 @@ async def create_upload(
     params: dict[str, Any] = {"path": path}
     if content_hash is not None:
         params["content_hash"] = content_hash
+    if if_exists is not None:
+        params["if_exists"] = if_exists
     return await client.post(files_url(workspace_id), params=params, content=body, headers=headers)
 
 

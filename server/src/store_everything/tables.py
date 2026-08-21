@@ -456,10 +456,24 @@ file = Table(
         ["folder.id", "folder.workspace_id"],
         ondelete="CASCADE",
     ),
-    UniqueConstraint("folder_id", "name_key"),
+    # Sibling uniqueness covers **live** rows only, which is F-014/FR-1's "trashed items do
+    # not reserve their path" made structural. A full constraint would make a file deleted on
+    # the storage keep its name reserved by a trash entry, so re-uploading there would be
+    # refused as a collision with something that is not on the disk at all.
+    Index(
+        "uq_file_live_name",
+        "folder_id",
+        "name_key",
+        unique=True,
+        postgresql_where=text("state = 'live'"),
+    ),
     CheckConstraint(one_of("state", FILE_STATES), name="state_known"),
     CheckConstraint(f"octet_length(name) BETWEEN 1 AND {MAX_NAME_BYTES}", name="name_length"),
     Index("ix_file_workspace_id_state", "workspace_id", "state"),
+    # The reconciliation sweep's query: live files in a subtree a run did not see
+    # (F-001/FR-6). Folder-scoped rather than workspace-scoped because a subtree rescan must
+    # never look outside its own root.
+    Index("ix_file_folder_id_last_seen_at", "folder_id", "last_seen_at"),
 )
 """A logical file, addressed as *(folder, name)* — its path is derived from the folder chain,
 never stored (02 § file). The UUID survives rename, move and new versions."""
@@ -479,6 +493,12 @@ file_version = Table(
     Column("media_class", Text, nullable=False),
     Column("origin", Text, nullable=False),
     Column("is_current", Boolean, nullable=False, server_default=text("true")),
+    # Whether these bytes can still be produced (F-007/FR-9). True for a current version —
+    # it *is* the file on disk — and for a superseded one the app snapshotted into
+    # `versions/` before overwriting it. False once the bytes are gone: a file edited or
+    # deleted directly on the storage was overwritten before the app could copy it, and
+    # saying so is the honest answer rather than a restore that fails when tried.
+    Column("restorable", Boolean, nullable=False, server_default=text("true")),
     # The mtime the file carried on disk when this version was recorded. The stat-scan
     # compares size and mtime before it hashes anything (ADR-0019), so recording it here is
     # what keeps a scan of 10 TB from being a re-hash of 10 TB.
@@ -497,6 +517,59 @@ file_version = Table(
 )
 """An immutable snapshot of a file's content, identified by its hash (02 § FileVersion)."""
 
+
+#: Why an item is in the trash (F-014/FR-3). Phase 1 writes only `detected_on_disk`: a scan
+#: can capture a deletion that already happened, but there is no way to delete through the app
+#: until phase 4.
+TRASH_ORIGINS = ("in_app", "detected_on_disk")
+
+
+trash_entry = Table(
+    "trash_entry",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "file_id", UUID(as_uuid=True), ForeignKey("file.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("origin", Text, nullable=False),
+    # Every deletion belongs to a batch, so a mass deletion is restorable in one call
+    # (F-014/FR-5). For a scan-detected deletion the batch **is** the run, which is exactly
+    # the unit a user wants back after a share failed to mount.
+    Column("batch_id", UUID(as_uuid=True), nullable=False),
+    # Where the file was when it was trashed. Paths are derived from the folder chain
+    # everywhere else; recorded here because a trash listing has to name a place that may no
+    # longer be reachable by walking (F-014/FR-3, the F-011/FR-9 pattern).
+    Column("path", Text, nullable=False),
+    Column("trashed_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # NULL when nobody did it: a scan discovering a deletion that already happened on the
+    # storage has no person to name (07 § the audit trail).
+    Column("trashed_by", UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")),
+    Column("purge_after", DateTime(timezone=True), nullable=False),
+    _created_at(),
+    # One entry per trashed file. A file restored and trashed again gets a new entry, because
+    # the old one is deleted on restore rather than kept as history — the event log is what
+    # keeps history (ADR-0007).
+    UniqueConstraint("file_id"),
+    CheckConstraint(one_of("origin", TRASH_ORIGINS), name="origin_known"),
+    CheckConstraint(f"octet_length(path) <= {MAX_PATH_BYTES}", name="path_length"),
+    Index("ix_trash_entry_batch_id", "batch_id"),
+    # The janitor's question in phase 4 ("what is past its deadline"), and the ordering a
+    # trash listing uses.
+    Index("ix_trash_entry_purge_after", "purge_after"),
+)
+"""Why a file is in the trash, and until when (F-014). **Restorability is not stored** — it is
+derived from whether any of the file's versions still has its bytes (`file_version.restorable`),
+so it cannot go stale behind an app-mediated snapshot that happened later.
+
+The deadline **is** stored, for the opposite reason: F-014's promise is that nothing leaves the
+trash before its deadline, and a deadline computed at read time from a setting could be pulled
+forward by changing that setting — which is that promise being broken. `trash.RETENTION` is
+where the number comes from today."""
+
+
+#: What an upload does when a live file already occupies its target path (F-001/FR-7).
+#: `reject` is the default: overwriting is a decision a client makes explicitly.
+UPLOAD_CONFLICT_MODES = ("reject", "new_version")
 
 #: An upload session's life. `open` is the only state a client can act on; the rest are
 #: terminal, which is what lets the janitor collect the staged bytes.
@@ -528,6 +601,9 @@ upload_session = Table(
     Column("declared_hash", Text, nullable=True),
     Column("media_type", Text, nullable=True),
     Column("interop_version", SmallInteger, nullable=True),
+    # Decided at creation, because that is where the client can be told "no" before it spends
+    # an hour uploading — and because finalize may run in a much later request.
+    Column("if_exists", Text, nullable=False, server_default=text("'reject'")),
     # The offset the client may rely on: bytes are fsync'd before this advances, never after
     # (ADR-0017). Staged bytes beyond it were never acknowledged and are truncated on resume.
     Column("committed_offset", BigInteger, nullable=False, server_default=text("0")),
@@ -537,6 +613,7 @@ upload_session = Table(
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint(one_of("state", UPLOAD_STATES), name="state_known"),
+    CheckConstraint(one_of("if_exists", UPLOAD_CONFLICT_MODES), name="if_exists_known"),
     CheckConstraint("committed_offset >= 0", name="offset_not_negative"),
     CheckConstraint(
         "declared_length IS NULL OR committed_offset <= declared_length",
@@ -594,6 +671,14 @@ scan_run = Table(
     Column("directories_scanned", BigInteger, nullable=False, server_default=text("0")),
     Column("files_seen", BigInteger, nullable=False, server_default=text("0")),
     Column("files_registered", BigInteger, nullable=False, server_default=text("0")),
+    # The four things reconciliation can conclude about a file it already knew (F-001/FR-6).
+    # Separate columns rather than one "reconciled" number because they mean very different
+    # things to whoever is watching: `trashed` climbing on a scheduled pass is how an operator
+    # notices a share that half-unmounted.
+    Column("files_changed", BigInteger, nullable=False, server_default=text("0")),
+    Column("files_moved", BigInteger, nullable=False, server_default=text("0")),
+    Column("files_trashed", BigInteger, nullable=False, server_default=text("0")),
+    Column("files_restored", BigInteger, nullable=False, server_default=text("0")),
     Column("conflicts", BigInteger, nullable=False, server_default=text("0")),
     Column("skipped", BigInteger, nullable=False, server_default=text("0")),
     Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
@@ -644,6 +729,32 @@ all in one transaction, which is the checkpoint 12 § job atomicity requires.
 
 Directories that *vanished* stay on the frontier deliberately. Popping one that is no longer
 there is an empty listing, so a subtree deleted on disk needs no special case at any depth."""
+
+
+scan_blocked = Table(
+    "scan_blocked",
+    metadata,
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("scan_run.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "folder_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    _created_at(),
+)
+"""Directories this run **could not read** — permissions, a path that resolved outside the
+workspace, a mount that went away. F-001/FR-16 is enforced from this table: the reconciliation
+sweep excludes every descendant of a blocked folder, because "I could not look" says nothing
+about what is inside and must never be reconciled as "it is not there".
+
+Normally empty. Per run rather than on the folder row, because the fact is about one traversal:
+the directory readable again next hour is reconciled then."""
 
 
 scan_finding = Table(

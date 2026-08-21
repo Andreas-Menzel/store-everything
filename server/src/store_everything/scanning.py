@@ -28,9 +28,15 @@ repair — the user's files are never touched to make the app's model tidier:
    not a fact about the user's tree (F-001/FR-13, ADR-0018).
 
 A directory that is *gone* stays on the frontier deliberately: popping it yields an empty
-listing, which is how a subtree deleted on disk is noticed at any depth without a special
-case. Acting on that — trashing what is missing, versioning what changed — is the next chunk;
-this one registers what is there and stamps what it saw.
+listing, which is how a subtree deleted on disk is noticed at any depth without a special case.
+What that *means* — what changed, what moved, what is missing — is `reconcile`'s; this module
+observes, checkpoints and reports.
+
+**A run refuses to touch a tree that does not identify itself** (F-001/FR-17). Before walking
+anything it reads the `.workspace/marker` planted at provisioning: absent, unreadable, or naming
+a different workspace means the storage is almost certainly not mounted, and the run registers
+nothing and reconciles nothing rather than concluding that ten terabytes were deleted. It is the
+cheapest check in the module and the only one that guards against destroying the whole index.
 
 **Known limit:** one directory's entries are listed and sorted in memory, so a single
 directory with millions of entries is a memory cost. Sorting is not optional — rule 2 is
@@ -54,17 +60,20 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import (
     events,
-    files,
     filestore,
     folders,
     identity,
-    mediatypes,
     names,
+    reconcile,
     scans,
+    workspacefs,
     workspaces,
 )
+from store_everything.blobs import BlobStore
+from store_everything.config import Settings
 from store_everything.events import Actor
 from store_everything.faults import fault_point
+from store_everything.reconcile import Entry
 from store_everything.runner import Job, PermanentFailureError
 
 _logger = logging.getLogger(__name__)
@@ -74,21 +83,16 @@ KIND = scans.KIND
 
 
 @dataclass(frozen=True, slots=True)
-class Entry:
-    """One regular file as the filesystem described it."""
-
-    name: str
-    size: int
-    modified_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class Listing:
     """What one directory looked like. Produced off the event loop, consumed on it."""
 
     directories: tuple[str, ...] = ()
     files: tuple[Entry, ...] = ()
     findings: tuple[scans.Finding, ...] = ()
+    #: The comparison key of **every** name the directory contained, whatever was done with it.
+    #: A name that is present is not an absence, and only an absence concludes a deletion
+    #: (F-001/FR-18) — so this, not `files`, is what marks a file as still there.
+    mentioned: tuple[str, ...] = ()
     #: The directory is not there any more. Its contents are *gone*, which is a fact.
     missing: bool = False
     #: The directory is there and could not be read. Its contents are *unknown*, which is not
@@ -102,6 +106,9 @@ class Tally:
 
     files_seen: int = 0
     files_registered: int = 0
+    files_changed: int = 0
+    files_moved: int = 0
+    files_restored: int = 0
     conflicts: int = 0
     skipped: int = 0
     findings: list[scans.Finding] = field(default_factory=list)
@@ -180,6 +187,8 @@ def classify(relative: str, entries: Sequence[DirectoryEntry]) -> Listing:
     at_root = relative == scans.ROOT
     #: Comparison key → the name that claimed it, so a collision can name both spellings.
     claimed: dict[str, str] = {}
+    #: Every key the directory contained, including the ones nothing was done with.
+    mentioned: list[str] = []
 
     for entry in entries:
         path = _child_path(relative, entry.name)
@@ -187,13 +196,17 @@ def classify(relative: str, entries: Sequence[DirectoryEntry]) -> Listing:
         # Never dereferenced, whatever it points at — including a dangling link.
         if entry.is_symlink():
             findings.append(scans.Finding("skipped", path, "symbolic links are never followed"))
+            mentioned.append(names.comparison_key(entry.name))
             continue
-        if at_root and names.comparison_key(entry.name) == names.comparison_key(
-            names.CONTROL_DIRECTORY
-        ):
+        key = names.comparison_key(entry.name)
+        if at_root and key == names.comparison_key(names.CONTROL_DIRECTORY):
             # Ours, not the user's. Silently invisible rather than reported as a fact about
-            # their tree (F-001/FR-13).
+            # their tree (F-001/FR-13) — and not mentioned either, since no row can hold a
+            # name that is reserved at the root.
             continue
+        # From here on the name is the user's, so the app has *seen* it — whatever it goes on
+        # to do with it (F-001/FR-18).
+        mentioned.append(key)
 
         # Names arrive from the filesystem as-is, which is how they are stored — the key is
         # derived from them (ADR-0019). Normalization happens only on the API side.
@@ -203,7 +216,6 @@ def classify(relative: str, entries: Sequence[DirectoryEntry]) -> Listing:
             findings.append(scans.Finding("skipped", path, f"unusable name: {invalid.reason}"))
             continue
 
-        key = names.comparison_key(entry.name)
         if key in claimed:
             findings.append(
                 scans.Finding(
@@ -244,12 +256,8 @@ def classify(relative: str, entries: Sequence[DirectoryEntry]) -> Listing:
         directories=tuple(directories),
         files=tuple(files_found),
         findings=tuple(findings),
+        mentioned=tuple(mentioned),
     )
-
-
-def _digest(root: Path, relative: str) -> str:
-    """Hash a file, re-checking containment before opening it. **Blocking.**"""
-    return filestore.digest_of_file(filestore.resolve_within(root, Path(relative)))
 
 
 # ------------------------------------------------------------------------- the batch
@@ -261,16 +269,22 @@ async def process_directory(
     run: scans.Run,
     workspace: workspaces.Workspace,
     pending: scans.Pending,
+    store: BlobStore,
 ) -> Tally:
-    """Register one directory's contents. The caller commits, which is the checkpoint."""
+    """Apply one directory to the index. The caller commits, which is the checkpoint."""
     listing = await asyncio.to_thread(inspect, workspace.root_path, pending.path)
     tally = Tally(findings=list(listing.findings))
     tally.conflicts = sum(1 for finding in listing.findings if finding.kind == "conflict")
     tally.skipped = sum(1 for finding in listing.findings if finding.kind == "skipped")
 
-    if listing.missing or listing.unreadable:
-        # Nothing to register. What a *missing* directory implies about the files we know are
-        # in it belongs to reconciliation; an *unreadable* one implies nothing at all.
+    if listing.unreadable:
+        # The app could not look, so it concludes nothing — and records that, because the sweep
+        # would otherwise read the absence of stamps under here as a deletion (F-001/FR-16).
+        await scans.block(connection, run_id=run.id, folder_id=pending.folder_id)
+        return tally
+    if listing.missing:
+        # Confirmed gone. Nothing to register, and nothing to record: the files under here go
+        # unstamped, which is exactly how the sweep concludes the subtree was deleted.
         return tally
 
     folder = await folders.get(connection, pending.folder_id)
@@ -291,79 +305,37 @@ async def process_directory(
         discovered.append(scans.Pending(_child_path(pending.path, name), child.id))
     await scans.push(connection, run_id=run.id, pending=discovered)
 
-    for entry in listing.files:
-        tally.files_seen += 1
-        if await _register(
-            connection,
-            run=run,
-            workspace=workspace,
-            folder_id=folder.id,
-            path=pending.path,
-            entry=entry,
-        ):
-            tally.files_registered += 1
-
-    return tally
-
-
-async def _register(
-    connection: AsyncConnection,
-    *,
-    run: scans.Run,
-    workspace: workspaces.Workspace,
-    folder_id: UUID,
-    path: str,
-    entry: Entry,
-) -> bool:
-    """Register a file the app has not seen, or stamp one it already knows. Returns whether
-    it registered.
-
-    Stamping is what makes the *next* pass able to tell "still there" from "gone" with one
-    indexed comparison, so every file the scan sees is stamped whether or not anything else
-    about it changed. Deciding that a known file **changed** is reconciliation's job, and this
-    chunk deliberately leaves an existing row alone otherwise — it does not read the bytes of
-    a file it already knows, which is what keeps an hourly pass over 10 TB cheap.
-    """
-    known = await files.find_in_folder(connection, folder_id=folder_id, name=entry.name)
-    if known is not None:
-        await files.mark_seen(connection, file_id=known.id, seen_at=run.started_at)
-        return False
-
-    relative = _child_path(path, entry.name)
-    try:
-        content_hash = await asyncio.to_thread(_digest, workspace.root_path, relative)
-    except (OSError, filestore.ContainmentError) as unreadable:
-        _logger.info(
-            "skipped a file that could not be hashed",
-            extra={"workspace": str(workspace.id), "path": relative, "reason": str(unreadable)},
-        )
-        return False
-
-    await files.register(
+    outcome = await reconcile.directory(
         connection,
-        workspace_id=workspace.id,
-        folder_id=folder_id,
-        name=entry.name,
-        content_hash=content_hash,
-        size_bytes=entry.size,
-        media_type=mediatypes.detect(entry.name, None),
-        modified_at=entry.modified_at,
-        origin="external",
-        last_seen_at=run.started_at,
-        actor=Actor.system(),
+        run=run,
+        workspace=workspace,
+        folder_id=folder.id,
+        path=pending.path,
+        entries=listing.files,
+        mentioned=listing.mentioned,
+        store=store,
     )
-    return True
+    tally.files_seen = outcome.seen
+    tally.files_registered = outcome.registered
+    tally.files_changed = outcome.changed
+    tally.files_moved = outcome.moved
+    tally.files_restored = outcome.restored
+    return tally
 
 
 # ---------------------------------------------------------------------- the operation
 
 
-async def scan(job: Job) -> dict[str, Any]:
-    """Traverse a workspace, one committed directory at a time.
+async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
+    """Traverse a workspace, one committed directory at a time, then reconcile what is missing.
 
     Every batch commits on its own — this is 12 § job atomicity's declared exception to "one
     transaction per operation" — so the operation's own success transition covers only the
     last one. Everything before it is already durable, which is the point.
+
+    `settings` is here for one reason: deciding whether a superseded version is restorable means
+    asking the blob store whether it holds those bytes, and the store's root is instance
+    configuration rather than anything on the workspace's row.
     """
     workspace_id = job.operation.subject_id
     if workspace_id is None:
@@ -395,8 +367,13 @@ async def scan(job: Job) -> dict[str, Any]:
         root_folder_id=root_folder.id,
         root_path=root_path,
     )
+
+    unidentified = await asyncio.to_thread(_unidentified, workspace)
+    if unidentified is not None:
+        return await _refuse(job, run=run, workspace=workspace, reason=unidentified)
     await job.connection.commit()
 
+    store = BlobStore(settings.versions_root)
     processed = 0
     while True:
         pending = await scans.next_directory(job.connection, run.id)
@@ -404,7 +381,7 @@ async def scan(job: Job) -> dict[str, Any]:
             break
 
         tally = await process_directory(
-            job.connection, run=run, workspace=workspace, pending=pending
+            job.connection, run=run, workspace=workspace, pending=pending, store=store
         )
         await scans.report(job.connection, run_id=run.id, findings=tally.findings)
         await scans.record_progress(
@@ -413,6 +390,9 @@ async def scan(job: Job) -> dict[str, Any]:
             directories=1,
             files_seen=tally.files_seen,
             files_registered=tally.files_registered,
+            files_changed=tally.files_changed,
+            files_moved=tally.files_moved,
+            files_restored=tally.files_restored,
             conflicts=tally.conflicts,
             skipped=tally.skipped,
         )
@@ -425,6 +405,23 @@ async def scan(job: Job) -> dict[str, Any]:
         await job.connection.commit()
         fault_point("scan.after-commit")
         processed += 1
+
+    # Only now: "did not see" means nothing until the traversal is finished, so a run that a
+    # crash interrupted resumes into the frontier loop above rather than into this.
+    while True:
+        trashed = await reconcile.sweep_batch(
+            job.connection,
+            run=run,
+            root_folder_id=root_folder.id,
+            store=store,
+            actor=Actor.system(),
+        )
+        if trashed == 0:
+            break
+        await scans.record_progress(job.connection, run_id=run.id, files_trashed=trashed)
+        fault_point("scan.after-sweep-batch")
+        await job.connection.commit()
+        fault_point("scan.after-sweep-commit")
 
     finished = await scans.get(job.connection, run.id)
     await scans.finish(job.connection, run_id=run.id, state="completed")
@@ -442,6 +439,10 @@ async def scan(job: Job) -> dict[str, Any]:
             "directories": processed,
             "files_seen": 0 if finished is None else finished.files_seen,
             "files_registered": 0 if finished is None else finished.files_registered,
+            "files_changed": 0 if finished is None else finished.files_changed,
+            "files_moved": 0 if finished is None else finished.files_moved,
+            "files_trashed": 0 if finished is None else finished.files_trashed,
+            "files_restored": 0 if finished is None else finished.files_restored,
             "conflicts": 0 if finished is None else finished.conflicts,
             "skipped": 0 if finished is None else finished.skipped,
         },
@@ -452,6 +453,64 @@ async def scan(job: Job) -> dict[str, Any]:
         "outcome": "completed",
         "directories": processed,
         "files_registered": 0 if finished is None else finished.files_registered,
+        "files_trashed": 0 if finished is None else finished.files_trashed,
+    }
+
+
+def _unidentified(workspace: workspaces.Workspace) -> str | None:
+    """Why this tree is not this workspace's, or `None` if it is. **Blocking.**
+
+    F-001/FR-17. The marker is planted at provisioning and read here on every pass, because an
+    unmounted share is not an empty workspace and the app cannot tell the difference from the
+    listing alone: `/mnt/photos` with nothing in it looks exactly like `/mnt/photos` with ten
+    terabytes behind a mount that did not come back after a reboot.
+    """
+    try:
+        marker = workspacefs.read_marker(workspace.root_path)
+    except workspacefs.MarkerError as broken:
+        return str(broken)
+    except OSError as unreachable:
+        return f"the workspace root cannot be read: {unreachable}"
+    if marker is None:
+        return (
+            f"{workspace.root_path}/{names.CONTROL_DIRECTORY}/{workspacefs.MARKER_NAME} is not "
+            "there, so this directory is not the workspace's storage — most often a mount that "
+            "is not mounted. Nothing was registered and nothing was reconciled."
+        )
+    if marker.workspace_id != workspace.id:
+        return (
+            f"the marker in {workspace.root_path} belongs to workspace {marker.workspace_id}, "
+            "not this one, so this directory is another workspace's storage. Nothing was "
+            "registered and nothing was reconciled."
+        )
+    return None
+
+
+async def _refuse(
+    job: Job, *, run: scans.Run, workspace: workspaces.Workspace, reason: str
+) -> dict[str, Any]:
+    """End a run that must not touch this tree, leaving the reason where a client will see it.
+
+    The run row *is* the record: `import-status` lists it, failed, with the reason on it. No
+    `workspace.scanned` event, because nothing was scanned — and the schedule is re-armed, so a
+    share that comes back is picked up by the next pass without anyone intervening.
+    """
+    _logger.warning(
+        "scan refused: the workspace root does not identify itself",
+        extra={"workspace": str(workspace.id), "run": str(run.id), "reason": reason},
+    )
+    await scans.report(
+        job.connection,
+        run_id=run.id,
+        findings=[scans.Finding("skipped", run.root_path, reason)],
+    )
+    await scans.finish(job.connection, run_id=run.id, state="failed", error=reason)
+    await _rearm(job.connection, workspace=workspace)
+    return {
+        "workspace": str(workspace.id),
+        "run": str(run.id),
+        "outcome": "refused",
+        "reason": reason,
     }
 
 

@@ -42,6 +42,10 @@ from store_everything.tables import upload_session
 
 type State = Literal["open", "completed", "cancelled", "expired", "failed"]
 
+#: F-001/FR-7's explicit parameter. `reject` is the default everywhere: overwriting a file is a
+#: decision, and the API never makes it on a client's behalf.
+type ConflictMode = Literal["reject", "new_version"]
+
 #: States nothing can be appended to. `completed` is terminal *and* still useful: it answers
 #: an offset probe and replays a lost finalize.
 TERMINAL_STATES = frozenset({"completed", "cancelled", "expired", "failed"})
@@ -82,6 +86,11 @@ class Session:
     declared_hash: str | None
     media_type: str | None
     interop_version: int | None
+    if_exists: ConflictMode
+    """What to do if a live file already holds the target path (F-001/FR-7). Decided at
+    creation, because that is where a client can be refused before it spends an hour
+    uploading — and because finalize may run in a much later request."""
+
     committed_offset: int
     state: State
     file_id: UUID | None
@@ -115,6 +124,7 @@ _COLUMNS = (
     upload_session.c.declared_hash,
     upload_session.c.media_type,
     upload_session.c.interop_version,
+    upload_session.c.if_exists,
     upload_session.c.committed_offset,
     upload_session.c.state,
     upload_session.c.file_id,
@@ -131,6 +141,7 @@ type _Row = tuple[
     str | None,
     str | None,
     int | None,
+    ConflictMode,
     int,
     State,
     UUID | None,
@@ -204,6 +215,7 @@ async def create(
     declared_hash: str | None,
     media_type: str | None,
     interop_version: int | None,
+    if_exists: ConflictMode,
     expires_in: timedelta,
 ) -> Session:
     """Record an upload before a single byte is written."""
@@ -219,6 +231,7 @@ async def create(
                 declared_hash=None if declared_hash is None else declared_hash.lower(),
                 media_type=media_type,
                 interop_version=interop_version,
+                if_exists=if_exists,
                 committed_offset=0,
                 state="open",
                 expires_at=func.now() + _interval(expires_in),

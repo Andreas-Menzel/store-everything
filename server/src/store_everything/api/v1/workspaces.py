@@ -288,6 +288,20 @@ class ScanSummary(BaseSchema):
     directories_scanned: int
     files_seen: int
     files_registered: int
+    files_changed: int
+    """New versions from content that changed on the storage
+    ([F-007](../../../../features/F-007-versioning.md))."""
+
+    files_moved: int
+    """Files recognised at a new path, keeping their identity — an external rename."""
+
+    files_trashed: int
+    """Files that were gone, now trash entries badged "removed outside the app". Climbing on a
+    scheduled pass is how a half-mounted share announces itself."""
+
+    files_restored: int
+    """Trashed files whose content reappeared at their own path."""
+
     conflicts: int
     skipped: int
     directories_pending: int
@@ -296,6 +310,8 @@ class ScanSummary(BaseSchema):
     started_at: datetime
     finished_at: datetime | None
     error: str | None
+    """Why a run ended without finishing — including a root that did not identify itself
+    ([F-001/FR-17](../../../../features/F-001-upload-and-import.md))."""
 
     @classmethod
     def of(cls, run: scans.Run, *, pending: int) -> ScanSummary:
@@ -307,6 +323,10 @@ class ScanSummary(BaseSchema):
             directories_scanned=run.directories_scanned,
             files_seen=run.files_seen,
             files_registered=run.files_registered,
+            files_changed=run.files_changed,
+            files_moved=run.files_moved,
+            files_trashed=run.files_trashed,
+            files_restored=run.files_restored,
             conflicts=run.conflicts,
             skipped=run.skipped,
             directories_pending=pending,

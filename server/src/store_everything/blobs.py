@@ -76,8 +76,10 @@ class BlobStore:
     def put_file(self, source: Path, *, operation_id: UUID, digest: str | None = None) -> str:
         """Move a file into the store, verifying its content on the way.
 
-        Used for the version snapshot: the previous content of a file being overwritten is
-        moved here before the new bytes land, so there is no window in which neither exists.
+        For a source that is meant to stop existing: trash safeguarding moves a deleted file's
+        content out of the user's tree ([F-014/FR-2](../../../features/F-014-deletion-and-trash.md))
+        and leaving a copy behind would defeat the deletion. A *version* snapshot uses
+        `put_copy_of`, because there the original stays where it is.
         """
         resolved = digest or filestore.digest_of_file(source)
         destination = self.path_for(resolved)
@@ -93,6 +95,36 @@ class BlobStore:
             staging=filestore.staging_path(self.staging_root, operation_id, part=resolved),
         )
         return resolved
+
+    def put_copy_of(self, source: Path, *, operation_id: UUID) -> str:
+        """Copy a file into the store without disturbing it, and return its digest.
+
+        The snapshot an app-mediated overwrite takes before it writes
+        ([F-007/FR-9](../../../features/F-007-versioning.md)). A copy rather than the cheaper
+        move `03` describes, for a reason that only shows up in the ordering: a move empties
+        the destination path until the new bytes are renamed in, and a scan that interleaves
+        there reads an absent name as a deletion — it would trash the file mid-upload, and a
+        concurrent download would `404`. Copying keeps the path holding valid content at every
+        instant and costs one extra read of the old file.
+
+        The digest is computed from the bytes as they are copied, so it describes what was
+        actually snapshotted rather than what a row claimed. The caller compares it against the
+        version it means to supersede: a difference means the file was edited on the storage
+        behind the app's back, and the overwrite has to be refused rather than silently lose
+        that edit ([F-001/FR-20](../../../features/F-001-upload-and-import.md)).
+        """
+        staging = filestore.staging_path(self.staging_root, operation_id, part="snapshot")
+        digest = filestore.stage_copy(source, staging)
+        destination = self.path_for(digest)
+        if destination.is_file():
+            # Already stored, by an earlier attempt or by another file with the same content.
+            filestore.remove(staging)
+            return digest
+        # The shard directory is only known once the digest is: the commit is a rename, and a
+        # rename into a directory that does not exist yet fails.
+        filestore.ensure_directory(destination.parent)
+        filestore.commit_staged(staging, destination)
+        return digest
 
     def open(self, digest: str) -> Path:
         """The path to read a blob from, or raise if it is missing."""
