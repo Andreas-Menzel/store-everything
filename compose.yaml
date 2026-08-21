@@ -61,6 +61,15 @@ services:
       SE_LOGIN_MAX_ATTEMPTS: ${SE_LOGIN_MAX_ATTEMPTS:-10}
       SE_LOGIN_LOCKOUT_MINUTES: ${SE_LOGIN_LOCKOUT_MINUTES:-15}
       SE_RATE_LIMIT_PER_MINUTE: ${SE_RATE_LIMIT_PER_MINUTE:-300}
+      # Operation layer (12-reliability.md § tuning defaults). The API enqueues work in the
+      # request's transaction; the orchestrator claims and runs it.
+      SE_LEASE_SECONDS: ${SE_LEASE_SECONDS:-300}
+      SE_HEARTBEAT_SECONDS: ${SE_HEARTBEAT_SECONDS:-60}
+      SE_MAX_ATTEMPTS: ${SE_MAX_ATTEMPTS:-4}
+      SE_RETRY_BASE_SECONDS: ${SE_RETRY_BASE_SECONDS:-10}
+      SE_RETRY_MAX_SECONDS: ${SE_RETRY_MAX_SECONDS:-3600}
+      SE_WORKER_CONCURRENCY: ${SE_WORKER_CONCURRENCY:-4}
+      SE_WORKER_POLL_SECONDS: ${SE_WORKER_POLL_SECONDS:-5}
     healthcheck:
       # Readiness, not liveness: an instance whose migrations are pending must not be
       # sent traffic (10-deployment-and-operations.md § health & readiness).
@@ -90,6 +99,37 @@ services:
       traefik.http.routers.store-everything.tls.certresolver: ${TRAEFIK_CERT_RESOLVER:-letsencrypt}
       traefik.http.services.store-everything.loadbalancer.server.port: '8000'
 
+  # Background work: uploads finalising, scans, the janitor, and from phase 2 the extractor
+  # jobs. A separate process from the API on purpose — search and browsing must never wait
+  # behind a queue (04 § prioritization) — and safe to stop at any instant: leases expire and
+  # another worker reclaims (ADR-0010).
+  orchestrator:
+    image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SE_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SE_APP_ENV: production
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_LEASE_SECONDS: ${SE_LEASE_SECONDS:-300}
+      SE_HEARTBEAT_SECONDS: ${SE_HEARTBEAT_SECONDS:-60}
+      SE_MAX_ATTEMPTS: ${SE_MAX_ATTEMPTS:-4}
+      SE_RETRY_BASE_SECONDS: ${SE_RETRY_BASE_SECONDS:-10}
+      SE_RETRY_MAX_SECONDS: ${SE_RETRY_MAX_SECONDS:-3600}
+      SE_WORKER_CONCURRENCY: ${SE_WORKER_CONCURRENCY:-4}
+      SE_WORKER_POLL_SECONDS: ${SE_WORKER_POLL_SECONDS:-5}
+    command: ['store-everything', 'worker']
+    # Sized for stop-claiming-and-release, never for job duration (ADR-0010).
+    stop_grace_period: 30s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # No ingress and no proxy label: nothing routes to a worker.
+    networks: [internal]
+
   # Never starts on its own: when migrations run on upgrade is still open (Q20), so
   # applying them stays an explicit act.
   #   docker compose run --rm migrations
@@ -108,8 +148,7 @@ services:
     restart: 'no'
     networks: [internal]
 
-# The orchestrator and the extractor containers join this file in phases 1 and 2, when
-# there is something for them to run.
+# The extractor containers join this file in phase 2, when there is something to run them on.
 
 volumes:
   postgres-data:

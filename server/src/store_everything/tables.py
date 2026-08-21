@@ -25,7 +25,9 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     MetaData,
+    SmallInteger,
     Table,
     Text,
     UniqueConstraint,
@@ -185,3 +187,88 @@ event = Table(
 """The append-only event log (ADR-0007). Writes ride the transaction of the change they
 describe; `UPDATE` is refused by a database trigger, so immutability does not depend on
 every future code path remembering it."""
+
+
+#: The operation state machine (12-reliability.md § operation records). `queued` doubles as
+#: "waiting for a retry" — a retryable failure returns to it with a later `next_due_at` — so
+#: the only non-terminal states are `queued` and `running`.
+OPERATION_STATES = (
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "dead_letter",
+    "cancelled",
+    "superseded",
+)
+
+#: Nothing claims these again, and their idempotency key becomes free for reuse.
+TERMINAL_OPERATION_STATES = ("succeeded", "failed", "dead_letter", "cancelled", "superseded")
+
+#: Priority classes from 04-ingestion-pipeline.md § prioritization: 0 = interactive,
+#: 1 = presence, 2 = searchability, 3 = heavy derived, 4 = reprocessing. Lower runs first.
+MIN_PRIORITY, MAX_PRIORITY = 0, 4
+
+
+operation = Table(
+    "operation",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("state", Text, nullable=False, server_default=text("'queued'")),
+    Column("priority", SmallInteger, nullable=False, server_default=text("2")),
+    # Counted on *claim*, not on failure: a job that OOM-kills its worker never reports an
+    # error, and counting here is what dead-letters it anyway (12 § leases & fencing).
+    Column("attempt", Integer, nullable=False, server_default=text("0")),
+    Column("max_attempts", Integer, nullable=False),
+    # The durable schedule. Retry backoff, periodic work and "run now" are all this column;
+    # in-memory timers are forbidden (ADR-0010 rule 1).
+    Column("next_due_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("leased_by", Text, nullable=True),
+    Column("lease_expires_at", DateTime(timezone=True), nullable=True),
+    # The cancellation channel: a worker learns of it from its heartbeat response rather
+    # than from a signal, so cancellation survives a restart like everything else.
+    Column("cancel_requested", Boolean, nullable=False, server_default=text("false")),
+    Column("idempotency_key", Text, nullable=True),
+    Column("payload", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("result", JSONB, nullable=True),
+    Column("error", Text, nullable=True),
+    # What the operation is about, so per-file and per-workspace status stays answerable
+    # (04 § status & observability) without one table per operation kind.
+    Column("subject_type", Text, nullable=True),
+    Column("subject_id", UUID(as_uuid=True), nullable=True),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint(one_of("state", OPERATION_STATES), name="state_known"),
+    CheckConstraint(
+        f"priority BETWEEN {MIN_PRIORITY} AND {MAX_PRIORITY}", name="priority_in_range"
+    ),
+    CheckConstraint("max_attempts > 0", name="max_attempts_positive"),
+    CheckConstraint("attempt >= 0", name="attempt_not_negative"),
+    CheckConstraint("lease_expires_at IS NULL OR leased_by IS NOT NULL", name="lease_has_an_owner"),
+    # The claim query reads only claimable rows, and a 10 TB import leaves millions of
+    # terminal ones behind (12 § queue hygiene) — so the index covers the live set only.
+    Index(
+        "ix_operation_claimable",
+        "priority",
+        "next_due_at",
+        postgresql_where=text("state IN ('queued', 'running')"),
+    ),
+    # At most one *queued* operation per key, which is what makes re-detecting pending work
+    # converge instead of duplicating it. Deliberately not extended to `running`: a periodic
+    # operation queues its own successor while it is still executing, and a key held by the
+    # in-flight run would make that impossible. Convergence with running work is a question
+    # about work identity rather than about the queue, so `operations.enqueue` answers it.
+    Index(
+        "uq_operation_idempotency_key",
+        "idempotency_key",
+        unique=True,
+        postgresql_where=text("idempotency_key IS NOT NULL AND state = 'queued'"),
+    ),
+    Index("ix_operation_kind_state", "kind", "state"),
+    Index("ix_operation_subject_type_subject_id", "subject_type", "subject_id"),
+)
+"""One table for every effectful operation (ADR-0013). A feature that invents its own job
+handling is a review-blocker, exactly as ad-hoc file IO is."""

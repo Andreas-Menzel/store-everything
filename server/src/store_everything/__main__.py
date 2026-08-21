@@ -1,8 +1,13 @@
 """Process entrypoint: `python -m store_everything`, or the `store-everything` command.
 
-Two subcommands. `serve` (the default) runs the API; `create-admin` creates the first
-administrator on an instance that has none, for operators who would rather not put a
-password in the environment (07-identity-permissions-sharing.md § users).
+Three subcommands. `serve` (the default) runs the API; `worker` runs the operation loop that
+executes queued work (12-reliability.md); `create-admin` creates the first administrator on
+an instance that has none, for operators who would rather not put a password in the
+environment (07-identity-permissions-sharing.md § users).
+
+The API and the worker are separate processes on purpose: background work must never be able
+to starve request handling of CPU, and the two scale independently
+(10-deployment-and-operations.md § topology).
 """
 
 from __future__ import annotations
@@ -10,14 +15,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import logging
+import signal
 import sys
 
 import uvicorn
 
-from store_everything import bootstrap, passwords
+from store_everything import bootstrap, handlers, passwords
 from store_everything.config import Settings, load_settings
 from store_everything.db import create_engine
 from store_everything.log import configure_logging
+from store_everything.runner import Runner
 
 
 def serve(settings: Settings) -> None:
@@ -34,6 +42,40 @@ def serve(settings: Settings) -> None:
         log_config=None,
         access_log=False,
     )
+
+
+_logger = logging.getLogger(__name__)
+
+
+async def _work(settings: Settings) -> int:
+    """Run the operation loop until the process is asked to stop.
+
+    SIGTERM stops claiming and lets in-flight work finish; it is an optimization for restart
+    speed, not a correctness mechanism. A `kill -9` here is equally safe — the leases simply
+    expire and another worker reclaims (ADR-0010).
+    """
+    engine = create_engine(settings)
+    runner = Runner(engine, settings, handlers.registry())
+
+    loop = asyncio.get_running_loop()
+    for signal_number in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(signal_number, runner.stop)
+
+    try:
+        # Nothing here touches a table until the schema exists: on a fresh install the stack
+        # comes up before migrations are applied, and a worker that crashed instead of
+        # waiting would restart-loop through the whole first-run window.
+        if not await runner.wait_until_ready():
+            return 0
+        await handlers.install_schedules(engine, settings)
+        await runner.run_forever()
+    finally:
+        await engine.dispose()
+    return 0
+
+
+def work(settings: Settings) -> int:
+    return asyncio.run(_work(settings))
 
 
 async def _create_admin(settings: Settings, email: str, password: str) -> int:
@@ -80,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="store-everything", description=__doc__)
     subcommands = parser.add_subparsers(dest="command")
     subcommands.add_parser("serve", help="run the API service (default)")
+    subcommands.add_parser("worker", help="run the operation loop")
     admin = subcommands.add_parser("create-admin", help="create the first administrator")
     admin.add_argument("email", help="the administrator's email address")
     return parser
@@ -92,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if arguments.command == "create-admin":
         return create_admin(settings, arguments.email)
+
+    if arguments.command == "worker":
+        return work(settings)
 
     serve(settings)
     return 0

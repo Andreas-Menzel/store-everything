@@ -28,11 +28,16 @@ Rules:
 
 1. **Only the core API joins the Traefik network.** Orchestrator, PostgreSQL, and extractors live on the internal network with no ingress; extractors additionally have no egress by default (Q7).
 2. The API serves **plain HTTP internally**; TLS exists only at the edge.
-3. **The API container also serves the built web UI** ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)) — one image, one origin, so the SPA needs no CORS entry and the session cookie is same-site by construction ([07](07-identity-permissions-sharing.md#tokens--credentials)). API routes live under `/api/v1`; everything else falls back to the SPA's entry document.
-4. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
-5. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
-6. Local development runs without a proxy (localhost bind, plain HTTP).
-7. **The runtime image contains no package installer.** The virtualenv is built at image-build time and copied in; `pip` and `ensurepip` are removed. A running container therefore cannot install code, and the image does not inherit pip's vendored dependency tree — which is otherwise its only source of CVEs. Enforced in CI ([11](11-engineering-standards.md#ci-pipeline-the-enforcement-list)).
+3. **The API and the orchestrator are separate processes** from the same image, differing
+   only in their command (`store-everything worker`). Background work must never be able to
+   starve request handling of CPU ([04 § prioritization](04-ingestion-pipeline.md#prioritization--scheduling)),
+   the two scale independently, and either can be restarted without the other. Running no
+   worker at all is a valid degraded mode: queued work waits, and reads keep working.
+4. **The API container also serves the built web UI** ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)) — one image, one origin, so the SPA needs no CORS entry and the session cookie is same-site by construction ([07](07-identity-permissions-sharing.md#tokens--credentials)). API routes live under `/api/v1`; everything else falls back to the SPA's entry document.
+5. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
+6. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
+7. Local development runs without a proxy (localhost bind, plain HTTP).
+8. **The runtime image contains no package installer.** The virtualenv is built at image-build time and copied in; `pip` and `ensurepip` are removed. A running container therefore cannot install code, and the image does not inherit pip's vendored dependency tree — which is otherwise its only source of CVEs. Enforced in CI ([11](11-engineering-standards.md#ci-pipeline-the-enforcement-list)).
 
 ## Edge vs. app responsibilities
 

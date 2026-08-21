@@ -5,9 +5,9 @@ proxy you already run ([ADR-0005](../decisions/ADR-0005-single-server-docker-net
 [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md)).
 
 > **Phase 1, in progress.** Accounts exist: you can log in, manage users, and issue access
-> tokens. Files and search do not exist yet ([ROADMAP](../ROADMAP.md)). Installing now is
-> useful for verifying your proxy, your backups and your first admin account — not for
-> storing anything.
+> tokens, and the background worker runs. Files and search do not exist yet
+> ([ROADMAP](../ROADMAP.md)). Installing now is useful for verifying your proxy, your
+> backups and your first admin account — not for storing anything.
 
 ## Requirements
 
@@ -40,7 +40,9 @@ docker compose up -d
 
 The API reports **not ready** at this point, and its container is marked unhealthy. That
 is correct: the schema has not been created yet, and an instance that cannot serve should
-not be routed traffic.
+not be routed traffic. The `orchestrator` waits for the same reason, logging one line —
+`waiting before claiming work` — rather than failing; it starts on its own once the schema
+is in place, with no restart needed.
 
 **3. Apply the schema.**
 
@@ -101,6 +103,9 @@ itself.
 docker compose pull && docker compose up -d && docker compose run --rm migrations
 ```
 
+An upgrade that adds a table follows the same order: the API answers **not ready** and the
+orchestrator waits until you have run the migration step. Both then continue by themselves.
+
 Migrations are expand–contract, so the previous image keeps working against the migrated
 schema; rolling back is redeploying the previous tag. Take a database backup first — the
 backup story itself is still open ([Q13](../OPEN-QUESTIONS.md)), and an untested restore
@@ -124,10 +129,15 @@ simply inert.
 |---|---|
 | `api` | The only service on the proxy network. Serves plain HTTP internally; TLS is the proxy's job. |
 | `postgres` | Internal only, no published port. Data lives in the `postgres-data` volume. |
+| `orchestrator` | Runs background work (`store-everything worker`). No ingress, no proxy label — nothing routes to a worker. |
 | `migrations` | Runs on request (`docker compose run --rm migrations`) and exits. |
 
-The orchestrator and the extractor containers join this file in phases 1 and 2, when
-there is something for them to run.
+Stopping the orchestrator at any moment is safe, including `kill -9`: work is claimed
+under a lease, and an expired lease is picked up by whichever worker starts next
+([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)). It is also fine to run
+none — the API keeps serving and queued work simply waits.
+
+The extractor containers join this file in phase 2, when there is something to run them on.
 
 ## Logs
 
