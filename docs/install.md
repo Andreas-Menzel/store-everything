@@ -262,6 +262,36 @@ The distinction between a directory that is **gone** and one that could not be *
 deliberate: only the first is a statement about the files inside it. A share that fails to
 mount produces skipped entries, never deletions.
 
+### Noticing a change in seconds instead of within the hour
+
+The scheduled scan is the backstop; the **watcher** is what makes a file dropped onto the storage
+show up while you are still looking at the folder. It is on by default
+(`SE_WATCHER_ENABLED`), watches every workspace root, and turns a burst of filesystem activity —
+copying five hundred photos is one burst — into a single scan of the directory that covers it.
+`import-status` reports whether a root is actually being watched:
+
+```bash
+curl -s "https://$PUBLIC_HOST/api/v1/workspaces/$WORKSPACE/import-status" \
+  -H "Authorization: Bearer $TOKEN" | jq .watch
+```
+
+Three answers, none of which is an error:
+
+| `state` | What it means |
+|---|---|
+| `watching` | Events on this root hasten its next scan |
+| `unwatched` | No worker holds a subscription — the watcher is off, or the orchestrator is not running |
+| `unavailable` | The app tried and could not; `detail` says why, and the scheduled scan still covers the workspace |
+
+The one cause worth acting on is the Linux watch limit: each watched directory costs one inotify
+watch, so a large tree can exceed `fs.inotify.max_user_watches`. Raise it (`sysctl -w
+fs.inotify.max_user_watches=524288`, persisted in `/etc/sysctl.d/`) or accept the hourly pass.
+
+**Kernel events do not fire for changes made on the server side of an SMB or NFS mount**, so on
+such a mount the watcher subscribes and simply never hears anything — the state says `watching`
+because the app did subscribe, and the schedule is what actually finds those changes. That is the
+reason the schedule exists.
+
 ### What a rescan does about files that changed
 
 Every pass after the first reconciles what it finds against what the app already knows, and

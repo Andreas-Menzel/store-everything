@@ -56,6 +56,7 @@ KIND = "workspace.provision"
 type Source = Literal["local"]
 type Placement = Literal["managed", "adopted"]
 type State = Literal["provisioning", "active"]
+type WatchState = Literal["unwatched", "watching", "unavailable"]
 
 #: An arbitrary constant; its only requirement is that nothing else in this schema uses it.
 _ROOT_ADMISSION_LOCK = 1_837_465_001
@@ -85,6 +86,8 @@ class Workspace:
     fs_check: dict[str, Any]
     fs_checked_at: datetime
     scan_interval_minutes: int
+    watch_state: WatchState
+    watch_detail: str | None
     created_at: datetime
 
     @property
@@ -184,11 +187,25 @@ _COLUMNS = (
     workspace.c.fs_check,
     workspace.c.fs_checked_at,
     workspace.c.scan_interval_minutes,
+    workspace.c.watch_state,
+    workspace.c.watch_detail,
     workspace.c.created_at,
 )
 
 type _Row = tuple[
-    UUID, UUID, str, Source, Placement, str, State, dict[str, Any], datetime, int, datetime
+    UUID,
+    UUID,
+    str,
+    Source,
+    Placement,
+    str,
+    State,
+    dict[str, Any],
+    datetime,
+    int,
+    WatchState,
+    str | None,
+    datetime,
 ]
 
 
@@ -204,6 +221,8 @@ def _as_workspace(row: _Row) -> Workspace:
         verdict,
         checked_at,
         interval,
+        watching,
+        watch_detail,
         created,
     ) = row
     return Workspace(
@@ -219,6 +238,8 @@ def _as_workspace(row: _Row) -> Workspace:
         fs_check=verdict,
         fs_checked_at=checked_at,
         scan_interval_minutes=interval,
+        watch_state=watching,
+        watch_detail=watch_detail,
         created_at=created,
     )
 
@@ -302,6 +323,43 @@ async def list_active(connection: AsyncConnection) -> list[Workspace]:
     """Every workspace whose storage exists. What the scan schedules are asserted over."""
     rows = (await connection.execute(_query().where(workspace.c.state == "active"))).all()
     return [_as_workspace(tuple(row)) for row in rows]
+
+
+async def record_watch(
+    connection: AsyncConnection,
+    *,
+    workspace_id: UUID,
+    state: WatchState,
+    detail: str | None = None,
+) -> None:
+    """Record whether a worker is listening to this root, and why not when it is not.
+
+    A report, never an input: nothing reads this to decide anything, because the watcher is an
+    accelerator and the scheduled pass is the truth (ADR-0019). It exists so that "my change
+    took an hour to appear" has an answer other than reading the worker's log.
+
+    `updated_at` is deliberately left alone — a subscription is not a change to the workspace.
+    """
+    await connection.execute(
+        update(workspace)
+        .where(workspace.c.id == workspace_id)
+        .values(watch_state=state, watch_detail=detail)
+    )
+
+
+async def clear_watches(connection: AsyncConnection) -> int:
+    """Forget every claim to be watching. Returns how many rows it cleared.
+
+    Called when a worker takes over and when it shuts down, because the claim belongs to a
+    process rather than to the row: a `kill -9` would otherwise leave a workspace saying it is
+    watched by a worker that no longer exists.
+    """
+    result = await connection.execute(
+        update(workspace)
+        .where(workspace.c.watch_state != "unwatched")
+        .values(watch_state="unwatched", watch_detail=None)
+    )
+    return result.rowcount
 
 
 async def staging_roots(connection: AsyncConnection) -> tuple[Path, ...]:

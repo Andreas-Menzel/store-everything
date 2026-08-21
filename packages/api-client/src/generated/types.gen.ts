@@ -140,6 +140,7 @@ export type ImportStatus = {
      * Scan Interval Minutes
      */
     scan_interval_minutes: number;
+    watch: WatchStatus;
     active: ScanSummary | null;
     /**
      * Recent
@@ -554,6 +555,22 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * WatchStatus
+ *
+ * Whether the fast path in front of the schedule is listening to this root.
+ */
+export type WatchStatus = {
+    /**
+     * State
+     */
+    state: 'unwatched' | 'watching' | 'unavailable';
+    /**
+     * Detail
+     */
+    detail: string | null;
 };
 
 /**

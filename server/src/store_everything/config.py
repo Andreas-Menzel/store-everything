@@ -138,6 +138,23 @@ class Settings(BaseSettings):
     paths, and this is the one that cannot be missed. Stored per workspace, so changing it
     here affects workspaces created afterwards."""
 
+    watcher_enabled: bool = True
+    """Whether the worker subscribes to filesystem events for every workspace root.
+
+    On by default because a file dropped onto the storage showing up in seconds rather than
+    within the hour is most of what "keeping up with it" feels like. Safe to have on: a watcher
+    event only ever *hastens* a scan the schedule would have run anyway
+    ([ADR-0019](../../../decisions/ADR-0019-source-tree-semantics.md)), so turning this off
+    costs latency and nothing else. Worth turning off on a host whose kernel watch limit cannot
+    hold the tree, though the app degrades to the schedule on its own and says so."""
+
+    watcher_debounce_seconds: float = Field(default=5.0, gt=0)
+    """How long a burst of events has to go quiet before it becomes one scan.
+
+    A copy of five hundred files is one intention, not five hundred (12 § tuning defaults). A
+    burst that never goes quiet — an `rsync` running for an hour — is still scanned every
+    `watcher.MAX_HOLD_FACTOR` times this, so progress is visible while it runs."""
+
     adoption_roots: Annotated[tuple[Path, ...], NoDecode] = ()
     """The complete set of locations a workspace may be **adopted** from — an existing tree
     indexed in place (ADR-0018). Empty by default, which disables adoption entirely.

@@ -291,6 +291,12 @@ WORKSPACE_PLACEMENTS = ("managed", "adopted")
 #: control directory and the root folder are all there.
 WORKSPACE_STATES = ("provisioning", "active")
 
+#: Whether a worker is listening for filesystem events on this root (ADR-0019's watcher).
+#: `unavailable` is not an error state — the kernel's watch limit, a permission, or a mount that
+#: went away — it means this workspace has only the scheduled pass, which is the one that
+#: cannot be missed anyway.
+WORKSPACE_WATCH_STATES = ("unwatched", "watching", "unavailable")
+
 
 workspace = Table(
     "workspace",
@@ -323,6 +329,11 @@ workspace = Table(
     # default and per-workspace because a photo archive and a working directory do not want
     # the same cadence.
     Column("scan_interval_minutes", Integer, nullable=False, server_default=text("60")),
+    # Whether the fast path in front of that schedule is actually listening, and why not when
+    # it is not (ADR-0019's watcher). Written by the worker that holds the subscription, so a
+    # user asking "why did my change take an hour?" has an answer that is not a log file.
+    Column("watch_state", Text, nullable=False, server_default=text("'unwatched'")),
+    Column("watch_detail", Text, nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # One user's workspace names are unique on the comparison key, which is also what keeps
@@ -334,6 +345,7 @@ workspace = Table(
     CheckConstraint(one_of("source", WORKSPACE_SOURCES), name="source_known"),
     CheckConstraint(one_of("placement", WORKSPACE_PLACEMENTS), name="placement_known"),
     CheckConstraint(one_of("state", WORKSPACE_STATES), name="state_known"),
+    CheckConstraint(one_of("watch_state", WORKSPACE_WATCH_STATES), name="watch_state_known"),
     # `octet_length`, not `length`: the policy is bytes, and a name of 255 characters can be
     # four times that on disk.
     CheckConstraint(f"octet_length(name) BETWEEN 1 AND {MAX_NAME_BYTES}", name="name_length"),

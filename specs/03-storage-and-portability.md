@@ -104,6 +104,12 @@ Detection has one guaranteed path and two accelerators ([ADR-0019](../decisions/
 | **Manual rescan** — workspace or single subtree | The user's "look now" button, and the answer when a watcher cannot exist. |
 | **Filesystem watcher**, where the platform supports it | A [lossy doorbell](12-reliability.md#durable-schedules-lossy-doorbells): events debounce into targeted subtree scans. Overflow, failure, or total absence is **not an error** — the scheduled pass reaches the same state. |
 
+How the watcher behaves, since "debounce into targeted subtree scans" leaves three things open ([F-001/FR-21](../features/F-001-upload-and-import.md)):
+
+- **A burst is one intention.** Events coalesce, per workspace, into the deepest directory that covers them all, and become **one** scan when the burst goes quiet — or sooner, when it has been running long enough that waiting for quiet would mean waiting for an `rsync` to finish. Coalescing happens at intake, so a million events cost no more memory than one.
+- **It requests the same work a person would.** A watcher event queues the ordinary re-scan operation with trigger `watcher`; there is no watcher-specific path through the scanner, and a subtree that the index has not seen yet is scanned as its nearest known ancestor rather than refused.
+- **Whether a root is watched is visible**, per workspace, with the reason when it is not — the kernel's watch limit is the one an operator can act on, and `import-status` names it. `.workspace/` is excluded from watching as well as from scanning: the app's own upload staging lives there, and would otherwise ring its own doorbell for as long as an upload runs.
+
 No change is ever noticed *only* because a watcher fired, which is what keeps behavior identical on filesystems that deliver no events at all (every SMB/NFS mount). Verifying the content hash of every file is a **separate on-demand integrity pass** ([§ integrity](#integrity)), never part of routine scanning.
 
 Detection is asymmetric on purpose, because its two errors are not equally bad. Missing a change costs an hour; concluding a deletion that did not happen costs an index. So three rules bound what a scan may conclude:

@@ -32,7 +32,12 @@ Rules:
    only in their command (`store-everything worker`). Background work must never be able to
    starve request handling of CPU ([04 § prioritization](04-ingestion-pipeline.md#prioritization--scheduling)),
    the two scale independently, and either can be restarted without the other. Running no
-   worker at all is a valid degraded mode: queued work waits, and reads keep working.
+   worker at all is a valid degraded mode: queued work waits, and reads keep working. The
+   worker process also holds the **filesystem watcher** ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)),
+   which is background work with no request behind it. The shipped topology runs one worker; a
+   second replica would watch the same roots again — its presses are idempotent, so the cost is
+   duplicate kernel watches rather than duplicate work, and `SE_WATCHER_ENABLED=false` on the
+   extra replicas is the lever. No coordination is built for a case the deployment does not have.
 4. **The API container also serves the built web UI** ([ADR-0014](../decisions/ADR-0014-vue-frontend-stack.md)) — one image, one origin, so the SPA needs no CORS entry and the session cookie is same-site by construction ([07](07-identity-permissions-sharing.md#tokens--credentials)). API routes live under `/api/v1`; everything else falls back to the SPA's entry document.
 5. `X-Forwarded-*` is trusted **only from the proxy network** — a spoofed client IP would poison rate limiting ([07](07-identity-permissions-sharing.md#abuse-protection)) and audit records ([F-011](../features/F-011-audit-trail.md)).
 6. The app is **proxy-agnostic**: nothing depends on Traefik specifics; any reverse proxy works by translating the shipped labels. Traefik is the documented first-class path.
@@ -68,6 +73,7 @@ The resumable-upload protocol ([ADR-0017](../decisions/ADR-0017-resumable-upload
 - 12-factor: **deployment config comes from the environment** — never hardcoded, never committed. The compose file reads a git-ignored `.env`; a committed `.env.example` documents every variable with dummy values. (Domain configuration — workspaces, extractors, users — is data and lives in PostgreSQL, [03](03-storage-and-portability.md).)
 - **Secrets** (DB password, token-signing key, remote-extractor credentials) are env-provided, held in secret types in code, **never logged**, never baked into images or layers.
 - Credentials for network-enabled extractors are per-extractor env config — never in the manifest ([05](05-extractor-contract.md#container-requirements-hardening), Q19).
+- **One host-level limit an operator may have to raise:** the filesystem watcher takes one kernel watch per directory on Linux, and a tree larger than `fs.inotify.max_user_watches` cannot be watched whole. The app does not fail on it — that workspace reports `unavailable` with the limit named and keeps its scheduled pass ([F-001/FR-21](../features/F-001-upload-and-import.md)) — so raising the sysctl, or setting `SE_WATCHER_ENABLED=false`, is a latency decision rather than a repair. Nothing else the app needs is a kernel tunable.
 
 ## Logging
 
