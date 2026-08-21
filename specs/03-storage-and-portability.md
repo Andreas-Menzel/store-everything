@@ -115,7 +115,7 @@ The same tree is written by Linux, macOS and Windows machines, whose name rules 
 
 The write protocol ([12](12-reliability.md#filesystem-write-protocol)) stands on three properties of a workspace root's filesystem: **atomic same-directory rename**, **honest `fsync`** on files *and* directories, and **listings stable enough to traverse deterministically**. These are not assumed:
 
-- An **`fs-check` probe** ships with the app and exercises them directly. It runs when a workspace is created or adopted — recording its verdict on the workspace — and on demand.
+- An **`fs-check` probe** ships with the app and exercises them directly (`store-everything fs-check <path>`). It runs when a workspace is created or adopted — recording its verdict on the workspace — and on demand. It reports each required property separately, so a refusal names what is missing rather than saying "unsupported".
 - A root whose filesystem fails the probe is **refused, naming the property that failed**.
 - **v1 supports filesystems local to the app host.** SMB and NFS mounts stay unsupported until the probe passes against that mount with its own options, because on a filesystem that lies about `fsync` or breaks rename atomicity every guarantee in [12](12-reliability.md) is void.
 

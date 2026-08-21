@@ -44,6 +44,14 @@ RUN rm -rf /usr/local/lib/python3.*/site-packages/pip \
 # will later write to is mounted with explicit ownership.
 RUN useradd --create-home --uid 10001 app
 
+# The app-owned storage area (03 § storage layout) has to exist in the image *with the right
+# owner*: Docker copies a mount point's ownership into a fresh named volume, so creating it
+# here is what makes the volume writable by an unprivileged process. Without it the container
+# starts fine and then cannot write a single version — which `store-everything fs-check`
+# reports rather than discovering at the first upload.
+RUN mkdir -p /var/lib/store-everything/versions /var/lib/store-everything/derived \
+    && chown -R app:app /var/lib/store-everything
+
 COPY --from=builder --chown=app:app /app /app
 
 WORKDIR /app

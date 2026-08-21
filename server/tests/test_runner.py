@@ -300,11 +300,18 @@ async def test_released_claims_do_not_burn_attempts(
 async def test_the_instance_heartbeat_re_arms_its_own_schedule(
     engine: AsyncEngine, identity_database: str
 ) -> None:
-    """Periodic work chains itself; `ensure_scheduled` is only the floor under the chain."""
-    settings = settings_for(identity_database)
-    await handlers.install_schedules(engine, settings)
+    """Periodic work chains itself; `ensure_scheduled` is only the floor under the chain.
 
-    runner = Runner(engine, settings, handlers.registry())
+    Only this schedule is installed. Several kinds queued in one transaction share a
+    `next_due_at` to the microsecond, so which one a single claim picks is arbitrary — a test
+    that installed all of them would pass or fail on that coin flip.
+    """
+    settings = settings_for(identity_database)
+    async with engine.connect() as connection:
+        await operations.ensure_scheduled(connection, kind=handlers.HEARTBEAT, max_attempts=3)
+        await connection.commit()
+
+    runner = Runner(engine, settings, handlers.registry(settings))
     assert await runner.run_once()
 
     async with engine.connect() as connection:
@@ -313,16 +320,18 @@ async def test_the_instance_heartbeat_re_arms_its_own_schedule(
     assert depth == {"succeeded": 1, "queued": 1}
 
 
-async def test_installing_schedules_twice_leaves_one_pending_run(
+async def test_installing_schedules_twice_leaves_one_pending_run_per_kind(
     engine: AsyncEngine, identity_database: str
 ) -> None:
+    """Start-up re-asserts the schedules, so this happens on every restart."""
     settings = settings_for(identity_database)
 
     await handlers.install_schedules(engine, settings)
     await handlers.install_schedules(engine, settings)
 
     async with engine.connect() as connection:
-        assert await operations.count_by_state(connection, kind=handlers.HEARTBEAT) == {"queued": 1}
+        for kind in handlers.registry(settings):
+            assert await operations.count_by_state(connection, kind=kind) == {"queued": 1}, kind
 
 
 # ------------------------------------------------------- starting before the schema exists

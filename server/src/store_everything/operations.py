@@ -30,6 +30,7 @@ would otherwise hand out overlapping leases.
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, Self
@@ -540,3 +541,19 @@ async def count_by_state(connection: AsyncConnection, *, kind: str | None = None
         query = query.where(operation.c.kind == kind)
     rows = (await connection.execute(query)).all()
     return {str(state): int(count) for state, count in rows}
+
+
+async def states_of(connection: AsyncConnection, ids: Sequence[UUID]) -> dict[UUID, str]:
+    """The states of many operations in one query.
+
+    For callers that hold a pile of ids — the janitor looking at a directory full of staging
+    files — and must not turn that into one round trip each.
+    """
+    if not ids:
+        return {}
+    rows = (
+        await connection.execute(
+            select(operation.c.id, operation.c.state).where(operation.c.id.in_(list(ids)))
+        )
+    ).all()
+    return {row[0]: str(row[1]) for row in rows}
