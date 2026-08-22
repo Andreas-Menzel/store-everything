@@ -219,8 +219,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The whole repository is the context, not `server/`: this image carries the built web
+      # client as well as the service, because one image and one origin is what makes the session
+      # cookie same-site by construction (10 § topology, F-027/FR-1).
       - name: Build
-        run: docker build -t store-everything-core:ci server/
+        run: docker build -f server/Dockerfile -t store-everything-core:ci .
       # The virtualenv is built at image-build time, so a package installer in the
       # runtime is unnecessary — and a liability: pip carries its own vendored
       # dependency tree, which is where this image's only CVEs came from.

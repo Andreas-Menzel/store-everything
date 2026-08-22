@@ -33,7 +33,11 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ./server
+          # The repository root, because the image carries the built web client too
+          # (10 § topology). Must stay in step with the build in `ci.yml` and with
+          # `compose.yaml`'s `build:` — three places, one context.
+          context: .
+          file: server/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

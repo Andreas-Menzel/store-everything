@@ -76,3 +76,33 @@ def test_the_exception_list_stays_honest() -> None:
     stale = set(NOT_OPERATOR_CONFIGURABLE) - _setting_names()
 
     assert stale == set(), f"stale exceptions: {sorted(stale)}"
+
+
+CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
+RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/release.yml"
+
+#: Everywhere the image is built. Three files, one context — and nothing but a test keeps them
+#: agreeing, which is how a build that works locally reaches CI broken.
+IMAGE_BUILDS = (COMPOSE, CI_WORKFLOW, RELEASE_WORKFLOW)
+
+#: A build context pointing at the service directory. That was right until the image started
+#: carrying the web client too (10 § topology): the client lives outside `server/`, so such a
+#: context cannot see it and the build fails on a `COPY` — in CI for the first one, and at the
+#: next tag for the release.
+_SERVER_AS_CONTEXT = re.compile(r"context:\s*\.?/?server\b|docker build[^\n]*\sserver/?\s*$", re.M)
+
+
+def test_every_place_that_builds_the_image_uses_the_repository_root() -> None:
+    # The detector first, against the line this test exists because of: a gate that cannot
+    # recognise the failure it is named for is decoration.
+    assert _SERVER_AS_CONTEXT.search("        run: docker build -t core:ci server/")
+    assert _SERVER_AS_CONTEXT.search("          context: ./server")
+
+    for path in IMAGE_BUILDS:
+        text = path.read_text(encoding="utf-8")
+        assert "server/Dockerfile" in text, f"{path.name} does not name the Dockerfile explicitly"
+        offending = _SERVER_AS_CONTEXT.search(text)
+        assert offending is None, (
+            f"{path.name} builds from the service directory ({offending.group(0).strip()!r}), "
+            "which cannot see the web client"
+        )
