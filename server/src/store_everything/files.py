@@ -28,10 +28,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, Text, any_, func, insert, literal, or_, select, update
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Select,
+    Text,
+    and_,
+    any_,
+    func,
+    insert,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as UUID_TYPE
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import events, mediatypes, names
@@ -544,57 +559,71 @@ async def relocate(
     found: File,
     folder_id: UUID,
     name: str,
-    modified_at: datetime | None,
-    version_id: UUID,
-    seen_at: datetime,
     actor: Actor,
-    match: str,
     from_path: str,
+    detected: str,
+    match: str | None = None,
+    modified_at: datetime | None = None,
+    version_id: UUID | None = None,
+    seen_at: datetime | None = None,
+    workspace_id: UUID | None = None,
 ) -> File:
     """Move this file's identity to a new folder and name, keeping its UUID.
 
-    The other half of the move heuristic (02 § file): the content is the same, so this is one
-    file that changed place, not a deletion and an arrival. Everything attached to the UUID —
-    versions now, tags and grants later — travels with it for free, which is the entire reason
-    the app addresses files by UUID rather than by path.
+    One function for both ways a file moves, because the row change is identical and only the
+    story differs. A person asking for it (`detected="api"` — F-010/FR-1's first-class move) and a
+    scan recognising one that already happened (`detected="external"`, with the rule that matched)
+    both end here: the content is the same, so this is one file that changed place rather than a
+    deletion and an arrival. Everything attached to the UUID — versions now, tags and grants later
+    — travels with it for free, which is the entire reason the app addresses files by UUID.
+
+    `workspace_id` is only passed for a cross-workspace move, where the file follows its folder
+    (F-015/FR-4); leaving it out keeps the file where it is.
     """
+    values: dict[str, Any] = {
+        "folder_id": folder_id,
+        "name": name,
+        "name_key": names.comparison_key(name),
+        "last_seen_at": func.now() if seen_at is None else seen_at,
+        "updated_at": func.now(),
+    }
+    if workspace_id is not None:
+        values["workspace_id"] = workspace_id
     moved = _as_file(
         tuple(
             (
                 await connection.execute(
                     update(file)
                     .where(file.c.id == found.id)
-                    .values(
-                        folder_id=folder_id,
-                        name=name,
-                        name_key=names.comparison_key(name),
-                        last_seen_at=seen_at,
-                        updated_at=func.now(),
-                    )
+                    .values(**values)
                     .returning(*_FILE_COLUMNS)
                 )
             ).one()
         )
     )
-    # A move usually preserves the mtime and sometimes does not; either way the stat-scan has
-    # to compare against what is on the disk now.
-    await refresh_observed_mtime(connection, version_id=version_id, modified_at=modified_at)
+    if version_id is not None:
+        # A move usually preserves the mtime and sometimes does not; either way the stat-scan has
+        # to compare against what is on the disk now. An app-mediated move is a `rename`, which
+        # preserves it, so there is nothing to refresh.
+        await refresh_observed_mtime(connection, version_id=version_id, modified_at=modified_at)
 
+    details: dict[str, Any] = {
+        "workspace": str(moved.workspace_id),
+        "from": from_path,
+        "to": await path_of(connection, moved),
+        "detected": detected,
+    }
+    if match is not None:
+        # Which rule matched, so "why does this file carry those tags?" has an answer when
+        # several identical files could have been the one that moved.
+        details["match"] = match
     await events.record(
         connection,
         action=events.FILE_MOVED,
         resource_type=events.RESOURCE_FILE,
         resource_id=moved.id,
         actor=actor,
-        details={
-            "workspace": str(moved.workspace_id),
-            "from": from_path,
-            "to": await path_of(connection, moved),
-            "detected": "external",
-            # Which rule matched, so "why does this file carry those tags?" has an answer when
-            # several identical files could have been the one that moved.
-            "match": match,
-        },
+        details=details,
     )
     return moved
 
@@ -640,3 +669,79 @@ async def restorable_digests(connection: AsyncConnection) -> set[str]:
         )
     ).scalars()
     return set(rows)
+
+
+#: How a folder's files can be ordered ([F-015/FR-5](../../../features/F-015-folders.md)). The
+#: key is what the cursor carries; the id breaks ties so a page seam is stable.
+SORT_COLUMNS = {
+    "name": file.c.name_key,
+    "size": file_version.c.size_bytes,
+    "modified": file_version.c.modified_at,
+}
+
+
+async def page_in_folder(
+    connection: AsyncConnection,
+    *,
+    folder_id: UUID,
+    sort: str,
+    limit: int,
+    after: tuple[str, UUID] | None = None,
+) -> list[Known]:
+    """One page of a folder's **live** files, ordered by the requested key.
+
+    Trashed rows are absent by construction rather than by filtering afterwards
+    ([F-014/FR-12](../../../features/F-014-deletion-and-trash.md) applied to a listing): a file
+    someone deleted must not appear in a folder they are browsing.
+
+    Keyset-anchored on `(key, id)` so a directory of 100 000 files paginates stably while others
+    are being uploaded into it (F-015/FR-5). `modified` can be NULL in principle, so it sorts
+    NULLs last and the cursor carries the empty string for them — a page seam has to be
+    representable, not just an ordering.
+    """
+    column = SORT_COLUMNS[sort]
+    query = (
+        select(*_FILE_COLUMNS, *_VERSION_COLUMNS)
+        .join(file_version, file_version.c.file_id == file.c.id)
+        .where(
+            file.c.folder_id == folder_id,
+            file.c.state == "live",
+            file_version.c.is_current.is_(True),
+        )
+        .order_by(column.nullslast(), file.c.id)
+        .limit(limit)
+    )
+    if after is not None:
+        key, identifier = after
+        query = query.where(
+            or_(
+                column > _sort_value(sort, key),
+                and_(column == _sort_value(sort, key), file.c.id > literal(identifier, UUID_TYPE)),
+            )
+        )
+    rows = (await connection.execute(query)).all()
+    return [
+        Known(
+            file=_as_file(tuple(row)[: len(_FILE_COLUMNS)]),
+            version=_as_version(tuple(row)[len(_FILE_COLUMNS) :]),
+        )
+        for row in rows
+    ]
+
+
+def sort_value_of(known: Known, sort: str) -> str:
+    """What a cursor carries for this row under this ordering."""
+    if sort == "size":
+        return str(known.version.size_bytes)
+    if sort == "modified":
+        return "" if known.version.modified_at is None else known.version.modified_at.isoformat()
+    return names.comparison_key(known.file.name)
+
+
+def _sort_value(sort: str, key: str) -> Any:
+    """The cursor's key as the column's own type, so the comparison is not a string one."""
+    if sort == "size":
+        return literal(int(key), BigInteger)
+    if sort == "modified":
+        return literal(datetime.fromisoformat(key), DateTime(timezone=True))
+    return literal(key, Text)

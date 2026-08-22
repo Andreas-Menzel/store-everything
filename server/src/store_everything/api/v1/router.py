@@ -15,7 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from store_everything.api.v1 import auth, files, uploads, users, workspaces
+from store_everything.api.v1 import auth, files, folders, uploads, users, workspaces
 from store_everything.security import enforce_request_ceiling, require_auth
 
 API_V1_PREFIX = "/api/v1"
@@ -52,6 +52,7 @@ def build_v1_router(*, api_docs_enabled: bool) -> APIRouter:
     router.include_router(users.router)
     router.include_router(workspaces.router)
     router.include_router(uploads.router)
+    router.include_router(folders.router)
     router.include_router(files.router)
     return router
 

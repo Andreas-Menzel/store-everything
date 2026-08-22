@@ -271,6 +271,33 @@ class MoveOutcome:
     source_removed: bool
 
 
+def move_entry(source: Path, destination: Path) -> None:
+    """Rename a file or a whole directory to another place on the same filesystem. **Blocking.**
+
+    What a folder rename or move does on disk
+    ([F-015/FR-4](../../../features/F-015-folders.md)): one `rename`, atomic however large the
+    subtree is, because the kernel moves a directory entry rather than the bytes underneath it.
+    Both parent directories are made durable afterwards, because two of them changed.
+
+    Refuses an occupied destination rather than replacing it. The database's own collision check
+    has already run, so reaching this means the filesystem holds something the index does not know
+    about — a directory nobody registered — and overwriting a user's data to resolve that would be
+    the worst possible answer (ADR-0019: report, never repair).
+
+    Raises `OSError` with `EXDEV` when the two paths are on different filesystems, which is the
+    caller's cue that this move needs bytes copied rather than an entry rewritten.
+    """
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"{destination} is already there")
+
+    fault_point("filestore.before-move")
+    os.rename(source, destination)
+    fault_point("filestore.after-move")
+    fsync_directory(destination.parent)
+    if source.parent != destination.parent:
+        fsync_directory(source.parent)
+
+
 def journaled_move(source: Path, destination: Path, *, staging: Path) -> MoveOutcome:
     """Move a file that may be on another filesystem, without a window of loss.
 

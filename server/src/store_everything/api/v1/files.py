@@ -19,6 +19,7 @@ an extractor read one byte range is framework work rather than ours.
 from __future__ import annotations
 
 import asyncio
+import errno
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -27,9 +28,10 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import FileResponse
 
-from store_everything import files, filestore, mediatypes, trash, workspaces
+from store_everything import files, filestore, folders, mediatypes, names, trash, workspaces
 from store_everything.db import DatabaseConnection
-from store_everything.problems import ProblemException
+from store_everything.events import Actor
+from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
 from store_everything.security import CurrentCredential
 
@@ -257,3 +259,164 @@ def _disposition(media_type: str) -> str:
     if normalized.partition("/")[0] in _INLINE_FAMILIES or normalized == "text/plain":
         return "inline"
     return "attachment"
+
+
+class FileMoveRequest(BaseSchema):
+    folder: UUID | None = None
+    """The folder to move it into — in any workspace the caller owns. Absent keeps the current
+    one, which makes this a rename."""
+
+    name: str | None = None
+    """The new name. Absent keeps the current one, which makes this a pure move."""
+
+
+@router.post(
+    "/{file_id}/move",
+    summary="Rename or move a file",
+    response_model=FileSummary,
+    responses={
+        404: {"description": "No such file, or not yours"},
+        409: {"description": "An occupied name, or two filesystems"},
+        422: {"description": "The name or the destination was refused"},
+    },
+)
+async def move_file(
+    file_id: UUID,
+    payload: FileMoveRequest,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> FileSummary:
+    """Move or rename one file: the operation everything else about identity rests on.
+
+    [F-010/FR-1](../../../../features/F-010-auto-sort-inbox.md) asks for exactly this as a
+    first-class operation, because the deferred auto-sorter is going to be its heaviest user and a
+    move that lost tags or versions would make sorting destructive. It cannot: the row keeps its
+    UUID, and everything hangs off that.
+
+    Disk before rows, like every other move (F-015/FR-4): a crash between them leaves the file at
+    its new path with the index still pointing at the old one, which the next scan reconciles by
+    content — the reverse order would leave a row pointing at nothing.
+    """
+    found, workspace = await readable(connection, file_id=file_id, credential=credential)
+    if not found.is_live:
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail="This file is in the trash; restore it before moving it.",
+        )
+
+    name = found.name if payload.name is None else names.normalize_api_name(payload.name)
+    if payload.name is not None:
+        try:
+            names.validate_name(name)
+        except names.InvalidNameError as invalid:
+            raise _invalid(invalid.reason, "/body/name") from invalid
+
+    destination_folder, destination = await _destination(
+        connection,
+        found=found,
+        workspace=workspace,
+        folder_id=payload.folder,
+        credential=credential,
+    )
+    if await files.find_in_folder(connection, folder_id=destination_folder.id, name=name) not in (
+        None,
+        found,
+    ):
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail=f"A file named {name!r} is already there.",
+        )
+    if await folders.child_by_name(connection, parent_id=destination_folder.id, name=name):
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail=f"A folder named {name!r} is already there.",
+        )
+
+    from_path = await files.path_of(connection, found)
+    destination_path = await folders.path_of(connection, destination_folder)
+    to_path = f"{destination_path}/{name}" if destination_path else name
+    try:
+        await asyncio.to_thread(
+            _move_bytes, workspace.root_path, from_path, destination.root_path, to_path
+        )
+    except filestore.ContainmentError as escaped:
+        raise not_found() from escaped
+    except FileExistsError as taken:
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail="Something of that name is already on the storage.",
+        ) from taken
+    except OSError as refused:
+        if refused.errno != errno.EXDEV:
+            raise
+        raise ProblemException(
+            status=409,
+            slug="conflict",
+            title="Conflict",
+            detail=(
+                "These two workspaces are on different filesystems, so the file cannot be moved "
+                "by renaming it. Upload it to the new location instead."
+            ),
+        ) from refused
+
+    moved = await files.relocate(
+        connection,
+        found=found,
+        folder_id=destination_folder.id,
+        name=name,
+        actor=Actor.user(credential.user.id),
+        from_path=from_path,
+        detected="api",
+        workspace_id=None if destination.id == workspace.id else destination.id,
+    )
+    return await summarize(connection, moved)
+
+
+async def _destination(
+    connection: DatabaseConnection,
+    *,
+    found: files.File,
+    workspace: workspaces.Workspace,
+    folder_id: UUID | None,
+    credential: CurrentCredential,
+) -> tuple[folders.Folder, workspaces.Workspace]:
+    """The folder to move into and the workspace holding it, or the file's current folder."""
+    if folder_id is None:
+        current = await folders.get(connection, found.folder_id)
+        if current is None:  # pragma: no cover - a file always has its folder
+            raise not_found()
+        return current, workspace
+
+    target = await folders.get(connection, folder_id)
+    if target is None:
+        raise not_found()
+    holding = await workspaces.get(connection, target.workspace_id)
+    if holding is None or holding.owner_id != credential.user.id:
+        raise not_found()
+    return target, holding
+
+
+def _move_bytes(source_root: Path, from_path: str, destination_root: Path, to_path: str) -> None:
+    """The one rename, containment-checked at both ends. Blocking."""
+    filestore.move_entry(
+        filestore.resolve_within(source_root, Path(from_path)),
+        filestore.resolve_within(destination_root, Path(to_path)),
+    )
+
+
+def _invalid(reason: str, pointer: str) -> ProblemException:
+    return ProblemException(
+        status=422,
+        slug="validation",
+        title="Validation failed",
+        detail="1 request field(s) are invalid.",
+        errors=[FieldProblem(detail=reason, pointer=pointer)],
+    )

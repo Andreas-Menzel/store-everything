@@ -290,6 +290,7 @@ async def directory(
                 version_id=candidate.version.id,
                 seen_at=run.started_at,
                 actor=Actor.system(),
+                detected="external",
                 match=match,
                 from_path=candidate.path,
             )

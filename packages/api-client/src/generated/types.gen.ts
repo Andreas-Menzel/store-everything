@@ -4,6 +4,80 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type Child = ChildFolder | ChildFile;
+
+/**
+ * ChildFile
+ */
+export type ChildFile = {
+    /**
+     * Kind
+     */
+    kind?: 'file';
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Content Hash
+     */
+    content_hash: string;
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Media Class
+     */
+    media_class: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    /**
+     * Modified At
+     */
+    modified_at: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * ChildFolder
+ */
+export type ChildFolder = {
+    /**
+     * Kind
+     */
+    kind?: 'folder';
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
 /**
  * CurrentIdentity
  *
@@ -23,6 +97,20 @@ export type CurrentIdentity = {
      * Scope
      */
     scope: 'read' | 'full';
+};
+
+/**
+ * FileMoveRequest
+ */
+export type FileMoveRequest = {
+    /**
+     * Folder
+     */
+    folder?: string | null;
+    /**
+     * Name
+     */
+    name?: string | null;
 };
 
 /**
@@ -109,6 +197,68 @@ export type FilesystemVerdict = {
 };
 
 /**
+ * FolderCreateRequest
+ */
+export type FolderCreateRequest = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Parent
+     */
+    parent?: string | null;
+};
+
+/**
+ * FolderMoveRequest
+ */
+export type FolderMoveRequest = {
+    /**
+     * Parent
+     */
+    parent?: string | null;
+    /**
+     * Name
+     */
+    name?: string | null;
+};
+
+/**
+ * FolderSummary
+ */
+export type FolderSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Workspace
+     */
+    workspace: string;
+    /**
+     * Parent
+     */
+    parent: string | null;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Depth
+     */
+    depth: number;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -161,6 +311,22 @@ export type LoginRequest = {
      * Password
      */
     password: string;
+};
+
+export type Ordering = 'name' | 'size' | 'modified';
+
+/**
+ * Page[Child]
+ */
+export type PageChild = {
+    /**
+     * Data
+     */
+    data: Array<Child>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
 };
 
 /**
@@ -1419,6 +1585,159 @@ export type AppendToUploadResponses = {
 
 export type AppendToUploadResponse = AppendToUploadResponses[keyof AppendToUploadResponses];
 
+export type CreateFolderData = {
+    body: FolderCreateRequest;
+    path: {
+        /**
+         * Workspace Id
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/folders';
+};
+
+export type CreateFolderErrors = {
+    /**
+     * No such workspace, or not yours
+     */
+    404: unknown;
+    /**
+     * Something already holds that name
+     */
+    409: unknown;
+    /**
+     * The name was refused
+     */
+    422: unknown;
+};
+
+export type CreateFolderResponses = {
+    /**
+     * Successful Response
+     */
+    201: FolderSummary;
+};
+
+export type CreateFolderResponse = CreateFolderResponses[keyof CreateFolderResponses];
+
+export type ReadFolderData = {
+    body?: never;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+    };
+    query?: never;
+    url: '/api/v1/folders/{folder_id}';
+};
+
+export type ReadFolderErrors = {
+    /**
+     * No such folder, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFolderError = ReadFolderErrors[keyof ReadFolderErrors];
+
+export type ReadFolderResponses = {
+    /**
+     * Successful Response
+     */
+    200: FolderSummary;
+};
+
+export type ReadFolderResponse = ReadFolderResponses[keyof ReadFolderResponses];
+
+export type ListChildrenData = {
+    body?: never;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+    };
+    query?: {
+        /**
+         * How to order **files**; subfolders always sort by name.
+         */
+        sort?: Ordering;
+        /**
+         * Cursor
+         *
+         * Opaque; from a previous page.
+         */
+        cursor?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/api/v1/folders/{folder_id}/children';
+};
+
+export type ListChildrenErrors = {
+    /**
+     * No such folder, or not yours
+     */
+    404: unknown;
+    /**
+     * The cursor or the ordering was refused
+     */
+    422: unknown;
+};
+
+export type ListChildrenResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageChild;
+};
+
+export type ListChildrenResponse = ListChildrenResponses[keyof ListChildrenResponses];
+
+export type MoveFolderData = {
+    body: FolderMoveRequest;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+    };
+    query?: never;
+    url: '/api/v1/folders/{folder_id}/move';
+};
+
+export type MoveFolderErrors = {
+    /**
+     * No such folder, or not yours
+     */
+    404: unknown;
+    /**
+     * The root, a cycle, an occupied name, or two filesystems
+     */
+    409: unknown;
+    /**
+     * The name or the destination was refused
+     */
+    422: unknown;
+};
+
+export type MoveFolderResponses = {
+    /**
+     * Successful Response
+     */
+    200: FolderSummary;
+};
+
+export type MoveFolderResponse = MoveFolderResponses[keyof MoveFolderResponses];
+
 export type ReadFileData = {
     body?: never;
     path: {
@@ -1496,3 +1815,39 @@ export type ReadFileContentResponses = {
      */
     206: unknown;
 };
+
+export type MoveFileData = {
+    body: FileMoveRequest;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/move';
+};
+
+export type MoveFileErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * An occupied name, or two filesystems
+     */
+    409: unknown;
+    /**
+     * The name or the destination was refused
+     */
+    422: unknown;
+};
+
+export type MoveFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: FileSummary;
+};
+
+export type MoveFileResponse = MoveFileResponses[keyof MoveFileResponses];
