@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "AGPL-3.0-only"
 dependencies = [
-    "fastapi>=0.120",
+    # 0.121 introduced `Depends(scope=...)`, which is what commits the request
+    # transaction before the response is sent rather than after (db.py).
+    "fastapi>=0.121",
     "uvicorn[standard]>=0.38",
     "pydantic>=2.12",
     "pydantic-settings>=2.12",

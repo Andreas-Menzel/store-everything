@@ -1597,7 +1597,7 @@ export type AppendToUploadErrors = {
      */
     409: unknown;
     /**
-     * The upload expired
+     * The upload expired, or its staged content no longer covers its offset
      */
     410: unknown;
     /**

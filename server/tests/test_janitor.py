@@ -243,6 +243,35 @@ async def test_an_unreferenced_blob_is_collected_when_references_are_known(
     assert result["blobs_collected"] == 1
 
 
+@pytest.mark.fr("02/INV-8")
+async def test_a_blob_referenced_again_survives_the_sweep_that_saw_it_orphaned(
+    engine: AsyncEngine, identity_database: str, tmp_path: Path
+) -> None:
+    """The convergent-reuse race, from the janitor's side.
+
+    A new version whose content the store already holds does not write anything — it references
+    what is there. If that reference leaves the blob's mtime alone, an aged orphan looks exactly
+    as collectable a moment after it stopped being an orphan, and a sweep whose reference list
+    was read before the referencing transaction committed unlinks the only copy of the bytes a
+    committed row points at.
+    """
+    settings = settings_for(identity_database, tmp_path)
+    store = BlobStore(settings.versions_root)
+    digest = store.put_bytes(b"content two versions share", operation_id=uuid4())
+    os.utime(store.path_for(digest), (LONG_AGO, LONG_AGO))
+
+    async def nothing_is_referenced(_: AsyncConnection) -> list[str]:
+        """The snapshot a sweep that started before the new version committed would hold."""
+        return []
+
+    # The new version converges on the stored bytes: no write, only a reference.
+    assert store.put_bytes(b"content two versions share", operation_id=uuid4()) == digest
+    result = await sweep(engine, settings, references=nothing_is_referenced)
+
+    assert store.contains(digest), "a blob referenced a moment ago was collected"
+    assert result["blobs_collected"] == 0
+
+
 async def test_a_fresh_unreferenced_blob_survives(
     engine: AsyncEngine, identity_database: str, tmp_path: Path
 ) -> None:

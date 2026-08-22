@@ -27,6 +27,7 @@ attribute a leftover to the session that wrote it.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -36,7 +37,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import filestore, workspacefs
+from store_everything import filestore, names, workspacefs
 from store_everything.ids import new_id
 from store_everything.tables import upload_session
 
@@ -166,17 +167,38 @@ def staging_path(workspace_root: Path, session_id: UUID) -> Path:
     return filestore.staging_path(workspacefs.staging_directory(workspace_root), session_id)
 
 
-def discard_unacknowledged(staging: Path, committed_offset: int) -> None:
-    """Cut staging back to the last acknowledged offset. **Blocking**, idempotent.
+class StagingLostError(Exception):
+    """The staged bytes an acknowledged offset promised are not on the storage any more."""
 
-    The bytes beyond it were written but never promised — a crash after the `fsync` and
+    def __init__(self, *, staged: int, committed: int) -> None:
+        super().__init__(f"staging holds {staged} bytes where {committed} were acknowledged")
+        self.staged = staged
+        self.committed = committed
+
+
+def align_staging(staging: Path, committed_offset: int) -> None:
+    """Make staging match the offset the client was promised, or refuse. **Blocking**, idempotent.
+
+    Two directions, and only one of them is recoverable.
+
+    Bytes **past** the offset were written but never promised — a crash after the `fsync` and
     before the offset's commit — so discarding them is what makes the client's view and ours
     identical again.
+
+    **Fewer** bytes than the offset is the opposite situation and cannot be repaired here: the
+    staging file has been truncated or removed underneath the session. That is reachable —
+    staging lives in the user-visible `.workspace/staging/` inside the source tree, where an SMB
+    client can reach it — and appending anyway would store the next chunk at the position the
+    *file* is at rather than the one the client was promised, assembling a file that is
+    self-consistent and wrong. An acknowledged offset is never wrong ([F-001/FR-15]), so the
+    append is refused and the session ends rather than converging on content nobody sent.
     """
     try:
         size = staging.stat().st_size
     except FileNotFoundError:
-        return
+        size = 0
+    if size < committed_offset:
+        raise StagingLostError(staged=size, committed=committed_offset)
     if size > committed_offset:
         filestore.truncate_staging(staging, committed_offset)
 
@@ -265,6 +287,43 @@ async def locked(connection: AsyncConnection, session_id: UUID) -> Session | Non
         )
     ).first()
     return None if row is None else _as_session(tuple(row))
+
+
+#: Distinguishes this lock space from every other advisory lock in the app. PostgreSQL keeps
+#: the two-integer and single-bigint forms in separate namespaces, so a key here can never
+#: collide with a workspace rollup lock (`aggregates`) whatever the numbers are.
+_TARGET_LOCK_CLASS = 1
+
+
+def _target_lock_key(workspace_id: UUID, path: str) -> int:
+    """A signed 32-bit key for one publishable path in one workspace.
+
+    Hashed rather than derived from an id, because the row that would carry the id — the file,
+    or even its parent folder — is what two racing finalizes are competing to create. A
+    collision between two *different* paths only over-serialises two uploads for the length of
+    a finalize, which is why 32 bits is enough.
+    """
+    key = "/".join(names.comparison_key(segment) for segment in names.split_path(path))
+    digest = hashlib.blake2b(f"{workspace_id}/{key}".encode(), digest_size=4).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
+async def lock_target(connection: AsyncConnection, *, workspace_id: UUID, path: str) -> None:
+    """Hold one destination path still until this transaction ends.
+
+    Publishing is a check-then-act sequence over two systems: look for what is already at the
+    path, snapshot it, rename the new bytes over it, write the rows. Two finalizes racing on one
+    free path both find it free, and the loser's rename destroys the winner's bytes *before* any
+    row guard can fire — content that was never snapshotted and is in no version, which is
+    exactly what [F-001/FR-20](../../../features/F-001-upload-and-import.md) forbids. The unique
+    index catches the rows a moment too late to matter.
+
+    Transaction-scoped, so the commit releases it. Taken while the session's own row lock is
+    already held, always in that order, so two finalizes cannot deadlock each other.
+    """
+    await connection.execute(
+        select(func.pg_advisory_xact_lock(_TARGET_LOCK_CLASS, _target_lock_key(workspace_id, path)))
+    )
 
 
 async def advance(connection: AsyncConnection, *, session: Session, offset: int) -> Session:

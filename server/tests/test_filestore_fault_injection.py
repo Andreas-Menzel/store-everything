@@ -9,7 +9,12 @@ the real `filestore`, which is the only version that matters — the demo has be
 rather than left to drift from the code it stood in for.
 
 The crash is a real `os._exit(137)` in a subprocess: no unwinding, no `finally`, no
-buffered writes flushed — exactly what a power cut does.
+buffered writes flushed — exactly what `kill -9` does.
+
+**What it cannot see:** a *missing* `fsync`. `os._exit` leaves the page cache for the kernel
+to flush, so unsynced bytes still land — where a power cut would lose them. Ordering is what
+this harness proves; the presence of the barriers themselves is asserted directly, by watching
+the calls (`test_filestore.py` § durability of the directories).
 """
 
 from __future__ import annotations
