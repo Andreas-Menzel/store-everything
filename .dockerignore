@@ -1,0 +1,35 @@
+# The build context is the repository root, because one image serves both halves
+# (10-deployment-and-operations.md § topology). Everything below is either rebuilt inside
+# the image or has no business in it.
+
+.git/
+.github/
+
+# Python
+.venv/
+server/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+server/tests/
+
+# JavaScript: dependencies are installed from the lockfile inside the build, and every
+# build output is produced there too.
+node_modules/
+web/dist/
+web/storybook-static/
+web/test-results/
+web/playwright-report/
+web/coverage/
+dist/
+build/
+
+# Configuration and local state that must never be baked into an image.
+.env
+.env.*

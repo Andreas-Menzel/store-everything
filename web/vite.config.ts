@@ -23,6 +23,11 @@ export default defineConfig({
       API_PATHS.map((path) => [path, { target: DEV_API_TARGET, changeOrigin: false }]),
     ),
   },
+  build: {
+    // The documentation viewer is a deliberate 1.4 MB chunk of its own, loaded only on its route
+    // (F-027/FR-9). A permanent warning about an intended cost trains people to ignore output.
+    chunkSizeWarningLimit: 1600,
+  },
   test: {
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],

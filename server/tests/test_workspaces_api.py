@@ -392,3 +392,30 @@ async def test_an_unknown_workspace_is_not_found(identity_settings: Settings) ->
         response = await admin.get(f"{WORKSPACES}/{uuid4()}")
 
     assert response.status_code == 404
+
+
+@pytest.mark.fr("F-015/FR-1")
+async def test_a_workspace_names_the_folder_its_files_hang_from(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """A client cannot browse a workspace without this.
+
+    Every path in the tree is reached from the root folder's id, and the folder is created by the
+    operation that builds the directory tree — so it is absent while a workspace is still being
+    provisioned and present the moment it is usable.
+    """
+    async with instance(identity_settings) as app, signed_in(app) as admin:
+        created = await create_workspace(admin, "Photos")
+        assert created.status_code == 201, created.text
+        assert created.json()["root_folder"] is None, "there is no tree yet"
+
+        await provision_pending(identity_database)
+        read = await admin.get(f"{WORKSPACES}/{created.json()['id']}")
+        listed = await admin.get(WORKSPACES)
+
+    root = read.json()["root_folder"]
+    assert root is not None
+    assert read.json()["state"] == "active"
+    # The listing carries it too: a client showing a list of workspaces links each one to its
+    # files, and a request per row would be a round trip per row.
+    assert [entry["root_folder"] for entry in listed.json()["data"]] == [root]

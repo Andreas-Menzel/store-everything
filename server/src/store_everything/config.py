@@ -36,7 +36,17 @@ class Settings(BaseSettings):
     """PostgreSQL DSN. Required — the service must not invent a default datastore."""
 
     api_docs_enabled: bool = True
-    """Serve the OpenAPI schema to authenticated users (08-api-principles.md)."""
+    """Serve the OpenAPI schema to authenticated users (08-api-principles.md).
+
+    The web client's documentation route reads that schema, so turning this off removes both
+    (F-027/FR-9)."""
+
+    web_root: Path = Path("/srv/store-everything-web")
+    """The built web client this service serves at its own origin (F-027/FR-1, 10 § topology).
+
+    One image and one origin is what makes the session cookie same-site by construction. A
+    directory that is not there is an ordinary state — the API serves itself and says so once —
+    because a development container runs the client from Vite instead."""
 
     cors_allow_origins: Annotated[tuple[str, ...], NoDecode] = ()
     """Deny by default: an empty list installs no CORS middleware at all.

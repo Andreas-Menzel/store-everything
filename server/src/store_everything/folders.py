@@ -175,6 +175,24 @@ async def root_of(connection: AsyncConnection, workspace_id: UUID) -> Folder | N
     return None if row is None else _as_folder(tuple(row))
 
 
+async def roots_of(connection: AsyncConnection, workspace_ids: Sequence[UUID]) -> dict[UUID, UUID]:
+    """Each of these workspaces' root folder id, in one query.
+
+    What a client needs to get from "a workspace" to "its files": every path in the tree is
+    reached from the root folder's id, and asking per workspace would make a page of them a
+    round-trip per row. A workspace still being provisioned has no root yet and is simply absent.
+    """
+    if not workspace_ids:
+        return {}
+    rows = await connection.execute(
+        select(folder.c.workspace_id, folder.c.id).where(
+            folder.c.parent_id.is_(None),
+            folder.c.workspace_id == any_(literal(list(workspace_ids), ARRAY(UUID_TYPE))),
+        )
+    )
+    return {row[0]: row[1] for row in rows}
+
+
 async def create_root(
     connection: AsyncConnection, *, workspace_id: UUID, actor: Actor
 ) -> tuple[Folder, bool]:

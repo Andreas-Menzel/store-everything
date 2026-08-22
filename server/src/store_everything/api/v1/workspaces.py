@@ -88,6 +88,13 @@ class WorkspaceSummary(BaseSchema):
     """The directory on the storage. Shown because recognising your own data without the app
     is the point of the layout (03), and only ever to the workspace's owner."""
 
+    root_folder: UUID | None
+    """The folder every path in this workspace is reached from
+    ([F-015/FR-1](../../../../features/F-015-folders.md)).
+
+    Absent while the workspace is still being provisioned: the folder is created by the operation
+    that builds the directory tree, so a client cannot browse before there is anything to browse."""
+
     filesystem: FilesystemVerdict
     scan_interval_minutes: int
     """How often this workspace is scanned for changes made outside the app (ADR-0019). The
@@ -96,7 +103,7 @@ class WorkspaceSummary(BaseSchema):
     created_at: datetime
 
     @classmethod
-    def of(cls, record: workspaces.Workspace) -> WorkspaceSummary:
+    def of(cls, record: workspaces.Workspace, root_folder: UUID | None = None) -> WorkspaceSummary:
         verdict = record.fs_check
         properties = verdict.get("properties", {})
         return cls(
@@ -107,6 +114,7 @@ class WorkspaceSummary(BaseSchema):
             placement=record.placement,
             state=record.state,
             root_path=str(record.root_path),
+            root_folder=root_folder,
             filesystem=FilesystemVerdict(
                 probed=str(verdict.get("root", record.root_path)),
                 usable=bool(verdict.get("usable", False)),
@@ -253,7 +261,13 @@ async def list_workspaces(
     next_cursor = (
         encode_cursor(page[-1].created_at, page[-1].id) if len(found) > limit and page else None
     )
-    return Page(data=[WorkspaceSummary.of(record) for record in page], next_cursor=next_cursor)
+    # One query for the whole page rather than one per row: a client cannot browse a workspace
+    # without its root folder id, so every listing needs it.
+    roots = await folders.roots_of(connection, [record.id for record in page])
+    return Page(
+        data=[WorkspaceSummary.of(record, roots.get(record.id)) for record in page],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get(
@@ -270,7 +284,8 @@ async def read_workspace(
     # anyone enumerate which ids are real.
     if found is None or found.owner_id != credential.user.id:
         raise ProblemException(status=404, slug="not-found", title="Not found")
-    return WorkspaceSummary.of(found)
+    root = await folders.root_of(connection, found.id)
+    return WorkspaceSummary.of(found, None if root is None else root.id)
 
 
 # ---------------------------------------------------------------------- scanning

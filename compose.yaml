@@ -37,7 +37,8 @@ services:
   api:
     image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
     build:
-      context: ./server
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -48,6 +49,9 @@ services:
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       SE_HOST: 0.0.0.0
       SE_API_DOCS_ENABLED: ${SE_API_DOCS_ENABLED:-true}
+      # The built web client, baked into this image and served at its own origin
+      # (F-027/FR-1). Configurable so a bind-mounted build can replace it.
+      SE_WEB_ROOT: ${SE_WEB_ROOT:-/srv/store-everything-web}
       SE_CORS_ALLOW_ORIGINS: ${SE_CORS_ALLOW_ORIGINS:-}
       # Only the proxy's address on the shared network is trusted; a spoofed client IP
       # would poison rate limiting and the audit trail (ADR-0009).
@@ -130,7 +134,8 @@ services:
   orchestrator:
     image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
     build:
-      context: ./server
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -184,7 +189,8 @@ services:
   migrations:
     image: ${IMAGE:-ghcr.io/andreas-menzel/store-everything-core:latest}
     build:
-      context: ./server
+      context: .
+      dockerfile: server/Dockerfile
     profiles: [tools]
     depends_on:
       postgres:
