@@ -302,6 +302,14 @@ class ScanSummary(BaseSchema):
     files_restored: int
     """Trashed files whose content reappeared at their own path."""
 
+    folders_transferred: int
+    """Directories recognised as renamed rather than replaced, so the folder kept its id and
+    everything attached to it ([F-015/FR-7](../../../../features/F-015-folders.md))."""
+
+    folders_ambiguous: int
+    """Directories whose content went several ways, or several of whose content converged: the
+    evidence did not identify one folder, so a new one was created and the case was logged."""
+
     conflicts: int
     skipped: int
     directories_pending: int
@@ -327,6 +335,8 @@ class ScanSummary(BaseSchema):
             files_moved=run.files_moved,
             files_trashed=run.files_trashed,
             files_restored=run.files_restored,
+            folders_transferred=run.folders_transferred,
+            folders_ambiguous=run.folders_ambiguous,
             conflicts=run.conflicts,
             skipped=run.skipped,
             directories_pending=pending,

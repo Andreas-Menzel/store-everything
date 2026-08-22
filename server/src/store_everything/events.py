@@ -57,6 +57,10 @@ FOLDER_CREATED = "folder.created"
 #: reorganised my library" wants moves, and a reader chasing a broken link wants renames.
 FOLDER_RENAMED = "folder.renamed"
 FOLDER_MOVED = "folder.moved"
+#: A directory vanished and its content turned up in several places, or two directories' content
+#: turned up in one — so the folder that went away could not be *the* folder that appeared, and a
+#: new identity was created instead (F-015/FR-7). The record a review surface would read (Q24).
+FOLDER_IDENTITY_AMBIGUOUS = "folder.identity_ambiguous"
 
 FILE_CREATED = "file.created"
 #: A new current version, from an upload onto an existing path or from content that changed on

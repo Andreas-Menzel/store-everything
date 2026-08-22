@@ -26,11 +26,14 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    ARRAY,
     Select,
+    any_,
     delete,
     func,
     insert,
     literal,
+    or_,
     select,
     text,
     true,
@@ -44,7 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from store_everything import aggregates, events, filestore, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
-from store_everything.tables import file, folder, folder_closure
+from store_everything.tables import file, folder, folder_closure, scan_blocked
 
 
 class NameTakenError(Exception):
@@ -683,6 +686,167 @@ def _move_on_disk(
         if refused.errno == errno.EXDEV:
             raise CrossFilesystemError(source_root, destination_root) from refused
         raise
+
+
+async def stamp_seen(
+    connection: AsyncConnection, *, folder_ids: Sequence[UUID], seen_at: datetime
+) -> int:
+    """Record that a scan accounted for these directories. Returns how many rows it stamped.
+
+    Stamped by **id**, from the parent listing that mentioned them, and with the *run's* start
+    rather than `now()` — so "which directories did this run not account for" is an exact
+    comparison however long the run took (the `files.stamp_seen` rule, one level up).
+    """
+    if not folder_ids:
+        return 0
+    result = await connection.execute(
+        update(folder)
+        .where(folder.c.id == any_(literal(list(folder_ids), ARRAY(UUID_TYPE))))
+        .values(last_seen_at=seen_at)
+    )
+    return result.rowcount
+
+
+async def vanished(
+    connection: AsyncConnection, *, folder_id: UUID, run_id: UUID, started_at: datetime
+) -> bool:
+    """Whether this run found no directory for this folder — and was in a position to say so.
+
+    Three conditions, and each is the folder-level spelling of a rule the file sweep already
+    obeys ([F-001/FR-6](../../../features/F-001-upload-and-import.md), FR-16):
+
+    - **Not accounted for by this run.** Its parent's listing did not mention it.
+    - **Registered before the run started.** A directory created while the traversal was walking
+      was never going to be listed by a parent the pass had already read.
+    - **Not under a directory this run could not read.** "I could not look" is not "it is not
+      there" — and here the consequence would be handing a live folder's identity away.
+    """
+    under_blocked = folder_closure.alias("blocked_closure")
+    blocked = (
+        select(scan_blocked.c.folder_id)
+        .join(under_blocked, under_blocked.c.ancestor_id == scan_blocked.c.folder_id)
+        .where(scan_blocked.c.run_id == run_id, under_blocked.c.descendant_id == folder.c.id)
+    )
+    found = (
+        await connection.execute(
+            select(folder.c.id).where(
+                folder.c.id == folder_id,
+                or_(folder.c.last_seen_at.is_(None), folder.c.last_seen_at < started_at),
+                folder.c.created_at < started_at,
+                ~blocked.exists(),
+            )
+        )
+    ).first()
+    return found is not None
+
+
+async def reposition(
+    connection: AsyncConnection,
+    *,
+    found: Folder,
+    parent: Folder,
+    name: str,
+    actor: Actor,
+    detected: str,
+) -> Folder:
+    """Move a folder's rows to where its directory already is. **Touches no filesystem.**
+
+    `relocate`'s second half, and only its second half. There the app moves the directory and the
+    rows follow; here the directory moved without the app — the disk is already the destination —
+    so doing anything to it would be the app editing the user's tree to match its own index
+    ([ADR-0003](../../../decisions/ADR-0003-files-on-disk-source-of-truth.md)).
+
+    The caller owns the refusals and the ordering. This is deliberately not `relocate` with a flag:
+    the two differ in what they may touch, which is exactly the kind of thing a flag hides.
+    """
+    old_relative = await path_of(connection, found)
+    subtree = select(folder_closure.c.descendant_id).where(folder_closure.c.ancestor_id == found.id)
+    if parent.id != found.parent_id:
+        await _detach(connection, subtree)
+        await _attach(connection, folder_id=found.id, parent_id=parent.id)
+        depth_shift = (parent.depth + 1) - found.depth
+        await connection.execute(
+            update(folder)
+            .where(folder.c.id.in_(subtree))
+            .values(depth=folder.c.depth + depth_shift, updated_at=func.now())
+        )
+
+    moved = _as_folder(
+        tuple(
+            (
+                await connection.execute(
+                    update(folder)
+                    .where(folder.c.id == found.id)
+                    .values(
+                        parent_id=parent.id,
+                        name=name,
+                        name_key=names.comparison_key(name),
+                        updated_at=func.now(),
+                    )
+                    .returning(*_COLUMNS)
+                )
+            ).one()
+        )
+    )
+    await events.record(
+        connection,
+        action=events.FOLDER_RENAMED if parent.id == found.parent_id else events.FOLDER_MOVED,
+        resource_type=events.RESOURCE_FOLDER,
+        resource_id=moved.id,
+        actor=actor,
+        details={
+            "workspace": str(moved.workspace_id),
+            "from": old_relative,
+            "to": await path_of(connection, moved),
+            # The same key `file.moved` carries, for the same distinction: whether a person asked
+            # for this or the app recognised it after the fact.
+            "detected": detected,
+        },
+    )
+    return moved
+
+
+async def absorb(connection: AsyncConnection, *, into: Folder, discarded: Folder) -> None:
+    """Move everything one folder holds into another, so the emptied one can be deleted.
+
+    Files change folder, subfolders change parent, and the closure is rewritten for each of them.
+    Nothing on disk moves: this is two rows describing one directory, and only one may survive.
+    """
+    await connection.execute(
+        update(file)
+        .where(file.c.folder_id == discarded.id)
+        .values(folder_id=into.id, updated_at=func.now())
+    )
+    children = (
+        await connection.execute(select(*_COLUMNS).where(folder.c.parent_id == discarded.id))
+    ).all()
+    for row in children:
+        child = _as_folder(tuple(row))
+        subtree = select(folder_closure.c.descendant_id).where(
+            folder_closure.c.ancestor_id == child.id
+        )
+        await _detach(connection, subtree)
+        await _attach(connection, folder_id=child.id, parent_id=into.id)
+        depth_shift = (into.depth + 1) - child.depth
+        await connection.execute(
+            update(folder)
+            .where(folder.c.id.in_(subtree))
+            .values(depth=folder.c.depth + depth_shift, updated_at=func.now())
+        )
+        await connection.execute(
+            update(folder)
+            .where(folder.c.id == child.id)
+            .values(parent_id=into.id, updated_at=func.now())
+        )
+
+
+async def discard(connection: AsyncConnection, folder_id: UUID) -> None:
+    """Delete a folder row that describes the same directory as another. Nothing on disk.
+
+    Only ever the *new* row of an identity transfer, and only once `absorb` has emptied it: its
+    closure rows go with it, and so would anything else that pointed at it.
+    """
+    await connection.execute(delete(folder).where(folder.c.id == folder_id))
 
 
 async def contains(connection: AsyncConnection, *, ancestor_id: UUID, descendant_id: UUID) -> bool:

@@ -49,7 +49,7 @@ NAMING_CONVENTION = {
 
 metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
-#: Instance-level roles (07-identity-permissions-sharing.md § users).
+#: Instance-level roles (07-identity-permissions-sharing.md Â§ users).
 USER_ROLES = ("admin", "member")
 
 #: Personal-access-token scopes. `read` is least privilege for an agent or a read-only
@@ -94,7 +94,7 @@ app_user = Table(
     CheckConstraint("length(display_name) BETWEEN 1 AND 200", name="display_name_length"),
     CheckConstraint(one_of("role", USER_ROLES), name="role_known"),
 )
-"""Named `app_user` because `user` is a reserved word in PostgreSQL — quoting it forever
+"""Named `app_user` because `user` is a reserved word in PostgreSQL â quoting it forever
 in hand-written SQL (ADR-0012) is a papercut with no upside."""
 
 
@@ -109,7 +109,7 @@ user_session = Table(
         nullable=False,
     ),
     # Only the SHA-256 of the token: a database dump can therefore not be replayed as a
-    # set of live sessions (07 § tokens & credentials).
+    # set of live sessions (07 Â§ tokens & credentials).
     Column("token_hash", Text, nullable=False),
     Column("user_agent", Text, nullable=True),
     _created_at(),
@@ -152,7 +152,7 @@ event = Table(
     "event",
     metadata,
     # A gapless-looking integer, not a UUID: the `/events` feed (phase 5) is a cursor over
-    # this column. Note for that phase — identity values are assigned before commit, so
+    # this column. Note for that phase â identity values are assigned before commit, so
     # ids can become visible out of order under concurrency; a cursor feed needs a
     # commit-order-safe watermark rather than `id > $cursor` alone.
     Column("id", BigInteger, Identity(always=True), primary_key=True),
@@ -184,7 +184,7 @@ event = Table(
     Index("ix_event_resource_type_resource_id_id", "resource_type", "resource_id", "id"),
     Index("ix_event_actor_user_id_id", "actor_user_id", "id"),
     # Serves the credential-abuse queries, which count recent events of one action
-    # (07 § abuse protection).
+    # (07 Â§ abuse protection).
     Index("ix_event_action_occurred_at", "action", "occurred_at"),
 )
 """The append-only event log (ADR-0007). Writes ride the transaction of the change they
@@ -192,8 +192,8 @@ describe; `UPDATE` is refused by a database trigger, so immutability does not de
 every future code path remembering it."""
 
 
-#: The operation state machine (12-reliability.md § operation records). `queued` doubles as
-#: "waiting for a retry" — a retryable failure returns to it with a later `next_due_at` — so
+#: The operation state machine (12-reliability.md Â§ operation records). `queued` doubles as
+#: "waiting for a retry" â a retryable failure returns to it with a later `next_due_at` â so
 #: the only non-terminal states are `queued` and `running`.
 OPERATION_STATES = (
     "queued",
@@ -208,7 +208,7 @@ OPERATION_STATES = (
 #: Nothing claims these again, and their idempotency key becomes free for reuse.
 TERMINAL_OPERATION_STATES = ("succeeded", "failed", "dead_letter", "cancelled", "superseded")
 
-#: Priority classes from 04-ingestion-pipeline.md § prioritization: 0 = interactive,
+#: Priority classes from 04-ingestion-pipeline.md Â§ prioritization: 0 = interactive,
 #: 1 = presence, 2 = searchability, 3 = heavy derived, 4 = reprocessing. Lower runs first.
 MIN_PRIORITY, MAX_PRIORITY = 0, 4
 
@@ -221,7 +221,7 @@ operation = Table(
     Column("state", Text, nullable=False, server_default=text("'queued'")),
     Column("priority", SmallInteger, nullable=False, server_default=text("2")),
     # Counted on *claim*, not on failure: a job that OOM-kills its worker never reports an
-    # error, and counting here is what dead-letters it anyway (12 § leases & fencing).
+    # error, and counting here is what dead-letters it anyway (12 Â§ leases & fencing).
     Column("attempt", Integer, nullable=False, server_default=text("0")),
     Column("max_attempts", Integer, nullable=False),
     # The durable schedule. Retry backoff, periodic work and "run now" are all this column;
@@ -237,7 +237,7 @@ operation = Table(
     Column("result", JSONB, nullable=True),
     Column("error", Text, nullable=True),
     # What the operation is about, so per-file and per-workspace status stays answerable
-    # (04 § status & observability) without one table per operation kind.
+    # (04 Â§ status & observability) without one table per operation kind.
     Column("subject_type", Text, nullable=True),
     Column("subject_id", UUID(as_uuid=True), nullable=True),
     _created_at(),
@@ -252,7 +252,7 @@ operation = Table(
     CheckConstraint("attempt >= 0", name="attempt_not_negative"),
     CheckConstraint("lease_expires_at IS NULL OR leased_by IS NOT NULL", name="lease_has_an_owner"),
     # The claim query reads only claimable rows, and a 10 TB import leaves millions of
-    # terminal ones behind (12 § queue hygiene) — so the index covers the live set only.
+    # terminal ones behind (12 Â§ queue hygiene) â so the index covers the live set only.
     Index(
         "ix_operation_claimable",
         "priority",
@@ -277,8 +277,8 @@ operation = Table(
 handling is a review-blocker, exactly as ad-hoc file IO is."""
 
 
-#: Where a workspace's files come from (03 § workspace sources). A column rather than an
-#: assumption because `external` (mirrored Google Drive and friends — Q16) is a later
+#: Where a workspace's files come from (03 Â§ workspace sources). A column rather than an
+#: assumption because `external` (mirrored Google Drive and friends â Q16) is a later
 #: source type, not a later redesign.
 WORKSPACE_SOURCES = ("local",)
 
@@ -286,14 +286,14 @@ WORKSPACE_SOURCES = ("local",)
 #: `adopted` is the user's own directory indexed in place with nothing moved or copied.
 WORKSPACE_PLACEMENTS = ("managed", "adopted")
 
-#: A workspace row exists before its directory does — creation records the intent and the
+#: A workspace row exists before its directory does â creation records the intent and the
 #: `workspace.provision` operation makes it true (ADR-0010). `active` means the root, the
 #: control directory and the root folder are all there.
 WORKSPACE_STATES = ("provisioning", "active")
 
 #: Whether a worker is listening for filesystem events on this root (ADR-0019's watcher).
-#: `unavailable` is not an error state — the kernel's watch limit, a permission, or a mount that
-#: went away — it means this workspace has only the scheduled pass, which is the one that
+#: `unavailable` is not an error state â the kernel's watch limit, a permission, or a mount that
+#: went away â it means this workspace has only the scheduled pass, which is the one that
 #: cannot be missed anyway.
 WORKSPACE_WATCH_STATES = ("unwatched", "watching", "unavailable")
 
@@ -311,7 +311,7 @@ workspace = Table(
         nullable=False,
     ),
     # `name` as the user typed it, `name_key` what uniqueness and lookups compare
-    # (03 § names on disk). Deriving the key in Python is deliberate: case folding is a
+    # (03 Â§ names on disk). Deriving the key in Python is deliberate: case folding is a
     # Unicode operation with a policy behind it (`names.comparison_key`), not `lower()`.
     Column("name", Text, nullable=False),
     Column("name_key", Text, nullable=False),
@@ -346,7 +346,7 @@ workspace = Table(
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # One user's workspace names are unique on the comparison key, which is also what keeps
-    # their managed directories from colliding — the name is a path segment.
+    # their managed directories from colliding â the name is a path segment.
     UniqueConstraint("owner_id", "name_key"),
     # Overlap (one root inside another) needs a query; equality is caught structurally here,
     # which is what makes the check-then-insert race harmless.
@@ -364,7 +364,7 @@ workspace = Table(
     CheckConstraint(f"octet_length(root_path) <= {MAX_PATH_BYTES}", name="root_path_length"),
     Index("ix_workspace_owner_id_created_at", "owner_id", "created_at"),
 )
-"""A top-level container of files, owned by exactly one user (02 § workspace)."""
+"""A top-level container of files, owned by exactly one user (02 Â§ workspace)."""
 
 
 folder = Table(
@@ -383,10 +383,15 @@ folder = Table(
     # Redundant with the closure table and worth it: "how deep is this" answers path
     # assembly and the depth limit without a join.
     Column("depth", Integer, nullable=False, server_default=text("0")),
+    # When a scan last accounted for this directory — stamped when its **parent's** listing
+    # mentioned it, the same rule that stamps a file. So a directory the scan could not read is
+    # still seen (its parent listed it), and one renamed away is not, which is the whole evidence
+    # for F-015/FR-7. No index: the identity pass looks folders up by id, never by this column.
+    Column("last_seen_at", DateTime(timezone=True), nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # Sibling uniqueness on the comparison key (F-015/FR-6). Root rows have a NULL parent and
-    # never collide here — PostgreSQL treats NULLs as distinct — which the partial index below
+    # never collide here â PostgreSQL treats NULLs as distinct â which the partial index below
     # is for.
     UniqueConstraint("workspace_id", "parent_id", "name_key"),
     Index(
@@ -408,7 +413,7 @@ folder = Table(
     Index("ix_folder_parent_id", "parent_id"),
 )
 """A directory in a workspace's tree, mirrored 1:1 from disk (F-015). Identified by its
-UUID, which survives rename and move — that is what grants and tags attach to."""
+UUID, which survives rename and move â that is what grants and tags attach to."""
 
 
 folder_closure = Table(
@@ -427,7 +432,7 @@ folder_closure = Table(
         primary_key=True,
     ),
     Column("depth", Integer, nullable=False),
-    # "Every ancestor of X" — the direction permission evaluation reads.
+    # "Every ancestor of X" â the direction permission evaluation reads.
     Index("ix_folder_closure_descendant_id_depth", "descendant_id", "depth"),
     CheckConstraint("depth >= 0", name="depth_not_negative"),
     CheckConstraint("(ancestor_id = descendant_id) = (depth = 0)", name="self_row_at_depth_zero"),
@@ -449,8 +454,8 @@ folder_aggregate = Table(
     Column("total_files", BigInteger, nullable=False, server_default=text("0")),
     Column("total_bytes", BigInteger, nullable=False, server_default=text("0")),
     # When the rotating sweep last compared these numbers against ground truth. NULL sorts
-    # first, so a folder that has never been checked — a new one, or one an upsert created
-    # because its row was missing — is the next one checked.
+    # first, so a folder that has never been checked â a new one, or one an upsert created
+    # because its row was missing â is the next one checked.
     Column("verified_at", DateTime(timezone=True), nullable=True),
     # A count of files cannot be negative and neither can a sum of their sizes, so a rollup
     # that would make one negative is a bug in the arithmetic rather than a number to serve.
@@ -460,7 +465,7 @@ folder_aggregate = Table(
     CheckConstraint("total_bytes >= 0", name="total_bytes_not_negative"),
     Index("ix_folder_aggregate_verified_at", "verified_at"),
 )
-"""What a folder's whole subtree adds up to (F-015/FR-8) — recursive file count and recursive
+"""What a folder's whole subtree adds up to (F-015/FR-8) â recursive file count and recursive
 size, over **live** files and their current version's bytes. Version history and trash are their
 own categories in `/stats/storage` ([09](09-previews.md#disk-usage-visibility)) and are not here.
 
@@ -496,27 +501,27 @@ folder_delta = Table(
     _created_at(),
     # The drain's claim: this workspace's oldest rows first.
     Index("ix_folder_delta_workspace_id_id", "workspace_id", "id"),
-    # "Is anything still queued under this folder?" — the `pending` flag every read reports,
+    # "Is anything still queued under this folder?" â the `pending` flag every read reports,
     # driven from the closure into this index.
     Index("ix_folder_delta_folder_id", "folder_id"),
 )
 """**The rollup outbox** (F-015/FR-8): one row per change, written on the same connection and in
-the same transaction as the change it describes — the [events](../events.py) pattern, for
+the same transaction as the change it describes â the [events](../events.py) pattern, for
 arithmetic instead of audit.
 
 A second outbox rather than a consumer of the event log, and the reason is ordering. Addition
 commutes, so this queue needs no cursor, no order and no exactly-once delivery: a batch is
-`DELETE … RETURNING`-ed and added to the aggregates **in one transaction**, so a crash re-applies
+`DELETE â¦ RETURNING`-ed and added to the aggregates **in one transaction**, so a crash re-applies
 nothing and loses nothing. Reading the event log instead would mean holding a cursor over a table
 where a transaction can commit *behind* the cursor's position, and a delta silently skipped there
 is a number that stays wrong until the next drift sweep.
 
-A row's numbers apply to `folder_id` **and to every one of its ancestors** — the drain expands
+A row's numbers apply to `folder_id` **and to every one of its ancestors** â the drain expands
 them over the closure. That is why a file move needs no common-ancestor arithmetic: -1 at the old
 folder and +1 at the new one net to zero at every ancestor they share."""
 
 
-#: A file's lifecycle (02 § file, [F-014](../../../features/F-014-deletion-and-trash.md)).
+#: A file's lifecycle (02 Â§ file, [F-014](../../../features/F-014-deletion-and-trash.md)).
 #: Phase 1 records `trashed` only so a re-scan can capture a deletion that already happened on
 #: disk; deleting *through* the app arrives with the trash surface in phase 4.
 FILE_STATES = ("live", "trashed")
@@ -525,11 +530,11 @@ FILE_STATES = ("live", "trashed")
 #: records when a file changed on disk without the app mediating it.
 VERSION_ORIGINS = ("upload", "external")
 
-#: 04 § identification. Assigned by the core from the detected media type before any
+#: 04 Â§ identification. Assigned by the core from the detected media type before any
 #: extractor runs, which is what makes type-scoped listings work on a brand-new file.
 MEDIA_CLASSES = ("image", "video", "audio", "document", "archive", "other")
 
-#: Stored beside every hash so a future algorithm is an additive change (02 § FileVersion).
+#: Stored beside every hash so a future algorithm is an additive change (02 Â§ FileVersion).
 DIGEST_ALGORITHMS = ("sha256",)
 
 
@@ -548,11 +553,11 @@ file = Table(
     Column("last_seen_at", DateTime(timezone=True), nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    # A composite foreign key, not two independent ones: it makes invariant 1 structural —
+    # A composite foreign key, not two independent ones: it makes invariant 1 structural â
     # a file's workspace *is* its folder's workspace, so no code path can file a row into
     # another workspace's tree, which would be a permission leak rather than a typo.
     # Deferrable, initially immediate: it fires per statement like any other constraint, and
-    # only the cross-workspace folder move asks to hold it until commit — that operation
+    # only the cross-workspace folder move asks to hold it until commit â that operation
     # rewrites both halves of the pair, and either half alone looks like a violation
     # (F-015/FR-4).
     ForeignKeyConstraint(
@@ -581,8 +586,8 @@ file = Table(
     # never look outside its own root.
     Index("ix_file_folder_id_last_seen_at", "folder_id", "last_seen_at"),
 )
-"""A logical file, addressed as *(folder, name)* — its path is derived from the folder chain,
-never stored (02 § file). The UUID survives rename, move and new versions."""
+"""A logical file, addressed as *(folder, name)* â its path is derived from the folder chain,
+never stored (02 Â§ file). The UUID survives rename, move and new versions."""
 
 
 file_version = Table(
@@ -599,8 +604,8 @@ file_version = Table(
     Column("media_class", Text, nullable=False),
     Column("origin", Text, nullable=False),
     Column("is_current", Boolean, nullable=False, server_default=text("true")),
-    # Whether these bytes can still be produced (F-007/FR-9). True for a current version —
-    # it *is* the file on disk — and for a superseded one the app snapshotted into
+    # Whether these bytes can still be produced (F-007/FR-9). True for a current version â
+    # it *is* the file on disk â and for a superseded one the app snapshotted into
     # `versions/` before overwriting it. False once the bytes are gone: a file edited or
     # deleted directly on the storage was overwritten before the app could copy it, and
     # saying so is the honest answer rather than a restore that fails when tried.
@@ -611,17 +616,17 @@ file_version = Table(
     Column("modified_at", DateTime(timezone=True), nullable=True),
     _created_at(),
     # Exactly one current version per file, enforced rather than maintained: the alternative
-    # — a `current_version_id` on `file` — is a circular foreign key that has to be deferred.
+    # â a `current_version_id` on `file` â is a circular foreign key that has to be deferred.
     Index("uq_file_version_current", "file_id", unique=True, postgresql_where=text("is_current")),
     # Reuse of extraction results and duplicate detection both start from "who else has these
-    # bytes?" (04 § identification, F-013).
+    # bytes?" (04 Â§ identification, F-013).
     Index("ix_file_version_content_hash", "content_hash"),
     CheckConstraint("size_bytes >= 0", name="size_not_negative"),
     CheckConstraint(one_of("origin", VERSION_ORIGINS), name="origin_known"),
     CheckConstraint(one_of("media_class", MEDIA_CLASSES), name="media_class_known"),
     CheckConstraint(one_of("digest_algorithm", DIGEST_ALGORITHMS), name="digest_algorithm_known"),
 )
-"""An immutable snapshot of a file's content, identified by its hash (02 § FileVersion)."""
+"""An immutable snapshot of a file's content, identified by its hash (02 Â§ FileVersion)."""
 
 
 #: Why an item is in the trash (F-014/FR-3). Phase 1 writes only `detected_on_disk`: a scan
@@ -648,12 +653,12 @@ trash_entry = Table(
     Column("path", Text, nullable=False),
     Column("trashed_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # NULL when nobody did it: a scan discovering a deletion that already happened on the
-    # storage has no person to name (07 § the audit trail).
+    # storage has no person to name (07 Â§ the audit trail).
     Column("trashed_by", UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")),
     Column("purge_after", DateTime(timezone=True), nullable=False),
     _created_at(),
     # One entry per trashed file. A file restored and trashed again gets a new entry, because
-    # the old one is deleted on restore rather than kept as history — the event log is what
+    # the old one is deleted on restore rather than kept as history â the event log is what
     # keeps history (ADR-0007).
     UniqueConstraint("file_id"),
     CheckConstraint(one_of("origin", TRASH_ORIGINS), name="origin_known"),
@@ -663,13 +668,13 @@ trash_entry = Table(
     # trash listing uses.
     Index("ix_trash_entry_purge_after", "purge_after"),
 )
-"""Why a file is in the trash, and until when (F-014). **Restorability is not stored** — it is
+"""Why a file is in the trash, and until when (F-014). **Restorability is not stored** â it is
 derived from whether any of the file's versions still has its bytes (`file_version.restorable`),
 so it cannot go stale behind an app-mediated snapshot that happened later.
 
 The deadline **is** stored, for the opposite reason: F-014's promise is that nothing leaves the
 trash before its deadline, and a deadline computed at read time from a setting could be pulled
-forward by changing that setting — which is that promise being broken. `trash.RETENTION` is
+forward by changing that setting â which is that promise being broken. `trash.RETENTION` is
 where the number comes from today."""
 
 
@@ -708,7 +713,7 @@ upload_session = Table(
     Column("media_type", Text, nullable=True),
     Column("interop_version", SmallInteger, nullable=True),
     # Decided at creation, because that is where the client can be told "no" before it spends
-    # an hour uploading — and because finalize may run in a much later request.
+    # an hour uploading â and because finalize may run in a much later request.
     Column("if_exists", Text, nullable=False, server_default=text("'reject'")),
     # The offset the client may rely on: bytes are fsync'd before this advances, never after
     # (ADR-0017). Staged bytes beyond it were never acknowledged and are truncated on resume.
@@ -735,7 +740,7 @@ upload_session = Table(
     Index("ix_upload_session_workspace_id_created_at", "workspace_id", "created_at"),
 )
 """A resumable upload in progress: the durable row that makes an interrupted multi-gigabyte
-upload resumable across restarts (ADR-0017, 03 § uploads). Its staged bytes live in the
+upload resumable across restarts (ADR-0017, 03 Â§ uploads). Its staged bytes live in the
 workspace's own `.workspace/staging/` area, named after this id, so the janitor can attribute
 and collect them."""
 
@@ -770,7 +775,7 @@ scan_run = Table(
     # (F-001's API surface offers a subtree rescan).
     Column("root_path", Text, nullable=False, server_default=text("''")),
     # The operation that owns this run. Not a foreign key on purpose: terminal operation rows
-    # are pruned (12 § queue hygiene), and a finished run's history must outlive that.
+    # are pruned (12 Â§ queue hygiene), and a finished run's history must outlive that.
     Column("operation_id", UUID(as_uuid=True), nullable=False),
     # Progress, updated with each batch so a 10 TB import is observable while it runs
     # (F-001/FR-5) rather than only when it finishes.
@@ -787,6 +792,10 @@ scan_run = Table(
     Column("files_restored", BigInteger, nullable=False, server_default=text("0")),
     Column("conflicts", BigInteger, nullable=False, server_default=text("0")),
     Column("skipped", BigInteger, nullable=False, server_default=text("0")),
+    # Folders whose identity survived an external rename, and the ones where the evidence was
+    # ambiguous and a new identity was created instead (F-015/FR-7).
+    Column("folders_transferred", BigInteger, nullable=False, server_default=text("0")),
+    Column("folders_ambiguous", BigInteger, nullable=False, server_default=text("0")),
     Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("finished_at", DateTime(timezone=True), nullable=True),
     Column("error", Text, nullable=True),
@@ -806,7 +815,7 @@ scan_run = Table(
     ),
 )
 """One traversal of a workspace (or a subtree of one). Holds the progress a client polls and
-the durable state a crash resumes from (12 § job atomicity)."""
+the durable state a crash resumes from (12 Â§ job atomicity)."""
 
 
 scan_frontier = Table(
@@ -820,7 +829,7 @@ scan_frontier = Table(
     ),
     # Workspace-relative; the empty string is the workspace root.
     Column("path", Text, primary_key=True),
-    # The folder row for *this* directory, resolved when the directory was discovered — so
+    # The folder row for *this* directory, resolved when the directory was discovered â so
     # processing it costs no walk from the root, and a 100k-directory tree does not pay
     # O(depth) queries per batch.
     Column(
@@ -830,8 +839,8 @@ scan_frontier = Table(
     CheckConstraint(f"octet_length(path) <= {MAX_PATH_BYTES}", name="path_length"),
 )
 """**The durable cursor.** Directories a run has discovered and not yet processed: one batch
-pops a directory, registers what is in it, pushes its subdirectories and deletes its own row —
-all in one transaction, which is the checkpoint 12 § job atomicity requires.
+pops a directory, registers what is in it, pushes its subdirectories and deletes its own row â
+all in one transaction, which is the checkpoint 12 Â§ job atomicity requires.
 
 Directories that *vanished* stay on the frontier deliberately. Popping one that is no longer
 there is an empty listing, so a subtree deleted on disk needs no special case at any depth."""
@@ -854,7 +863,7 @@ scan_blocked = Table(
     ),
     _created_at(),
 )
-"""Directories this run **could not read** — permissions, a path that resolved outside the
+"""Directories this run **could not read** â permissions, a path that resolved outside the
 workspace, a mount that went away. F-001/FR-16 is enforced from this table: the reconciliation
 sweep excludes every descendant of a blocked folder, because "I could not look" says nothing
 about what is inside and must never be reconciled as "it is not there".
@@ -882,3 +891,44 @@ scan_finding = Table(
 )
 """What a scan **reported instead of registering** (F-001/FR-11, FR-12). The user resolves a
 conflict by renaming something; the app never renames, moves or deletes a file to fix one."""
+
+
+scan_relocation = Table(
+    "scan_relocation",
+    metadata,
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("scan_run.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "from_folder_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "to_folder_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("files", BigInteger, nullable=False, server_default=text("0")),
+    # Child folders whose own identity this run transferred into the destination. The evidence a
+    # directory holding nothing but subdirectories leaves behind (F-015/FR-7): its files cannot
+    # vouch for it, but the folders it used to contain can.
+    Column("folders", BigInteger, nullable=False, server_default=text("0")),
+    _created_at(),
+    CheckConstraint("files >= 0 AND folders >= 0", name="counts_not_negative"),
+    CheckConstraint("from_folder_id <> to_folder_id", name="from_is_not_to"),
+)
+"""**Where a directory's content went**, counted per run — the evidence for F-015/FR-7.
+
+A file that moved no longer says where it came from, and neither does anything else: the row was
+updated in place. So the move is counted here as it happens, one row per source/destination pair,
+which is also what keeps the identity pass proportional to what moved rather than to how many
+dead folders the index holds.
+
+Per run rather than on the folder row, for the same reason `scan_blocked` is: the fact is about
+one traversal. A pair that means "renamed" this hour means nothing next hour."""

@@ -225,6 +225,93 @@ async def stored(connection: AsyncConnection, folder_id: UUID) -> tuple[int, int
     return (0, 0) if row is None else (row[0], row[1])
 
 
+async def assign(
+    connection: AsyncConnection, *, folder_id: UUID, files: int, size_bytes: int
+) -> None:
+    """Set a folder's totals outright, and put it at the front of the verification queue.
+
+    For the two callers that know an *absolute* answer rather than a change: the sweep correcting
+    drift from ground truth, and a folder that took over another one's identity and with it
+    everything that folder held ([F-015/FR-7](../../../features/F-015-folders.md)).
+
+    `verified_at` goes back to NULL either way. A number written by hand is exactly the kind that
+    should be checked again soon, and NULL is the front of that queue.
+    """
+    await connection.execute(
+        pg_insert(folder_aggregate)
+        .values(folder_id=folder_id, total_files=files, total_bytes=size_bytes)
+        .on_conflict_do_update(
+            index_elements=[folder_aggregate.c.folder_id],
+            set_={"total_files": files, "total_bytes": size_bytes, "verified_at": None},
+        )
+    )
+
+
+async def queued_under(connection: AsyncConnection, folder_id: UUID) -> tuple[int, int]:
+    """What this subtree's *unapplied* changes add up to — files, bytes.
+
+    The counterpart to `stored`, and needed for the same reason: a folder that changes position
+    while it has queued changes would have them expanded over the ancestors it has **afterwards**.
+    Knowing the amount is what lets the mover compensate the two chains instead of draining first.
+    """
+    row = (
+        await connection.execute(
+            select(
+                func.coalesce(func.sum(folder_delta.c.file_count), 0),
+                func.coalesce(func.sum(folder_delta.c.size_bytes), 0),
+            )
+            .select_from(
+                folder_delta.join(
+                    folder_closure, folder_closure.c.descendant_id == folder_delta.c.folder_id
+                )
+            )
+            .where(folder_closure.c.ancestor_id == folder_id)
+        )
+    ).one()
+    return row[0], row[1]
+
+
+async def repoint(connection: AsyncConnection, *, from_folder: UUID, to_folder: UUID) -> None:
+    """Hand one folder's queued changes to another. For a folder row that is about to disappear.
+
+    `folder_delta` cascades on folder deletion, so a row deleted with changes still queued against
+    it takes them with it — and a number short by an upload nobody can find again. The one caller
+    is the identity transfer, where the two folders describe the same directory and only one may
+    survive ([F-015/FR-7](../../../features/F-015-folders.md)).
+    """
+    await connection.execute(
+        update(folder_delta)
+        .where(folder_delta.c.folder_id == from_folder)
+        .values(folder_id=to_folder)
+    )
+
+
+async def inherit(connection: AsyncConnection, *, heir: UUID, from_folder: UUID) -> None:
+    """Add what one folder's totals say to another's, in one statement.
+
+    Addition rather than assignment, and the difference matters: the heir's own stored number is
+    not zero but *minus what it still has queued*, so overwriting it would drop exactly those
+    changes. `verified_at` is cleared, because a total assembled by hand is one the sweep should
+    look at soon.
+    """
+    # An alias and two scalar subqueries rather than an `UPDATE … FROM`: both rows are pinned by
+    # their primary key, which SQLAlchemy cannot see, so the join-less form reads as a cartesian
+    # product to it. `coalesce` covers a source row that is somehow absent, where a NULL would
+    # otherwise turn a missing number into a constraint violation in a background pass.
+    held = folder_aggregate.alias("inherited")
+    files = select(held.c.total_files).where(held.c.folder_id == from_folder).scalar_subquery()
+    size = select(held.c.total_bytes).where(held.c.folder_id == from_folder).scalar_subquery()
+    await connection.execute(
+        update(folder_aggregate)
+        .where(folder_aggregate.c.folder_id == heir)
+        .values(
+            total_files=folder_aggregate.c.total_files + func.coalesce(files, 0),
+            total_bytes=folder_aggregate.c.total_bytes + func.coalesce(size, 0),
+            verified_at=None,
+        )
+    )
+
+
 async def shift(
     connection: AsyncConnection,
     *,
@@ -516,14 +603,7 @@ async def verify(
         if held == expected:
             continue
         drifted.append(Drift(folder_id, held or (0, 0), expected))
-        await connection.execute(
-            pg_insert(folder_aggregate)
-            .values(folder_id=folder_id, total_files=expected[0], total_bytes=expected[1])
-            .on_conflict_do_update(
-                index_elements=[folder_aggregate.c.folder_id],
-                set_={"total_files": expected[0], "total_bytes": expected[1]},
-            )
-        )
+        await assign(connection, folder_id=folder_id, files=expected[0], size_bytes=expected[1])
         _logger.warning(
             "folder aggregate drifted from ground truth and was corrected",
             extra={
