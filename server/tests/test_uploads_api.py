@@ -8,8 +8,11 @@ because a client we did not write cares about the first and the user cares about
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import os
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +23,7 @@ import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import janitor, names, operations, resumable, workspacefs
+from store_everything import janitor, names, operations, resumable, uploads, workspacefs
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -194,6 +197,86 @@ async def test_an_append_at_a_stale_offset_is_refused_without_corrupting_anythin
     assert resumed.status_code == 200, resumed.text
     assert (root / "video.mp4").read_bytes() == CONTENT
     assert resumed.json()["content_hash"] == DIGEST
+
+
+@pytest.mark.fr("F-001/FR-15")
+async def test_staging_that_no_longer_covers_the_offset_ends_the_session(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """An acknowledged offset is never wrong — so when it cannot be honoured, nothing is assembled.
+
+    Staging lives in the user-visible `.workspace/staging/`, so a client with SMB access can
+    truncate it. The append path opened it with `"ab"` (creating an empty file if it had to) and
+    committed the file's *size* as the new offset, so the offset walked backwards and the next
+    chunk was stored at the wrong position: a self-consistent file nobody uploaded.
+    """
+    first, second = CONTENT[:100], CONTENT[100:]
+
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, root):
+        created = await create_upload(client, workspace, "video.mp4", complete=False)
+        upload_id = created.json()["id"]
+        await append(client, upload_id, 0, first)
+
+        # What a user poking around in the staging directory over SMB leaves behind.
+        staging = workspacefs.staging_directory(root) / f"{upload_id}.partial"
+        assert staging.stat().st_size == len(first)
+        staging.write_bytes(first[:10])
+
+        refused = await append(client, upload_id, len(first), second, complete=True)
+        # And the session is over: resuming it would assemble the same wrong file.
+        again = await append(client, upload_id, len(first), second, complete=True)
+
+    assert refused.status_code == 410, refused.text
+    assert "cannot be resumed" in refused.json()["detail"]
+    assert again.status_code == 404
+    assert not (root / "video.mp4").exists()
+    assert await count_files(identity_database) == 0
+
+
+@pytest.mark.fr("F-001/FR-20", "F-001/FR-7")
+async def test_two_uploads_finishing_on_one_path_do_not_destroy_each_other(
+    identity_settings: Settings, identity_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publishing is a check-then-act over two systems, so it runs one publisher at a time.
+
+    Both finalizes look for what is at the path before either has committed, so both used to
+    find it free — and the loser's `os.replace` destroyed the winner's bytes with no snapshot and
+    no version, before the unique index refused its rows a moment too late to matter.
+    """
+    mine, yours = CONTENT, CONTENT[::-1]
+    # Both publishers held at the instant before the rename, so the test does not depend on
+    # winning a race: whichever guard is missing, this is where the damage would be done. The
+    # timeout is what makes it terminate when serialisation works and the second never arrives.
+    rendezvous = threading.Barrier(2)
+    real_assemble = uploads.assemble
+
+    def waiting_assemble(*args: Any, **kwargs: Any) -> uploads.Assembled:
+        with contextlib.suppress(threading.BrokenBarrierError):
+            rendezvous.wait(timeout=0.5)
+        return real_assemble(*args, **kwargs)
+
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, root):
+        first = await create_upload(client, workspace, "contested.bin", complete=False)
+        second = await create_upload(client, workspace, "contested.bin", complete=False)
+        assert first.status_code == 201 and second.status_code == 201
+        one, two = first.json()["id"], second.json()["id"]
+        await append(client, one, 0, mine[:10])
+        await append(client, two, 0, yours[:10])
+
+        monkeypatch.setattr(uploads, "assemble", waiting_assemble)
+        finished = await asyncio.gather(
+            append(client, one, 10, mine[10:], complete=True),
+            append(client, two, 10, yours[10:], complete=True),
+        )
+
+    statuses = sorted(response.status_code for response in finished)
+    assert statuses == [200, 409], [response.text for response in finished]
+    # Exactly one file, and the bytes on disk are the ones its row describes.
+    assert await count_files(identity_database) == 1
+    winner = next(response for response in finished if response.status_code == 200)
+    stored = (root / "contested.bin").read_bytes()
+    assert hashlib.sha256(stored).hexdigest() == winner.json()["content_hash"]
+    assert stored in {mine, yours}
 
 
 @pytest.mark.fr("F-001/FR-14")

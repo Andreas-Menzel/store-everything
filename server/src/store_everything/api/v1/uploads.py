@@ -25,6 +25,7 @@ the upload resource from the `201 Created` instead; see `resumable` and Q58.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
@@ -53,6 +54,8 @@ from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
 from store_everything.security import CurrentCredential, settings_of
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["uploads"])
 
@@ -254,6 +257,12 @@ async def _finalize(
     """Turn staged bytes into a registered file. The last step, and the only publishing one."""
     segments = names.split_path(session.target_path)
     *parents, name = segments
+
+    # Everything below is a check-then-act over two systems — look, snapshot, rename, write rows
+    # — so it runs one publisher at a time per destination. Without it two finalizes racing on
+    # one free path both find it free, and the loser's rename destroys the winner's bytes before
+    # any row guard can fire (F-001/FR-20).
+    await uploads.lock_target(connection, workspace_id=workspace.id, path=session.target_path)
 
     replacing = await _existing_target(connection, workspace, segments, if_exists=session.if_exists)
     try:
@@ -689,7 +698,9 @@ async def upload_offset(
         400: {"description": "Upload-Offset is missing or unintelligible"},
         404: {"description": "No such upload, or not yours"},
         409: {"description": "The offset does not match; Upload-Offset carries the real one"},
-        410: {"description": "The upload expired"},
+        410: {
+            "description": "The upload expired, or its staged content no longer covers its offset"
+        },
         413: {"description": "The body exceeds Upload-Limit: max-append-size"},
         415: {"description": "An append must be application/partial-upload"},
     },
@@ -730,9 +741,12 @@ async def append_to_upload(
 
     workspace = await _writable_workspace(connection, session.workspace_id, credential)
     staging = uploads.staging_path(workspace.root_path, session.id)
-    # Bytes past the committed offset were never acknowledged — a crash between the fsync and
-    # the offset's commit — so they go before anything new is written.
-    await asyncio.to_thread(uploads.discard_unacknowledged, staging, session.committed_offset)
+    # Staging is made to match the committed offset before anything new is written: bytes past
+    # it were never acknowledged (a crash between the fsync and the offset's commit) and go.
+    try:
+        await asyncio.to_thread(uploads.align_staging, staging, session.committed_offset)
+    except uploads.StagingLostError as lost:
+        raise await _staging_lost(connection, session, lost) from lost
 
     size = await _receive(request, staging, limit=limits.max_append_size)
     if limits.max_size is not None and size > limits.max_size:
@@ -792,6 +806,10 @@ async def cancel_upload(
         raise _not_found("This upload already completed; the file it produced is not affected.")
     if session.is_open:
         await uploads.close(connection, session_id=session.id, state="cancelled")
+        # Rows before bytes (12 § ordering rule), and committed here rather than on the way out:
+        # a cancellation whose commit fails after the unlink would leave an `open` session the
+        # client may still legitimately resume, with nothing behind its acknowledged offset.
+        await connection.commit()
         workspace = await workspaces.get(connection, session.workspace_id)
         if workspace is not None:
             # Best effort, because the janitor is the guarantee: a terminal session's staging
@@ -823,6 +841,41 @@ async def _replay(
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
+    )
+
+
+async def _staging_lost(
+    connection: DatabaseConnection, session: uploads.Session, lost: uploads.StagingLostError
+) -> ProblemException:
+    """End a session whose staged bytes no longer back the offset it promised.
+
+    Fewer staged bytes than the committed offset means the file was truncated or deleted
+    underneath the session — reachable, because staging lives in the user-visible
+    `.workspace/staging/`. Appending would put the next chunk at the wrong position and publish
+    a file nobody sent, and no offset the client could resume from exists any more, so the
+    session is failed and the answer is `410`: start a new upload (F-001/FR-15).
+
+    Committed here rather than left to the request's own commit, because the request ends in a
+    refusal — and a session that stays `open` would invite the same broken resume again.
+    """
+    await uploads.close(connection, session_id=session.id, state="failed")
+    await connection.commit()
+    _logger.warning(
+        "upload session failed: staged content no longer covers the acknowledged offset",
+        extra={
+            "upload": str(session.id),
+            "staged": lost.staged,
+            "acknowledged": lost.committed,
+        },
+    )
+    return ProblemException(
+        status=410,
+        slug="gone",
+        title="Gone",
+        detail=(
+            "The staged content of this upload no longer covers the offset it was acknowledged "
+            "at, so it cannot be resumed. Start a new upload."
+        ),
     )
 
 
