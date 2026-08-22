@@ -53,6 +53,10 @@ WORKSPACE_CREATED = "workspace.created"
 WORKSPACE_PROVISIONED = "workspace.provisioned"
 
 FOLDER_CREATED = "folder.created"
+#: Two events rather than one for the same operation (F-015/FR-11): a reader looking for "who
+#: reorganised my library" wants moves, and a reader chasing a broken link wants renames.
+FOLDER_RENAMED = "folder.renamed"
+FOLDER_MOVED = "folder.moved"
 
 FILE_CREATED = "file.created"
 #: A new current version, from an upload onto an existing path or from content that changed on

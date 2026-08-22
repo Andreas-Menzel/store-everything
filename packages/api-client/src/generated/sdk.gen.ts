@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -232,6 +232,54 @@ export const appendToUpload = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
+ * Create a folder
+ *
+ * Create one folder, on disk and in the index — the directory is the point of a folder.
+ */
+export const createFolder = <ThrowOnError extends boolean = false>(options: Options<CreateFolderData, ThrowOnError>): RequestResult<CreateFolderResponses, CreateFolderErrors, ThrowOnError> => (options.client ?? client).post<CreateFolderResponses, CreateFolderErrors, ThrowOnError>({
+    url: '/api/v1/workspaces/{workspace_id}/folders',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one folder
+ */
+export const readFolder = <ThrowOnError extends boolean = false>(options: Options<ReadFolderData, ThrowOnError>): RequestResult<ReadFolderResponses, ReadFolderErrors, ThrowOnError> => (options.client ?? client).get<ReadFolderResponses, ReadFolderErrors, ThrowOnError>({ url: '/api/v1/folders/{folder_id}', ...options });
+
+/**
+ * List what is in a folder
+ *
+ * Subfolders first, then files, as one cursor-paginated stream.
+ *
+ * A page is filled across the seam rather than cut short at it: a folder with three subfolders
+ * and a thousand files returns the three and then ninety-seven files, not a page of three.
+ */
+export const listChildren = <ThrowOnError extends boolean = false>(options: Options<ListChildrenData, ThrowOnError>): RequestResult<ListChildrenResponses, ListChildrenErrors, ThrowOnError> => (options.client ?? client).get<ListChildrenResponses, ListChildrenErrors, ThrowOnError>({ url: '/api/v1/folders/{folder_id}/children', ...options });
+
+/**
+ * Rename or move a folder
+ *
+ * A rename and a move are one operation: one row update, one `rename` on disk.
+ *
+ * Cross-workspace moves are supported while both roots live on the same filesystem, which is
+ * what makes the move a single atomic rename. Across filesystems it would be a copy of every
+ * byte under the folder — a resumable operation rather than a request — so it is refused with
+ * that reason (F-015/FR-4).
+ */
+export const moveFolder = <ThrowOnError extends boolean = false>(options: Options<MoveFolderData, ThrowOnError>): RequestResult<MoveFolderResponses, MoveFolderErrors, ThrowOnError> => (options.client ?? client).post<MoveFolderResponses, MoveFolderErrors, ThrowOnError>({
+    url: '/api/v1/folders/{folder_id}/move',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Read one file
  */
 export const readFile = <ThrowOnError extends boolean = false>(options: Options<ReadFileData, ThrowOnError>): RequestResult<ReadFileResponses, ReadFileErrors, ThrowOnError> => (options.client ?? client).get<ReadFileResponses, ReadFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}', ...options });
@@ -240,3 +288,26 @@ export const readFile = <ThrowOnError extends boolean = false>(options: Options<
  * Download a file's content
  */
 export const readFileContent = <ThrowOnError extends boolean = false>(options: Options<ReadFileContentData, ThrowOnError>): RequestResult<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError> => (options.client ?? client).get<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/content', ...options });
+
+/**
+ * Rename or move a file
+ *
+ * Move or rename one file: the operation everything else about identity rests on.
+ *
+ * [F-010/FR-1](../../../../features/F-010-auto-sort-inbox.md) asks for exactly this as a
+ * first-class operation, because the deferred auto-sorter is going to be its heaviest user and a
+ * move that lost tags or versions would make sorting destructive. It cannot: the row keeps its
+ * UUID, and everything hangs off that.
+ *
+ * Disk before rows, like every other move (F-015/FR-4): a crash between them leaves the file at
+ * its new path with the index still pointing at the old one, which the next scan reconciles by
+ * content — the reverse order would leave a row pointing at nothing.
+ */
+export const moveFile = <ThrowOnError extends boolean = false>(options: Options<MoveFileData, ThrowOnError>): RequestResult<MoveFileResponses, MoveFileErrors, ThrowOnError> => (options.client ?? client).post<MoveFileResponses, MoveFileErrors, ThrowOnError>({
+    url: '/api/v1/files/{file_id}/move',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});

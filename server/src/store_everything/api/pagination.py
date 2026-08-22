@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -22,6 +23,10 @@ from store_everything.problems import FieldProblem, ProblemException
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+
+#: What a keyset cursor joins its parts with. A vertical bar cannot occur in a UUID, a number, an
+#: ISO timestamp or a comparison key, which is what makes decoding unambiguous.
+SEPARATOR = "|"
 
 
 class Page[T](BaseModel):
@@ -57,6 +62,33 @@ def decode_sequence_cursor(cursor: str) -> int:
         return int(base64.urlsafe_b64decode(cursor + padding).decode())
     except (binascii.Error, UnicodeDecodeError, ValueError) as invalid:
         raise InvalidCursor() from invalid
+
+
+def encode_keyset_cursor(parts: Sequence[str]) -> str:
+    """A cursor over any keyset, as the parts that identify the position.
+
+    Kept generic on purpose: the endpoint decides what its position *means* (a folder's name and
+    id, a file's size and id, which segment of a mixed listing) and this only carries it. Parts
+    are joined with a separator that cannot occur in one, so decoding is unambiguous.
+    """
+    return base64.urlsafe_b64encode(SEPARATOR.join(parts).encode()).decode().rstrip("=")
+
+
+def decode_keyset_cursor(cursor: str, *, parts: int) -> list[str]:
+    """The parts a cursor carries, or the standard validation problem.
+
+    The count is checked here: a cursor from a different endpoint, or from a version of this one
+    that carried a different position, is a bad request rather than an index error.
+    """
+    padding = "=" * (-len(cursor) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(cursor + padding).decode()
+    except (binascii.Error, UnicodeDecodeError) as invalid:
+        raise InvalidCursor() from invalid
+    decoded = raw.split(SEPARATOR)
+    if len(decoded) != parts:
+        raise InvalidCursor()
+    return decoded
 
 
 def encode_cursor(created_at: datetime, identifier: UUID) -> str:

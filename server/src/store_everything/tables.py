@@ -463,10 +463,16 @@ file = Table(
     # A composite foreign key, not two independent ones: it makes invariant 1 structural —
     # a file's workspace *is* its folder's workspace, so no code path can file a row into
     # another workspace's tree, which would be a permission leak rather than a typo.
+    # Deferrable, initially immediate: it fires per statement like any other constraint, and
+    # only the cross-workspace folder move asks to hold it until commit — that operation
+    # rewrites both halves of the pair, and either half alone looks like a violation
+    # (F-015/FR-4).
     ForeignKeyConstraint(
         ["folder_id", "workspace_id"],
         ["folder.id", "folder.workspace_id"],
         ondelete="CASCADE",
+        deferrable=True,
+        initially="IMMEDIATE",
     ),
     # Sibling uniqueness covers **live** rows only, which is F-014/FR-1's "trashed items do
     # not reserve their path" made structural. A full constraint would make a file deleted on

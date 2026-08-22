@@ -1094,6 +1094,239 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/folders": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Create a folder",
+        "description": "Create one folder, on disk and in the index — the directory is the point of a folder.",
+        "operationId": "create_folder",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such workspace, or not yours"
+          },
+          "409": {
+            "description": "Something already holds that name"
+          },
+          "422": {
+            "description": "The name was refused"
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{folder_id}": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Read one folder",
+        "operationId": "read_folder",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such folder, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{folder_id}/children": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "List what is in a folder",
+        "description": "Subfolders first, then files, as one cursor-paginated stream.\n\nA page is filled across the seam rather than cut short at it: a folder with three subfolders\nand a thousand files returns the three and then ninety-seven files, not a page of three.",
+        "operationId": "list_children",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Ordering",
+              "description": "How to order **files**; subfolders always sort by name.",
+              "default": "name"
+            },
+            "description": "How to order **files**; subfolders always sort by name."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque; from a previous page.",
+              "title": "Cursor"
+            },
+            "description": "Opaque; from a previous page."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Child_"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such folder, or not yours"
+          },
+          "422": {
+            "description": "The cursor or the ordering was refused"
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{folder_id}/move": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Rename or move a folder",
+        "description": "A rename and a move are one operation: one row update, one `rename` on disk.\n\nCross-workspace moves are supported while both roots live on the same filesystem, which is\nwhat makes the move a single atomic rename. Across filesystems it would be a copy of every\nbyte under the folder — a resumable operation rather than a request — so it is refused with\nthat reason (F-015/FR-4).",
+        "operationId": "move_folder",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderMoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such folder, or not yours"
+          },
+          "409": {
+            "description": "The root, a cycle, an occupied name, or two filesystems"
+          },
+          "422": {
+            "description": "The name or the destination was refused"
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}": {
       "get": {
         "tags": [
@@ -1193,10 +1426,188 @@
           }
         }
       }
+    },
+    "/api/v1/files/{file_id}/move": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Rename or move a file",
+        "description": "Move or rename one file: the operation everything else about identity rests on.\n\n[F-010/FR-1](../../../../features/F-010-auto-sort-inbox.md) asks for exactly this as a\nfirst-class operation, because the deferred auto-sorter is going to be its heaviest user and a\nmove that lost tags or versions would make sorting destructive. It cannot: the row keeps its\nUUID, and everything hangs off that.\n\nDisk before rows, like every other move (F-015/FR-4): a crash between them leaves the file at\nits new path with the index still pointing at the old one, which the next scan reconciles by\ncontent — the reverse order would leave a row pointing at nothing.",
+        "operationId": "move_file",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileMoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "409": {
+            "description": "An occupied name, or two filesystems"
+          },
+          "422": {
+            "description": "The name or the destination was refused"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Child": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ChildFolder"
+          },
+          {
+            "$ref": "#/components/schemas/ChildFile"
+          }
+        ]
+      },
+      "ChildFile": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "file",
+            "title": "Kind",
+            "default": "file"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "media_class": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "document",
+              "archive",
+              "other"
+            ],
+            "title": "Media Class"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "size",
+          "content_hash",
+          "media_type",
+          "media_class",
+          "modified_at",
+          "created_at"
+        ],
+        "title": "ChildFile"
+      },
+      "ChildFolder": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "folder",
+            "title": "Kind",
+            "default": "folder"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "created_at"
+        ],
+        "title": "ChildFolder"
+      },
       "CurrentIdentity": {
         "properties": {
           "user": {
@@ -1234,6 +1645,36 @@
         ],
         "title": "CurrentIdentity",
         "description": "Who the caller is, and how they proved it."
+      },
+      "FileMoveRequest": {
+        "properties": {
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FileMoveRequest"
       },
       "FileSummary": {
         "properties": {
@@ -1374,6 +1815,119 @@
         "title": "FilesystemVerdict",
         "description": "What the `fs-check` probe found on the filesystem holding this workspace."
       },
+      "FolderCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "FolderCreateRequest"
+      },
+      "FolderMoveRequest": {
+        "properties": {
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "FolderMoveRequest"
+      },
+      "FolderSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "workspace": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Workspace"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "workspace",
+          "parent",
+          "name",
+          "path",
+          "depth",
+          "created_at"
+        ],
+        "title": "FolderSummary"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1472,6 +2026,41 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "Ordering": {
+        "type": "string",
+        "enum": [
+          "name",
+          "size",
+          "modified"
+        ]
+      },
+      "Page_Child_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Child"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Page[Child]"
       },
       "Page_ScanFinding_": {
         "properties": {

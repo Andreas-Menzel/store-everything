@@ -337,9 +337,10 @@ async def test_a_nested_path_creates_its_folders(
     assert response.status_code == 201, response.text
     assert response.json()["path"] == "Photos/2026/summer/beach.jpg"
     assert (root / "Photos" / "2026" / "summer" / "beach.jpg").read_bytes() == CONTENT
-    # The folders are real rows too, so a listing will find them (F-015/FR-1).
+    # The folders are real rows too, so a listing will find them (F-015/FR-1). The root is the
+    # first, with the empty name it really has.
     created = await read_events(identity_database, action="folder.created")
-    assert [event["details"].get("name") for event in created] == [None, "Photos", "2026", "summer"]
+    assert [event["details"]["name"] for event in created] == ["", "Photos", "2026", "summer"]
 
 
 async def test_a_failed_upload_creates_no_folders(

@@ -48,7 +48,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 
 **Staged features** (split across phases, per maintenance rule 4): [F-007](features/F-007-versioning.md) (1 → 4), [F-011](features/F-011-audit-trail.md) (1 → 4), [F-015](features/F-015-folders.md) (1 → 2 → 3), [F-009](features/F-009-reprocessing.md) (2 → 5), [F-017](features/F-017-views.md) (3 → 5). A staged feature computes `Implemented` only when its last part lands.
 
-[F-015](features/F-015-folders.md)'s split: the entity, identity, closure, operations, aggregates and visibility roots land in phase 1; **folder tags** ([F-015/FR-9](features/F-015-folders.md)) wait for the tag vocabulary in phase 2 ([F-003](features/F-003-tagging.md)); **folders as search results** ([F-015/FR-10](features/F-015-folders.md)) wait for search in phase 3 ([F-002](features/F-002-hybrid-search.md)). Neither can be verified earlier, so neither is claimed earlier.
+[F-015](features/F-015-folders.md)'s split: the entity, identity, closure, operations, aggregates and visibility roots land in phase 1; **folder tags** ([F-015/FR-9](features/F-015-folders.md)) wait for the tag vocabulary in phase 2 ([F-003](features/F-003-tagging.md)); **folders as search results** ([F-015/FR-10](features/F-015-folders.md)) wait for search in phase 3 ([F-002](features/F-002-hybrid-search.md)). Neither can be verified earlier, so neither is claimed earlier. One part goes the other way: **moving a folder between two filesystems** ([F-015/FR-14](features/F-015-folders.md)) is a resumable copy of what may be terabytes, not a request, and it joins the [post-v1 pool](#post-v1-pool) — phase 1 supports the cross-workspace move a single atomic rename can do and refuses the rest with that reason (FR-4).
 
 ---
 
@@ -331,6 +331,7 @@ Explicitly later. Pulling an item forward = maintenance rule 6 (assign a phase; 
 | [F-018](features/F-018-people.md) — People | Faces, persons, naming, account links (fully specified, additive) | [ADR-0011](decisions/ADR-0011-person-recognition-architecture.md) · [ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) · Q50, Q51, Q52, Q53 |
 | [F-010](features/F-010-auto-sort-inbox.md) — Auto-sort inbox | Rule- then AI-driven sorting; its v1 obligations (move API, observable events, workspace-model flexibility) are already delivered in phases 1 and 5 | Q55 (inbox destination) |
 | [F-023](features/F-023-os-file-manager-integration.md) — OS file-manager integration | iOS Files / Android DocumentsProvider surfaces; P2 — pull into a mobile phase if wanted sooner | [13-mobile-clients](specs/13-mobile-clients.md) |
+| [F-015/FR-14](features/F-015-folders.md) — Cross-filesystem folder move | Copying a folder between workspaces whose roots are on different filesystems, as a resumable checkpointed operation. Phase 1 refuses it with that reason, so this is a capability rather than a gap in a promise | [12 § job atomicity](specs/12-reliability.md#job-atomicity) · the scan's frontier pattern |
 | External workspace sources | GDrive & co., read-only mirrored ([03 § workspace sources](specs/03-storage-and-portability.md#workspace-sources)) | Q16 |
 | Saved-search subscriptions | Standing queries notifying on new matches | Q37 (likely needs Q41) |
 | Push notifications | Vendor-relay story for self-hosted (APNs/FCM/UnifiedPush) | Q41 |
