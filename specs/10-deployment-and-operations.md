@@ -99,6 +99,27 @@ The app is **crash-only** ([ADR-0010](../decisions/ADR-0010-crash-only-execution
 - **`stop_grace_period` is sized for checkpoint-and-release (seconds), never for job duration.** A graceful stop just releases leases so the successor resumes instantly; a hard kill merely waits out lease expiry.
 - **Crash resistance is not backup** (Q13): leases and idempotent recovery survive *process* death, not *disk* death.
 
+## Storage placement
+
+Where the bytes actually sit is the operator's decision, not the container runtime's. Three areas, and they differ in what they are for ([03 § storage layout](03-storage-and-portability.md)):
+
+| Area | Path in the container | Default | Switchable |
+|---|---|---|---|
+| Workspace storage — the users' own trees | `/srv/store-everything` | `workspace-data` volume | `WORKSPACE_DATA` |
+| App-owned storage — `versions/`, `derived/` | `/var/lib/store-everything` | `app-data` volume | `APP_DATA` |
+| PostgreSQL | `/var/lib/postgresql` | `postgres-data` volume | no |
+
+`WORKSPACE_DATA` and `APP_DATA` are read by **Docker, not by the service** — hence no `SE_` prefix, unlike `SE_DATA_ROOT` and `SE_APP_DATA_ROOT`, which tell the app where to look *inside* the container. Unset, each names the compose volume of that name, so the stack runs unconfigured. Set to an absolute host path, Docker binds that directory instead.
+
+**The default is a compromise, and the direction of the compromise matters.** A named volume makes the stack work on first run, at the cost of the users' files living where only Docker can see them — which is precisely what [ADR-0003](../decisions/ADR-0003-files-on-disk-source-of-truth.md) exists to prevent: a tree you cannot recognise without the app is not portable, whatever the schema says. So any deployment meant to keep files sets `WORKSPACE_DATA`, and the documentation says so rather than leaving the default to be inherited by accident.
+
+Two operational notes:
+
+- **A bind mount replaces the ownership the image established.** The container runs as uid 10001 and must create directories under the workspace root, so a host directory it cannot write is a workspace that cannot be provisioned — reported by `store-everything fs-check` rather than discovered at the first upload. On Linux that means `chown` before first start; Docker Desktop maps ownership itself.
+- **PostgreSQL is deliberately not switchable.** It refuses a data directory whose ownership or mode it dislikes, and its backup path is `pg_dump` or a filesystem snapshot rather than a directory anyone browses.
+
+Pointing `WORKSPACE_DATA` at a directory that *already contains files* is a different operation: those files are adopted rather than created, which needs `SE_ADOPTION_ROOTS` and the admin-gated adoption path ([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)).
+
 ## Disk space
 
 Disk exhaustion is an operational emergency the system must survive politely — never a reason to destroy data ([F-014/FR-9](../features/F-014-deletion-and-trash.md)):

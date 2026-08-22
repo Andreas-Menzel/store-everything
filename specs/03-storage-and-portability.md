@@ -50,6 +50,8 @@ Everything downstream — scanning, folders, uploads, versions, permissions — 
 
 ## Storage layout
 
+These are paths *inside* the service. Which host directory or volume sits underneath each of them is a deployment decision, and one that matters for the portability promise below: see [10 § storage placement](10-deployment-and-operations.md#storage-placement).
+
 ```
 SE_DATA_ROOT/                 ← managed placement (default /srv/store-everything)
   users/{owner-id}/

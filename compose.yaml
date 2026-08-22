@@ -96,8 +96,8 @@ services:
       SE_UPLOAD_MAX_APPEND_SIZE: ${SE_UPLOAD_MAX_APPEND_SIZE:-67108864}
       SE_UPLOAD_MIN_APPEND_SIZE: ${SE_UPLOAD_MIN_APPEND_SIZE:-1048576}
     volumes:
-      - app-data:/var/lib/store-everything
-      - workspace-data:/srv/store-everything
+      - ${APP_DATA:-app-data}:/var/lib/store-everything
+      - ${WORKSPACE_DATA:-workspace-data}:/srv/store-everything
     healthcheck:
       # Readiness, not liveness: an instance whose migrations are pending must not be
       # sent traffic (10-deployment-and-operations.md § health & readiness).
@@ -173,8 +173,8 @@ services:
       SE_UPLOAD_MAX_APPEND_SIZE: ${SE_UPLOAD_MAX_APPEND_SIZE:-67108864}
       SE_UPLOAD_MIN_APPEND_SIZE: ${SE_UPLOAD_MIN_APPEND_SIZE:-1048576}
     volumes:
-      - app-data:/var/lib/store-everything
-      - workspace-data:/srv/store-everything
+      - ${APP_DATA:-app-data}:/var/lib/store-everything
+      - ${WORKSPACE_DATA:-workspace-data}:/srv/store-everything
     command: ['store-everything', 'worker']
     # Sized for stop-claiming-and-release, never for job duration (ADR-0010).
     stop_grace_period: 30s
@@ -205,12 +205,18 @@ services:
 # The extractor containers join this file in phase 2, when there is something to run them on.
 
 volumes:
+  # Deliberately not switchable to a host path: PostgreSQL refuses a data directory whose
+  # ownership and mode it does not like, and a bind mount is the usual way to discover that.
+  # Its backup path is `pg_dump` or a snapshot, not a directory someone browses.
   postgres-data:
-  # `versions/` inside this volume is the only copy of superseded file content, so it is
-  # mandatory backup scope — unlike `derived/`, which reprocessing can rebuild (Q13).
+  # The default for `APP_DATA`. `versions/` inside it is the only copy of superseded file
+  # content, so it is mandatory backup scope — unlike `derived/`, which reprocessing can rebuild
+  # (Q13).
   app-data:
-  # Managed workspace roots: the users' own files. Backup scope for the obvious reason — this
-  # is the data. Replace with a bind mount to keep the trees on your own storage.
+  # The default for `WORKSPACE_DATA`: managed workspace roots, which are the users' own files.
+  # Point that variable at a directory on your own storage and this volume goes unused — which is
+  # the arrangement ADR-0003 is about, because files you cannot find without the app are not
+  # really yours (10 § storage placement).
   workspace-data:
 
 networks:

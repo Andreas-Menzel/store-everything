@@ -78,6 +78,7 @@ def test_the_exception_list_stays_honest() -> None:
     assert stale == set(), f"stale exceptions: {sorted(stale)}"
 
 
+<<<<<<< Updated upstream
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/release.yml"
 
@@ -106,3 +107,30 @@ def test_every_place_that_builds_the_image_uses_the_repository_root() -> None:
             f"{path.name} builds from the service directory ({offending.group(0).strip()!r}), "
             "which cannot see the web client"
         )
+=======
+#: The mounts that hold a user's own bytes, and the variable each one is switched with. Read by
+#: Docker rather than by the service, so they carry no `SE_` prefix — and so no other test here
+#: covers them.
+SWITCHABLE_MOUNTS = {
+    "/srv/store-everything": "WORKSPACE_DATA",
+    "/var/lib/store-everything": "APP_DATA",
+}
+
+
+def test_the_areas_holding_files_can_be_put_on_the_operators_own_storage() -> None:
+    """Files nobody can find without the app are not really theirs (ADR-0003).
+
+    The default is a named volume so the stack works unconfigured, but every mount of an area
+    that holds bytes has to be switchable to a host path — and a mount that hard-codes the volume
+    would take that away silently. Checked as text because it is the compose file's literal
+    contents that decide, not a rendering of it.
+    """
+    text = COMPOSE.read_text(encoding="utf-8")
+    for path, variable in SWITCHABLE_MOUNTS.items():
+        mounts = [line.strip() for line in text.splitlines() if line.strip().endswith(f":{path}")]
+        assert mounts, f"nothing mounts {path} any more"
+        for mount in mounts:
+            assert f"${{{variable}:-" in mount, (
+                f"{mount} pins its source; it should default through ${variable}"
+            )
+>>>>>>> Stashed changes
