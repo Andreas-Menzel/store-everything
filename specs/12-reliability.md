@@ -111,6 +111,14 @@ Drift is therefore possible only through a bug, and a rotating sweep riding each
 
 Generalizing [ADR-0007](../decisions/ADR-0007-unified-event-log.md)'s `LISTEN/NOTIFY` pattern: **every push channel is a lossy wake-up over durable state plus a periodic poll.** `NOTIFY` (job dispatch, event fan-out), filesystem watchers ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md) — a watcher event only ever *hastens* a scan the schedule would have run anyway), WebSocket pushes — all may drop; none may be load-bearing. The durable side is always a table: queued operations, `next_due_at` schedules (re-scan, janitor, retry backoff), the event log with consumer-held cursors. Server-side WebSocket state is deliberately none: thin notifications are lossy by design and clients resync via the `/events` cursor feed on reconnect ([F-012](../features/F-012-live-updates.md)).
 
+## The request transaction
+
+One request is one connection and therefore one transaction ([ADR-0007](../decisions/ADR-0007-unified-event-log.md)), and it **commits when the handler returns, before the response starts**. That ordering is what makes a commit failure reportable: the request becomes a `5xx` instead of a `2xx` whose rows PostgreSQL threw away — "never `200` with an error body" ([08 § errors](08-api-principles.md#errors-rfc-9457)). It matters most where the transaction can still fail at `COMMIT` after the filesystem has already moved: the cross-workspace folder move defers its containment check to commit time, and the disk rename is not undone by a rollback.
+
+The ordering is a property of the web framework's dependency lifecycle rather than of our own code, so it is **asserted by a test** (`server/tests/test_request_lifecycle.py`) instead of assumed from a version pin.
+
+Two boundaries this does *not* move. A mutation whose effects reach outside that transaction needs an operation record ([§ what needs an operation record](#what-needs-an-operation-record)) — committing earlier says nothing about the filesystem. And a `2xx` means *committed*, not *received*: the response can still be lost on the way back, which is what the next section is for.
+
 ## Client-visible idempotency
 
 The *client's* connection crashes too: a response lost after commit leaves the caller not knowing whether the mutation happened. Unsafe `POST`s accept an **`Idempotency-Key`** ([08](08-api-principles.md#conventions-proposed)); the first execution's outcome (status + body) is recorded against the key and **replayed** on retry — a retry never re-executes. Keys are scoped per token, retained for a bounded window, and reuse the operation-record machinery (the header is simply the idempotency key of a client-initiated operation). This is what makes future sync clients safe to write.
