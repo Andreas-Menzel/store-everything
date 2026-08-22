@@ -27,10 +27,13 @@ At minimum set `PUBLIC_HOST`, `POSTGRES_PASSWORD`, and the matching password ins
 `SE_DATABASE_URL`. Set `TRAEFIK_NETWORK` to your proxy's shared network if it is not
 called `traefik`.
 
-Set `SE_FORWARDED_ALLOW_IPS` to the proxy's address on that network. Leaving it empty is
-safe — the app then believes no `X-Forwarded-*` header at all — but until it is set, the
-client addresses in rate limits and audit records will be the proxy's, not the caller's.
-Never use a wildcard: a spoofed client IP poisons both.
+**Set `SE_FORWARDED_ALLOW_IPS` to the proxy's address on that network.** Leaving it empty is
+safe against spoofing — the app then believes no `X-Forwarded-*` header at all — but it is not
+free: every caller arrives as the proxy, so audit records name the proxy instead of the caller,
+and the app stops counting abuse per address because one address would mean the whole instance
+(it says so rather than pretending; the per-account login ceiling still applies). Set it to get
+per-caller limits and honest audit records. Never use a wildcard: a spoofed client IP poisons
+both.
 
 **2. Start.**
 

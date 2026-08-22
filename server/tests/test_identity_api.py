@@ -15,7 +15,9 @@ from sqlalchemy import select
 
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.problems import problem_type
+from store_everything.security import failed_auth_ceiling
 from store_everything.tables import app_user, event
+from tests.conftest import make_settings
 from tests.identity_helpers import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -28,6 +30,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 AUTH = f"{API_V1_PREFIX}/auth"
 USERS = f"{API_V1_PREFIX}/users"
+
+#: The ceilings the identity fixture runs with, for tests that have to count up to one.
+SETTINGS_UNDER_TEST = make_settings(rate_limit_per_minute=500, login_max_attempts=3)
 
 
 # ------------------------------------------------------------------------ logging in
@@ -148,6 +153,94 @@ async def test_repeated_failures_lock_the_account_out(
     assert locked.status_code == 429
     assert locked.headers["retry-after"]
     assert await read_events(identity_database, action="auth.rate_limited")
+
+
+@pytest.mark.fr("F-011/FR-1")
+async def test_rotating_invalid_credentials_are_counted_and_the_trip_is_recorded(
+    identity_app_client: httpx.AsyncClient, identity_database: str
+) -> None:
+    """A12: the request ceiling was keyed on a digest of the *presented* credential.
+
+    Rotating garbage therefore got a fresh bucket every request — an unlimited supply of
+    unauthenticated work, each one opening a pooled connection for the token lookup, and none
+    of it counted or recorded. A failure is now charged to something the caller does not
+    choose, and the trip reaches the audit trail.
+    """
+    ceiling = failed_auth_ceiling(SETTINGS_UNDER_TEST)
+    statuses: list[int] = []
+    for attempt in range(ceiling + 1):
+        response = await identity_app_client.get(
+            f"{AUTH}/me", headers={"Authorization": f"Bearer sepat_rotating{attempt}"}
+        )
+        statuses.append(response.status_code)
+
+    assert statuses[:ceiling] == [401] * ceiling
+    assert statuses[-1] == 429, "an unlimited supply of invalid credentials"
+    trips = await read_events(identity_database, action="auth.rate_limited")
+    assert [event["details"]["scope"] for event in trips] == ["auth"]
+
+
+async def test_a_credential_less_request_is_still_refused_without_counting(
+    identity_app_client: httpx.AsyncClient, identity_database: str
+) -> None:
+    """The other half of A12's fix: no credential is not a *failed* authentication.
+
+    Keeping that path free of counting and of I/O is what makes the cheap `401` cheap — the
+    property `test_a_credential_less_request_never_reaches_the_database` asserts from below.
+    """
+    for _ in range(failed_auth_ceiling(SETTINGS_UNDER_TEST) + 2):
+        response = await identity_app_client.get(f"{AUTH}/me")
+        assert response.status_code == 401
+
+    assert await read_events(identity_database, action="auth.rate_limited") == []
+
+
+@pytest.mark.fr("F-011/FR-1")
+async def test_failed_logins_behind_an_untrusted_proxy_lock_nobody_else_out(
+    identity_client: httpx.AsyncClient, identity_app_client: httpx.AsyncClient
+) -> None:
+    """A13: with `SE_FORWARDED_ALLOW_IPS` empty — the shipped default behind Traefik — every
+    caller arrives as the proxy, so counting failed logins per address counts the whole
+    instance. Ten junk attempts locked every user out of logging in, for free, indefinitely.
+
+    D-5: an address is counted only when it identifies somebody. The per-identity ceiling is
+    untouched, and the events still record the address that was actually seen.
+    """
+    proxied = {**SAME_ORIGIN, "X-Forwarded-For": "203.0.113.7"}
+    for attempt in range(3):  # the fixture's whole per-identity allowance
+        refused = await identity_app_client.post(
+            f"{AUTH}/login",
+            json={"email": f"nobody{attempt}@example.com", "password": "wrong"},
+            headers=proxied,
+        )
+        assert refused.status_code == 401
+
+    allowed = await login(identity_client)
+
+    assert allowed.status_code == 200, "a stranger's failures locked out a real account"
+
+
+async def test_failed_logins_from_a_real_address_still_lock_it_out(
+    identity_client: httpx.AsyncClient, identity_app_client: httpx.AsyncClient
+) -> None:
+    """The protection D-5 keeps: no forwarding header means the address is the caller's own.
+
+    Spraying distinct accounts from one host is exactly what the per-address ceiling is for,
+    so it still applies — the fix narrows the counter to addresses that mean something rather
+    than removing it.
+    """
+    for attempt in range(3):
+        refused = await identity_app_client.post(
+            f"{AUTH}/login",
+            json={"email": f"nobody{attempt}@example.com", "password": "wrong"},
+            headers=SAME_ORIGIN,
+        )
+        assert refused.status_code == 401
+
+    refused_now = await login(identity_client)
+
+    assert refused_now.status_code == 429
+    assert refused_now.headers["retry-after"]
 
 
 # ------------------------------------------------------------ using the session

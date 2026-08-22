@@ -25,12 +25,14 @@ from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.identity import AccessToken, AccountDisabledError, Session, User
 from store_everything.problems import FieldProblem, ProblemException
+from store_everything.ratelimit import PROXIED_DETAIL
 from store_everything.schemas import BaseSchema, EmailAddress
 from store_everything.security import (
     AccountDisabledProblem,
     AuthenticationRequired,
     CurrentCredential,
     client_ip,
+    client_ip_identifies_caller,
     enforce_request_ceiling,
     enforce_same_origin,
     settings_of,
@@ -189,6 +191,7 @@ async def login(
     """
     settings = settings_of(request)
     address = client_ip(request)
+    identified = client_ip_identifies_caller(request)
     email = identity.normalize_email(payload.email)
 
     # Login carries no ambient authority, so a non-browser client may omit the headers; a
@@ -199,7 +202,13 @@ async def login(
     if await ratelimit.login_attempts_exhausted(
         connection,
         email=email,
-        client_ip=address,
+        # Only an address that identifies *somebody* is counted. Behind a proxy whose headers
+        # this instance does not trust — the shipped default — every caller arrives as the
+        # proxy, so counting failures per address counts the whole instance: ten junk attempts
+        # would lock every user out of logging in, for free, indefinitely (A13). The
+        # per-identity ceiling below is unaffected, and the event still records the address
+        # that was actually seen.
+        client_ip=address if identified else None,
         max_attempts=settings.login_max_attempts,
         window=window,
     ):
@@ -226,8 +235,10 @@ async def login(
             action=events.LOGIN_FAILED,
             resource_type=events.RESOURCE_SESSION,
             actor=Actor.system(),
-            # No password, and no statement about whether the address exists.
-            details={"email": email},
+            # No password, and no statement about whether the address exists. `proxied` says
+            # the recorded address is a proxy's, so a later per-address count knows to skip
+            # it rather than treating one address as the whole instance (A13).
+            details={"email": email} if identified else {"email": email, PROXIED_DETAIL: True},
             client_ip=address,
         )
         await connection.commit()

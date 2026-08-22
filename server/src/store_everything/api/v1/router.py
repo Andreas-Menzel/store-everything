@@ -35,7 +35,10 @@ def build_v1_router(*, api_docs_enabled: bool) -> APIRouter:
     """The authenticated half of `/api/v1`."""
     router = APIRouter(
         prefix=API_V1_PREFIX,
-        dependencies=[Depends(require_auth), Depends(enforce_request_ceiling)],
+        # The ceiling first, deliberately: dependencies resolve in order, so with `require_auth`
+        # ahead of it every bad credential was refused `401` before it was ever counted — an
+        # unlimited supply of unauthenticated work, one pooled connection each.
+        dependencies=[Depends(enforce_request_ceiling), Depends(require_auth)],
     )
 
     if api_docs_enabled:
