@@ -12,6 +12,7 @@ the way a user copying files onto a NAS over SMB does.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import shutil
@@ -24,11 +25,11 @@ import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import files, workspacefs
+from store_everything import files, reconcile, scans, workspacefs
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
-from store_everything.tables import file, file_version, scan_blocked, trash_entry
+from store_everything.tables import file, file_version, folder, scan_blocked, trash_entry
 from tests.identity_helpers import SAME_ORIGIN, read_events
 from tests.test_scanning import adopt, build, registered, status, user_files
 from tests.workspace_helpers import scan_pending
@@ -144,6 +145,19 @@ async def trash_rows(database_url: str) -> list[dict[str, Any]]:
                 )
             ).mappings()
             return [dict(row) for row in rows]
+    finally:
+        await engine.dispose()
+
+
+async def record_device(database_url: str, *, name: str, device: int) -> None:
+    """Say which filesystem a scan last saw this folder on — what a mount point looks like."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(
+                update(folder).where(folder.c.name == name).values(device_id=device)
+            )
+            await connection.commit()
     finally:
         await engine.dispose()
 
@@ -636,6 +650,165 @@ async def test_a_root_without_its_marker_is_not_reconciled(
     assert latest["files_trashed"] == 0
     assert "not there" in (latest["error"] or "")
     assert any("mount" in finding["detail"] for finding in report["findings"]["data"])
+
+
+@pytest.mark.fr("F-001/FR-16")
+async def test_an_unexpected_filesystem_error_blocks_the_subtree_rather_than_the_scan(
+    identity_settings: Settings,
+    identity_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EIO, ESTALE, ENOTCONN: what a NAS returns that is neither "gone" nor "denied".
+
+    Left to propagate, one such directory fails the whole operation — and the frontier is
+    path-ordered, so it is retried first on every resume until the attempts run out, the run
+    dead-letters, the janitor arms another one, and the same directory does it again. Every
+    directory sorting after it would never be scanned again, and no external deletion anywhere in
+    the workspace would ever be reconciled. FR-16 already says what the answer is: unknown, not
+    gone.
+    """
+    tree = tmp_path / "nas"
+    async with await imported(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        (tree / "notes.txt").unlink()
+
+        real_scandir = os.scandir
+        failing = (tree / "Photos").resolve()
+
+        def flaky_scandir(path: Any = ".") -> Any:
+            if Path(path).resolve() == failing:
+                raise OSError(errno.EIO, "Input/output error")
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", flaky_scandir)
+        await rescan(client, workspace, identity_database, identity_settings)
+        report = await status(client, workspace)
+
+    # The run finished, reconciled the deletion it could see, and concluded nothing about the
+    # subtree it could not read.
+    assert report["recent"][0]["state"] == "completed"
+    assert [entry["path"] for entry in await trash_rows(identity_database)] == ["notes.txt"]
+    assert (await states(identity_database))["Photos/beach.jpg"] == "live"
+    assert await blocked(identity_database) == 1
+    assert any("Input/output" in finding["detail"] for finding in report["findings"]["data"])
+
+
+@pytest.mark.fr("F-001/FR-17")
+async def test_a_share_that_leaves_during_the_traversal_is_not_reconciled(
+    identity_settings: Settings,
+    identity_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The marker read once, before a walk of ten terabytes, proves nothing about the end of it.
+
+    A share that goes away mid-run returns every directory still on the frontier as *absent* —
+    which is a fact the sweep acts on — so the files under them arrive at the sweep unstamped and
+    indistinguishable from deletions. The whole index would be trashed by a mount that dropped
+    out halfway through a scan.
+    """
+    tree = tmp_path / "nas"
+    async with await imported(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        before = await registered(identity_database)
+
+        real_next_directory = scans.next_directory
+
+        async def vanishing(connection: Any, run_id: UUID) -> Any:
+            pending = await real_next_directory(connection, run_id)
+            if pending is None:
+                # The traversal is over and nothing has been reconciled yet: the moment the old
+                # code committed itself to trashing everything it had not seen.
+                for entry in tree.iterdir():
+                    shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+            return pending
+
+        monkeypatch.setattr(scans, "next_directory", vanishing)
+        await rescan(client, workspace, identity_database, identity_settings)
+        report = await status(client, workspace)
+
+    assert await trash_rows(identity_database) == []
+    assert await registered(identity_database) == before, "the index survived a share leaving"
+    latest = report["recent"][0]
+    assert latest["state"] == "failed"
+    assert latest["files_trashed"] == 0
+
+
+@pytest.mark.fr("F-001/FR-17")
+async def test_a_share_that_leaves_during_the_sweep_loses_only_that_batch(
+    identity_settings: Settings,
+    identity_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checked again before every batch commits, so the damage is bounded — and rolled back."""
+    tree = tmp_path / "nas"
+    async with await imported(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        (tree / "notes.txt").unlink()
+
+        real_sweep_batch = reconcile.sweep_batch
+
+        async def leaving(*args: Any, **kwargs: Any) -> int:
+            trashed = await real_sweep_batch(*args, **kwargs)
+            workspacefs.marker_path(tree).unlink(missing_ok=True)
+            return trashed
+
+        monkeypatch.setattr(reconcile, "sweep_batch", leaving)
+        await rescan(client, workspace, identity_database, identity_settings)
+        report = await status(client, workspace)
+
+    # The batch had a real victim — `notes.txt` is genuinely gone — and it is still `live`,
+    # because the transaction that trashed it was rolled back rather than committed.
+    assert await trash_rows(identity_database) == []
+    assert (await states(identity_database))["notes.txt"] == "live"
+    assert report["recent"][0]["state"] == "failed"
+
+
+@pytest.mark.fr("F-001/FR-22")
+async def test_a_subtree_whose_filesystem_vanished_is_not_reconciled(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The case the marker cannot see: a mount point below the root that lost its mount.
+
+    It is readable, it is empty, and it is on a different filesystem than the one indexed — the
+    directory that was always underneath the mount. Two rescans, because the rule has to hold in
+    both directions: blocked while the storage is elsewhere, and reconciled as an ordinary
+    deletion once the filesystem is the one we recorded.
+    """
+    tree = tmp_path / "nas"
+    async with await imported(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        here = os.stat(tree / "Photos").st_dev
+        # What the first scan recorded when the mount was still there.
+        await record_device(identity_database, name="Photos", device=here + 1)
+        # The mount goes away, leaving the empty mountpoint directory it was covering.
+        shutil.rmtree(tree / "Photos")
+        (tree / "Photos").mkdir()
+
+        await rescan(client, workspace, identity_database, identity_settings)
+        report = await status(client, workspace)
+
+        assert await trash_rows(identity_database) == [], "a vanished mount was reconciled"
+        assert await states(identity_database) == {
+            "notes.txt": "live",
+            "Photos/beach.jpg": "live",
+            "Photos/2026/party.jpg": "live",
+            "Documents/tax/return.pdf": "live",
+        }
+        assert await blocked(identity_database) == 1
+        assert any("not mounted" in finding["detail"] for finding in report["findings"]["data"])
+
+        # Same empty directory, this time on the filesystem the index recorded: it really is
+        # empty, and the sweep says so.
+        await record_device(identity_database, name="Photos", device=here)
+        await rescan(client, workspace, identity_database, identity_settings)
+
+    assert [entry["path"] for entry in await trash_rows(identity_database)] == [
+        "Photos/2026/party.jpg",
+        "Photos/beach.jpg",
+    ]
 
 
 @pytest.mark.fr("F-001/FR-17")

@@ -143,6 +143,9 @@ class Folder:
     name: str
     depth: int
     created_at: datetime
+    #: The filesystem the directory was on when a scan last listed it, or `None` before the
+    #: first listing. Only the scan reads it, and only to notice that it changed.
+    device_id: int | None = None
 
     @property
     def is_root(self) -> bool:
@@ -156,14 +159,18 @@ _COLUMNS = (
     folder.c.name,
     folder.c.depth,
     folder.c.created_at,
+    folder.c.device_id,
 )
 
 
-def _as_folder(row: tuple[UUID, UUID, UUID | None, str, int, datetime]) -> Folder:
+type _FolderRow = tuple[UUID, UUID, UUID | None, str, int, datetime, int | None]
+
+
+def _as_folder(row: _FolderRow) -> Folder:
     return Folder(*row)
 
 
-def _root_query(workspace_id: UUID) -> Select[tuple[UUID, UUID, UUID | None, str, int, datetime]]:
+def _root_query(workspace_id: UUID) -> Select[_FolderRow]:
     return select(*_COLUMNS).where(
         folder.c.workspace_id == workspace_id, folder.c.parent_id.is_(None)
     )
@@ -723,6 +730,18 @@ async def stamp_seen(
         .values(last_seen_at=seen_at)
     )
     return result.rowcount
+
+
+async def record_device(connection: AsyncConnection, *, folder_id: UUID, device: int) -> None:
+    """Remember which filesystem this directory was on when a scan last listed it.
+
+    Written on every listing whose device agrees with what is under it, and *not* written when a
+    change looks like a mount that went away — leaving the old number in place is what keeps that
+    subtree out of reconciliation until the storage is back (F-001/FR-22, `scanning`).
+    """
+    await connection.execute(
+        update(folder).where(folder.c.id == folder_id).values(device_id=device)
+    )
 
 
 async def vanished(

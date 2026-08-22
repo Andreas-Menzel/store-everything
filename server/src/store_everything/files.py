@@ -250,6 +250,27 @@ async def unseen_under(
     ]
 
 
+async def live_under(connection: AsyncConnection, folder_id: UUID) -> bool:
+    """Whether the index still holds a live file anywhere beneath this folder.
+
+    Asked by the scan before it concludes anything from a directory that came back *empty*: an
+    empty listing over nothing is unremarkable, while an empty listing over a subtree the index
+    is holding is the shape of storage that went away (F-001/FR-22).
+    """
+    return bool(
+        (
+            await connection.execute(
+                select(
+                    select(file.c.id)
+                    .join(folder_closure, folder_closure.c.descendant_id == file.c.folder_id)
+                    .where(folder_closure.c.ancestor_id == folder_id, file.c.state == "live")
+                    .exists()
+                )
+            )
+        ).scalar_one()
+    )
+
+
 async def holds_any_content(connection: AsyncConnection, file_id: UUID) -> bool:
     """Whether the app can still produce *some* version of this file's content.
 

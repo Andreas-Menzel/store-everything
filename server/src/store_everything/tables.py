@@ -388,6 +388,12 @@ folder = Table(
     # still seen (its parent listed it), and one renamed away is not, which is the whole evidence
     # for F-015/FR-7. No index: the identity pass looks folders up by id, never by this column.
     Column("last_seen_at", DateTime(timezone=True), nullable=True),
+    # The filesystem this directory was on when a scan last listed it (`st_dev`). A mountpoint
+    # whose mount has gone away lists as an empty directory on its *parent's* device — no error,
+    # no marker, nothing to distinguish it from a directory somebody emptied — so this number is
+    # the only evidence that the storage under a folder is not the storage we indexed
+    # (F-001/FR-22). NULL until a scan has listed the directory once.
+    Column("device_id", BigInteger, nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # Sibling uniqueness on the comparison key (F-015/FR-6). Root rows have a NULL parent and

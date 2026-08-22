@@ -36,7 +36,14 @@ observes, checkpoints and reports.
 anything it reads the `.workspace/marker` planted at provisioning: absent, unreadable, or naming
 a different workspace means the storage is almost certainly not mounted, and the run registers
 nothing and reconciles nothing rather than concluding that ten terabytes were deleted. It is the
-cheapest check in the module and the only one that guards against destroying the whole index.
+cheapest check in the module and the only one that guards against destroying the whole index —
+and it is re-read before anything is trashed, and again before each sweep batch commits, because
+walking ten terabytes takes long enough for a share to leave in the middle of it.
+
+**A mount below the root gets its own evidence** (F-001/FR-22), because the marker cannot speak
+for it: a mount point whose mount is gone is a readable, empty directory rather than an error.
+Each directory's filesystem is recorded when it is listed, and one that changed while the
+directory came back empty over a subtree the index is still holding is treated as unreadable.
 
 **Known limit:** one directory's entries are listed and sorted in memory, so a single
 directory with millions of entries is a memory cost. Sorting is not optional — rule 2 is
@@ -50,7 +57,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -61,6 +68,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from store_everything import (
     aggregates,
     events,
+    files,
     filestore,
     folders,
     identity,
@@ -99,6 +107,10 @@ class Listing:
     #: The directory is there and could not be read. Its contents are *unknown*, which is not
     #: the same fact, and must never be reconciled as if everything in it had been deleted.
     unreadable: bool = False
+    #: The filesystem the directory itself lives on (`st_dev`). A mountpoint whose mount is gone
+    #: lists perfectly well — as the empty directory *underneath* it, on the parent's device —
+    #: so this number is the only evidence that the storage changed (F-001/FR-22).
+    device: int | None = None
 
 
 @dataclass(slots=True)
@@ -149,8 +161,18 @@ def inspect(root: Path, relative: str) -> Listing:
             ),
             unreadable=True,
         )
+    except OSError as unreachable:
+        # Resolving walks the path, so a share that went away mid-run fails here rather than in
+        # the listing. Unknown, not gone — the same answer the listing itself would give.
+        return Listing(
+            findings=(
+                scans.Finding("skipped", relative, f"cannot be reached: {unreachable.strerror}"),
+            ),
+            unreadable=True,
+        )
 
     try:
+        device = os.stat(target).st_dev
         with os.scandir(target) as scanning:
             entries = sorted(scanning, key=lambda entry: entry.name)
     except FileNotFoundError:
@@ -162,8 +184,19 @@ def inspect(root: Path, relative: str) -> Listing:
             findings=(scans.Finding("skipped", relative, f"cannot be read: {denied.strerror}"),),
             unreadable=True,
         )
+    except OSError as failure:
+        # EIO, ESTALE, ENOTCONN: a NAS that hiccupped, a handle that went stale. This arm exists
+        # because without it the error leaves the batch loop as a retryable operation failure,
+        # and the frontier is path-ordered — so the same directory is retried first on every
+        # resume until the attempts run out, dead-letters, and the janitor arms another run to
+        # do it again. Nothing after it in the tree would ever be scanned again.
+        return Listing(
+            findings=(scans.Finding("skipped", relative, f"cannot be read: {failure.strerror}"),),
+            unreadable=True,
+        )
 
-    return classify(relative, entries)
+    listing = classify(relative, entries)
+    return replace(listing, device=device)
 
 
 class DirectoryEntry(Protocol):
@@ -305,6 +338,32 @@ async def process_directory(
         # Its frontier row goes with it; there is nothing to file into.
         return tally
 
+    if await _mount_vanished(connection, folder=folder, listing=listing):
+        # A readable, empty directory with a whole subtree registered under it and a filesystem
+        # that is not the one we indexed. Treated exactly like a directory we could not read,
+        # because that is what it is: the storage is elsewhere, and its contents are unknown
+        # rather than deleted (F-001/FR-22).
+        detail = (
+            "this directory is empty and on a different filesystem than when it was last "
+            "scanned, while the index still holds files under it — the storage it was a "
+            "mount point for is not mounted. Nothing under it was reconciled."
+        )
+        await scans.block(connection, run_id=run.id, folder_id=folder.id)
+        tally.findings.append(scans.Finding("skipped", pending.path, detail))
+        tally.skipped += 1
+        _logger.warning(
+            "scan skipped a subtree whose filesystem changed",
+            extra={
+                "workspace": str(workspace.id),
+                "path": pending.path,
+                "indexed_device": folder.device_id,
+                "listed_device": listing.device,
+            },
+        )
+        return tally
+    if listing.device is not None and listing.device != folder.device_id:
+        await folders.record_device(connection, folder_id=folder.id, device=listing.device)
+
     discovered: list[scans.Pending] = []
     for name in listing.directories:
         child = await folders.ensure_child(
@@ -341,6 +400,40 @@ async def process_directory(
     tally.files_moved = outcome.moved
     tally.files_restored = outcome.restored
     return tally
+
+
+async def _mount_vanished(
+    connection: AsyncConnection, *, folder: folders.Folder, listing: Listing
+) -> bool:
+    """Whether this directory's storage is a mount that is no longer mounted.
+
+    The case the marker cannot see. `.workspace/marker` proves the *root* is mounted
+    (F-001/FR-17), but a mount point below it that lost its mount is a perfectly readable,
+    perfectly empty directory — the one that was always there underneath, on the parent's
+    filesystem. No error, no missing marker, and every file the index holds under it goes
+    unstamped, so the sweep would trash the lot.
+
+    Three facts have to line up, and the conjunction is what keeps the check from crying wolf:
+
+    1. **The filesystem changed** since a scan last listed this directory. On its own that is
+       ordinary — a NAS remount hands out a new `st_dev` for the same share.
+    2. **The listing is empty.** A directory with content in it says what its content is; there
+       is nothing to protect and nothing to guess.
+    3. **The index holds live files under it.** Without this, an empty directory that was always
+       empty would be blocked on every pass, reporting a finding about nothing.
+
+    Deliberately *not* included: hysteresis. Deferring the sweep by a run would only move the
+    mass deletion an hour later, while this keeps the subtree out of reconciliation for as long
+    as the storage is away — and lets it recover by itself the moment the mount is back, because
+    the recorded device is left untouched while the block stands.
+    """
+    if folder.device_id is None or listing.device is None:
+        return False
+    if folder.device_id == listing.device:
+        return False
+    if listing.mentioned or listing.directories:
+        return False
+    return await files.live_under(connection, folder.id)
 
 
 # ---------------------------------------------------------------------- the operation
@@ -438,6 +531,17 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
 
     # Only now: "did not see" means nothing until the traversal is finished, so a run that a
     # crash interrupted resumes into the frontier loop above rather than into this.
+    #
+    # And only if the tree still identifies itself. The marker was read before the traversal
+    # started, and a walk of ten terabytes takes a while: a share that went away in the middle
+    # of it returns every remaining directory as `missing`, which is indistinguishable from a
+    # deletion, so the files under them arrive here unstamped and this loop would trash them all
+    # (F-001/FR-17). Re-read before the first batch and again before every batch commits, so the
+    # damage from a share that leaves mid-sweep is bounded by one batch — which is rolled back.
+    unidentified = await asyncio.to_thread(_unidentified, workspace)
+    if unidentified is not None:
+        return await _refuse(job, run=run, workspace=workspace, reason=unidentified)
+
     while True:
         trashed = await reconcile.sweep_batch(
             job.connection,
@@ -448,6 +552,10 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
         )
         if trashed == 0:
             break
+        unidentified = await asyncio.to_thread(_unidentified, workspace)
+        if unidentified is not None:
+            await job.connection.rollback()
+            return await _refuse(job, run=run, workspace=workspace, reason=unidentified)
         await scans.record_progress(job.connection, run_id=run.id, files_trashed=trashed)
         # Unconditional here: the loop only reaches this line when something was trashed, and
         # every one of those left a folder's totals smaller.
