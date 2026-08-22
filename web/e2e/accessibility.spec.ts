@@ -98,86 +98,108 @@ async function stubbed(page: Page): Promise<void> {
   );
 }
 
-test('the login page has no accessibility violations', async ({ page }) => {
-  await page.route('**/api/v1/auth/me', (route) =>
-    route.fulfill({ status: 401, contentType: 'application/problem+json', body: '{}' }),
-  );
+test(
+  'the login page has no accessibility violations',
+  { tag: ['@F-027/FR-12'] },
+  async ({ page }) => {
+    await page.route('**/api/v1/auth/me', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/problem+json', body: '{}' }),
+    );
 
-  await page.goto('/login');
-  await expect(page.getByLabel('Password')).toBeVisible();
+    await page.goto('/login');
+    await expect(page.getByLabel('Password')).toBeVisible();
 
-  await scan(page);
-});
+    await scan(page);
+  },
+);
 
-test('a rejected form is still accessible', async ({ page }) => {
-  await page.route('**/api/v1/auth/me', (route) =>
-    route.fulfill({ status: 401, contentType: 'application/problem+json', body: '{}' }),
-  );
-  await page.route('**/api/v1/auth/login', (route) =>
-    route.fulfill({
-      status: 422,
-      contentType: 'application/problem+json',
-      body: JSON.stringify({
-        title: 'Validation failed',
+test(
+  'a rejected form is still accessible',
+  { tag: ['@F-027/FR-8', '@F-027/FR-12'] },
+  async ({ page }) => {
+    await page.route('**/api/v1/auth/me', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/problem+json', body: '{}' }),
+    );
+    await page.route('**/api/v1/auth/login', (route) =>
+      route.fulfill({
         status: 422,
-        errors: [
-          { detail: 'that address needs a domain with a dot in it', pointer: '/body/email' },
-        ],
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          title: 'Validation failed',
+          status: 422,
+          errors: [
+            { detail: 'that address needs a domain with a dot in it', pointer: '/body/email' },
+          ],
+        }),
       }),
-    }),
-  );
+    );
 
-  await page.goto('/login');
-  // Browser-valid (the HTML spec accepts `user@host`) and server-invalid, so the request is
-  // actually made and the server's own complaint is what gets rendered.
-  await page.getByLabel('Email').fill('owner@example');
-  await page.getByLabel('Password').fill('whatever');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.goto('/login');
+    // Browser-valid (the HTML spec accepts `user@host`) and server-invalid, so the request is
+    // actually made and the server's own complaint is what gets rendered.
+    await page.getByLabel('Email').fill('owner@example');
+    await page.getByLabel('Password').fill('whatever');
+    await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // The field's own complaint, attached to the field rather than only to the page (FR-8).
-  await expect(page.getByText('that address needs a domain with a dot in it')).toBeVisible();
-  await scan(page);
-});
+    // The field's own complaint, attached to the field rather than only to the page (FR-8).
+    await expect(page.getByText('that address needs a domain with a dot in it')).toBeVisible();
+    await scan(page);
+  },
+);
 
-test('the frame and the workspace list have no accessibility violations', async ({ page }) => {
-  await stubbed(page);
+test(
+  'the frame and the workspace list have no accessibility violations',
+  { tag: ['@F-027/FR-12'] },
+  async ({ page }) => {
+    await stubbed(page);
 
-  await page.goto('/');
-  await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
 
-  await scan(page);
-});
+    await scan(page);
+  },
+);
 
-test('the folder browser has no accessibility violations', async ({ page }) => {
-  await stubbed(page);
+test(
+  'the folder browser has no accessibility violations',
+  { tag: ['@F-027/FR-12'] },
+  async ({ page }) => {
+    await stubbed(page);
 
-  await page.goto(`/folders/${FOLDER}`);
-  await expect(page.getByRole('link', { name: 'notes.txt' })).toBeVisible();
+    await page.goto(`/folders/${FOLDER}`);
+    await expect(page.getByRole('link', { name: 'notes.txt' })).toBeVisible();
 
-  await scan(page);
-});
+    await scan(page);
+  },
+);
 
-test('the whole frame is reachable from the keyboard, with focus visible', async ({ page }) => {
-  await stubbed(page);
-  await page.goto('/');
-  await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
+test(
+  'the whole frame is reachable from the keyboard, with focus visible',
+  { tag: ['@F-027/FR-10', '@F-027/FR-12'] },
+  async ({ page }) => {
+    await stubbed(page);
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
 
-  const reached: string[] = [];
-  for (let step = 0; step < 12; step += 1) {
-    await page.keyboard.press('Tab');
-    const focused = await page.evaluate(() => {
-      const element = document.activeElement;
-      if (!element || element === document.body) return undefined;
-      return (
-        (element.textContent ?? '').trim() || element.getAttribute('aria-label') || element.tagName
-      );
-    });
-    if (focused) reached.push(focused);
-  }
+    const reached: string[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      await page.keyboard.press('Tab');
+      const focused = await page.evaluate(() => {
+        const element = document.activeElement;
+        if (!element || element === document.body) return undefined;
+        return (
+          (element.textContent ?? '').trim() ||
+          element.getAttribute('aria-label') ||
+          element.tagName
+        );
+      });
+      if (focused) reached.push(focused);
+    }
 
-  // Everything the frame owns: the app's own link, both sections, and the way out.
-  expect(reached).toContain('Store Everything');
-  expect(reached).toContain('Workspaces');
-  expect(reached).toContain('API');
-  expect(reached).toContain('Sign out');
-});
+    // Everything the frame owns: the app's own link, both sections, and the way out.
+    expect(reached).toContain('Store Everything');
+    expect(reached).toContain('Workspaces');
+    expect(reached).toContain('API');
+    expect(reached).toContain('Sign out');
+  },
+);

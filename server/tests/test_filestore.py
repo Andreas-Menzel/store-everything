@@ -44,6 +44,7 @@ def test_a_write_replaces_existing_content_without_a_gap(tmp_path: Path) -> None
     assert destination.read_bytes() == PAYLOAD
 
 
+@pytest.mark.fr("02/INV-2")
 def test_a_failed_write_leaves_the_destination_untouched(tmp_path: Path) -> None:
     destination = tmp_path / "document.txt"
     destination.write_bytes(b"still here")
@@ -110,6 +111,7 @@ def test_truncating_discards_unacknowledged_bytes(tmp_path: Path) -> None:
 # ------------------------------------------------------------------ journaled moves
 
 
+@pytest.mark.fr("02/INV-8")
 def test_a_journaled_move_verifies_before_it_commits(tmp_path: Path) -> None:
     source = tmp_path / "source" / "original"
     source.parent.mkdir()
@@ -240,6 +242,7 @@ def test_a_file_moved_into_the_store_keeps_its_content(tmp_path: Path) -> None:
     assert not source.exists()
 
 
+@pytest.mark.fr("02/INV-2")
 def test_a_snapshot_leaves_the_original_exactly_where_it_was(tmp_path: Path) -> None:
     """The version snapshot copies, and that ordering is the whole point (F-007/FR-9).
 

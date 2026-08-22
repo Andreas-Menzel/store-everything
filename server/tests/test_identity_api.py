@@ -33,6 +33,7 @@ USERS = f"{API_V1_PREFIX}/users"
 # ------------------------------------------------------------------------ logging in
 
 
+@pytest.mark.fr("F-027/FR-3")
 async def test_login_sets_a_session_cookie_and_reports_the_caller(
     identity_client: httpx.AsyncClient,
 ) -> None:
@@ -573,6 +574,7 @@ async def test_an_unknown_account_is_not_found(identity_client: httpx.AsyncClien
 # ------------------------------------------------------------ the event log
 
 
+@pytest.mark.fr("F-011/FR-1", "02/INV-6")
 async def test_every_mutation_leaves_an_event(
     identity_client: httpx.AsyncClient, identity_database: str
 ) -> None:
@@ -643,6 +645,7 @@ async def test_no_event_detail_carries_a_credential(
             )
 
 
+@pytest.mark.fr("F-011/FR-2")
 async def test_an_event_row_cannot_be_updated(identity_database: str) -> None:
     """Immutability is enforced by the database, not by everyone remembering (F-011/FR-2)."""
     from sqlalchemy import update

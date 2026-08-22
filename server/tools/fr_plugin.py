@@ -24,6 +24,10 @@ METHOD_MARKERS = {
 }
 DEFAULT_METHOD = "test"
 
+#: Which suite this report speaks for. The matrix is built from one report per layer
+#: (core, web, web-e2e) and names the layer beside each covering test.
+LAYER = "core"
+
 #: Worst-wins, so a failing teardown cannot be reported as a pass.
 _OUTCOME_RANK = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
 
@@ -67,7 +71,7 @@ class RequirementRecorder:
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
-            json.dumps({"tests": self.tests}, indent=2, sort_keys=True) + "\n",
+            json.dumps({"layer": LAYER, "tests": self.tests}, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 

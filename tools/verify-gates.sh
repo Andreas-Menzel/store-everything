@@ -178,6 +178,34 @@ $UV run pytest tests/test_gate_probe.py -q --fr-report="$report" >/dev/null 2>&1
 expect_failure "traceability matrix" $UV run python -m tools.traceability --report "$report"
 rm -f "$fixture" "$report"
 
+# ------------------------------------------- traceability: a layer that did not report
+# The matrix is merged from one report per test layer (Q59). A layer whose report is absent
+# would otherwise read as "nothing there verifies this" — the one wrong answer the matrix
+# must never give — so the tool has to refuse rather than proceed.
+report="$(mktemp -t gate-fr-XXXXXX.json)"
+track "$report"
+printf '{"layer": "core", "tests": {}}\n' > "$report"
+expect_failure "traceability: absent layer report" \
+  $UV run python -m tools.traceability --report "$report" --report /nonexistent/web.json
+rm -f "$report"
+
+# ------------------------------------------------- traceability: an untagged web suite
+# Vitest refuses a tag the configuration does not declare, and the declarations are read from
+# the feature files. A tag naming an FR that does not exist therefore fails at collection —
+# the backward gate, arriving before the matrix would have raised it.
+fixture="web/src/__gate-probe.spec.ts"
+track "$fixture"
+cat > "$fixture" <<'PROBE_TS'
+import { expect, it } from 'vitest';
+
+it('marks a requirement that does not exist', { tags: ['@F-999/FR-404'] }, () => {
+  expect(true).toBe(true);
+});
+PROBE_TS
+expect_failure "vitest requirement tags" \
+  $PNPM --filter @store-everything/web exec vitest run src/__gate-probe.spec.ts
+rm -f "$fixture"
+
 # ----------------------------------------------------------------- corpus manifest
 # A fixture nobody documented is a fixture nobody can trust.
 fixture="corpus/fixtures/text/_gate-undocumented.txt"

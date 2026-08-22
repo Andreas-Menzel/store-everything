@@ -1,6 +1,6 @@
 # F-027 — Web Application Shell
 
-**Status:** Draft
+**Status:** Implemented
 **Priority:** P0
 **Clients:** web — this *is* the web client's frame; the native apps have their own ([F-019](F-019-mobile-connection.md), [F-025](F-025-client-parity.md))
 **Depends on:** F-001, F-015

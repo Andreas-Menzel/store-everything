@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, cast
 
+import pytest
 from tools.export_openapi import OPENAPI_PATH, build_document, render
 
 from store_everything.app import API_VERSION
@@ -75,3 +76,29 @@ def test_the_contract_version_is_the_api_major_not_the_app_release() -> None:
     """
     assert build_document()["info"]["version"] == API_VERSION
     assert API_VERSION == "1"
+
+
+@pytest.mark.fr("F-011/FR-2")
+def test_no_operation_offers_to_change_or_remove_an_event() -> None:
+    """The API half of append-only, read off the published contract.
+
+    The database refuses an `UPDATE` (`test_identity_api.py`), which is the half that survives a
+    bug in the code. This is the half that has to survive phase 4: when FR-5's query API arrives,
+    a `DELETE` added beside it would pass every other test in this suite. Asserted against the
+    contract rather than the route table because the contract is what a client is offered.
+    """
+    paths = cast(dict[str, dict[str, object]], build_document()["paths"])
+
+    def mutating(needle: str) -> set[tuple[str, str]]:
+        return {
+            (path, method)
+            for path, operations in paths.items()
+            if needle in path
+            for method in operations
+            if method in {"post", "put", "patch", "delete"}
+        }
+
+    # The search finds a mutating operation when there is one, so the empty result below is a
+    # statement about the API and not about this comprehension.
+    assert mutating("files") != set()
+    assert mutating("event") == set()

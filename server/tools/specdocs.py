@@ -23,7 +23,10 @@ VERIFICATION_METHODS = frozenset({DEFAULT_METHOD, "benchmark", "fault-injection"
 
 FEATURE_FILE = re.compile(r"^F-(\d{3})-[a-z0-9-]+\.md$")
 _REQUIREMENT = re.compile(r"^-\s+\*\*FR-(\d+)\*\*\s*(.*)$")
-_TOMBSTONE = re.compile(r"^\*\((?:removed|withdrawn)\b[^)]*\)\*")
+#: A tombstone is the whole remainder of the line, so the reason may carry links and
+#: parentheses of its own — `*(removed — superseded by [FR-14](#…))*` is one tombstone,
+#: not an unterminated one.
+_TOMBSTONE = re.compile(r"^\*\((?:removed|withdrawn)\b.*\)\*\s*$")
 _METHOD = re.compile(r"\*\(verify:\s*([a-z-]+)\)\*")
 _HEADER = re.compile(r"^\*\*(?P<field>[A-Za-z ]+):\*\*\s*(?P<value>.*)$")
 _TITLE = re.compile(r"^#\s+(?P<id>F-\d{3})\s+—\s+(?P<title>.+)$")

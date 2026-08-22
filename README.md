@@ -21,7 +21,7 @@ PostgreSQL with pgvector as the single datastore ([ADR-0001](decisions/ADR-0001-
 
 ## Status
 
-**Phase 0 complete (v0.1.0); phase 1 — files & identity — is next.** The deployable skeleton is in place: health and readiness probes, migrations, structured logging, the problem+json error envelope, a deny-by-default API surface, and a pipeline whose every gate is proven able to fail. **No product feature is implemented yet** — files, search, and accounts start in phase 1.
+**Phase 1 complete (v0.2.0); phase 2 — the extraction platform — is next.** Real files get in and come back out: accounts and sessions, workspaces in both placements ([ADR-0018](decisions/ADR-0018-workspace-layout-and-adoption.md)), resumable uploads ([ADR-0017](decisions/ADR-0017-resumable-upload-protocol.md)), importing an existing directory in place, re-scan that reconciles what changed on the storage without touching it, folders whose identity survives a rename, a write-path that never overwrites content it has not preserved, an append-only event log behind all of it, and a Vue 3 web UI served from the API's own origin. **Nothing is analysed yet** — extraction, tagging and search are phase 2 and phase 3, so files are found by name and path, not by content.
 
 This repository holds the project's specifications (`specs/`), user-facing feature definitions (`features/`), architecture decision records (`decisions/`), open questions (`OPEN-QUESTIONS.md`), the implementation roadmap ([`ROADMAP.md`](ROADMAP.md)) — the phase-by-phase order in which the features will be built — the core service in [`server/`](server/README.md), the web UI in [`web/`](web/README.md), and the API contract in `openapi.json`, from which the typed client in `packages/api-client` is generated.
 

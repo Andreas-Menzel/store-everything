@@ -29,7 +29,9 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from store_everything import verify
 from store_everything.config import Settings
 from store_everything.faults import CRASH_EXIT_STATUS, FAULT_POINT_VARIABLE
 from store_everything.tables import (
@@ -45,6 +47,23 @@ from tests.test_scanning import adopt, build
 pytestmark = [pytest.mark.integration, pytest.mark.fault_injection, pytest.mark.asyncio]
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
+
+
+async def audits_clean(database_url: str, settings: Settings) -> str:
+    """The `verify` audit's own words, so a failure names the finding rather than a `False`.
+
+    Spec 11 asks for this after *every* fault-injection test, and the phase-1 exit criterion
+    names it directly ([12 § verification](../../specs/12-reliability.md#verification)): a
+    recovery that converges the rows but leaves staging debris or an unreferenced blob behind
+    has not converged, it has only stopped being visible.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            return (await verify.audit(connection, settings=settings)).render()
+    finally:
+        await engine.dispose()
+
 
 #: Both sides of the checkpoint, in execution order.
 CHECKPOINT_FAULT_POINTS = ("scan.after-batch", "scan.after-commit")
@@ -220,6 +239,9 @@ async def test_an_importer_killed_mid_tree_converges_on_restart(
         for path in sorted(tree.rglob("*"))
         if path.is_file() and not str(path.relative_to(tree)).startswith(".workspace")
     } == before
+
+    # Two crashes and a restart later, the instance has nothing to report about itself.
+    assert "clean" in await audits_clean(identity_database, identity_settings)
 
 
 def make_due(database_url: str) -> None:

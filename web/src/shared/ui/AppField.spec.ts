@@ -3,16 +3,20 @@ import { describe, expect, it } from 'vitest';
 
 import AppField from './AppField.vue';
 
-describe('AppField', () => {
-  it('associates the label with the input, so clicking it focuses the field', () => {
-    const wrapper = mount(AppField, { props: { label: 'Email' } });
+describe('AppField', { tags: ['@F-027/FR-8'] }, () => {
+  it(
+    'associates the label with the input, so clicking it focuses the field',
+    { tags: ['@F-027/FR-12'] },
+    () => {
+      const wrapper = mount(AppField, { props: { label: 'Email' } });
 
-    const id = wrapper.get('input').attributes('id');
-    expect(id).toBeTruthy();
-    expect(wrapper.get('label').attributes('for')).toBe(id);
-  });
+      const id = wrapper.get('input').attributes('id');
+      expect(id).toBeTruthy();
+      expect(wrapper.get('label').attributes('for')).toBe(id);
+    },
+  );
 
-  it('announces an error rather than only colouring the border', () => {
+  it('announces an error rather than only colouring the border', { tags: ['@F-027/FR-12'] }, () => {
     const wrapper = mount(AppField, {
       props: { label: 'Email', error: 'that address is already taken' },
     });

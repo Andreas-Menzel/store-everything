@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { fieldFailure, isUnauthenticated, toFailure } from './problem';
 
-describe('toFailure', () => {
+describe('toFailure', { tags: ['@F-027/FR-8'] }, () => {
   it('reads a problem document', () => {
     const failure = toFailure({
       type: 'https://docs.example/errors/conflict',
@@ -45,7 +45,7 @@ describe('toFailure', () => {
     }
   });
 
-  it('knows the one status that means the session is over', () => {
+  it('knows the one status that means the session is over', { tags: ['@F-027/FR-6'] }, () => {
     expect(isUnauthenticated(401)).toBe(true);
     expect(isUnauthenticated(403)).toBe(false);
     expect(isUnauthenticated(undefined)).toBe(false);

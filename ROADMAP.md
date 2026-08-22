@@ -115,14 +115,14 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - **Q30** — reliability tuning defaults (ship the spec's conservative defaults; revisit in phase 2 against real extractor runtimes)
 
 **Exit criteria:**
-- E2E: create user → log in → create workspace → resumable upload (interrupt + resume) → import an existing subtree → re-scan picks up an external add, modify, and delete → browse folders → download bytes (Range supported).
+- E2E: create user → log in → create workspace → resumable upload (interrupt + resume) → import an existing subtree → re-scan picks up an external add, modify, and delete → browse folders → download bytes (Range supported). Walked as one ordered test — `server/tests/test_phase_one_walkthrough.py` — because a suite of green units can all pass while the path between them is broken.
 - Fault-injection green: importer killed mid-run converges with no debris and no duplicated effects; the [12 § verification](specs/12-reliability.md#verification) audit runs clean.
 - Overwriting content (re-upload to a path, changed file on re-scan) preserves the prior bytes in `versions/` — negative test proves nothing is lost.
 - Every mutation has its event row, written in the same transaction ([02 § invariants](specs/02-domain-model.md#invariants)).
 - PATs are listed and revocable; every endpoint rejects unauthenticated calls.
 - The name, symlink, and adoption rules hold as negative tests: a case-colliding import reports conflicts without touching the tree, a symlink out of the workspace is never read, a non-allow-listed adoption is refused, and `.workspace/` appears in no API response.
 - `fs-check` refuses a filesystem that fails a required property (verified against a deliberately unsuitable one).
-- All F-001 FRs verified by their declared methods; F-015 green **except** its phase-2/3 parts (FR-9 folder tags, FR-10 folder search results); [F-027](features/F-027-web-application-shell.md) green — matrix green for everything claimed; phase tagged.
+- F-001 green **except** the two halves that describe a surface phase 2 creates — [FR-3](features/F-001-upload-and-import.md)'s extraction job reference and [FR-8](features/F-001-upload-and-import.md)'s `pending` extraction status; both FRs stay unverified rather than being claimed on their phase-1 half alone. F-015 green **except** its phase-2/3 parts (FR-9 folder tags, FR-10 folder search results) and FR-14 (cross-filesystem moves, post-v1). [F-027](features/F-027-web-application-shell.md) green, which needed the matrix to read the browser suites first ([Q59](OPEN-QUESTIONS.md)). The phase-1 domain invariants carry markers — [02 § invariants](specs/02-domain-model.md#invariants) #1, #2, #6, #8; #3–#5 arrive with derived data in phase 2, #7 with the trash in phase 4, #9–#10 with people in phase 5. Matrix green for everything claimed; phase tagged.
 
 ---
 

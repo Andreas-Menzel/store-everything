@@ -10,7 +10,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   // A flaky test is red (11-engineering-standards.md § testing): retries would hide it.
   retries: 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  // The requirement report is written on every run, alongside whichever human-facing reporter
+  // this environment wants (11-engineering-standards.md § requirement traceability).
+  reporter: [[process.env.CI ? 'github' : 'list'], ['./tools/traceability/playwright.ts']],
   use: {
     baseURL: BASE_URL,
     trace: 'on-first-retry',
