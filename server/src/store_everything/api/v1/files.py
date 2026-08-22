@@ -28,7 +28,16 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import FileResponse
 
-from store_everything import files, filestore, folders, mediatypes, names, trash, workspaces
+from store_everything import (
+    aggregates,
+    files,
+    filestore,
+    folders,
+    mediatypes,
+    names,
+    trash,
+    workspaces,
+)
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
@@ -377,6 +386,12 @@ async def move_file(
         detected="api",
         workspace_id=None if destination.id == workspace.id else destination.id,
     )
+    if moved.folder_id != found.folder_id:
+        # The two deltas `relocate` queued are for these workspaces' rollups, not for this
+        # request: a move takes no aggregate lock and does no arithmetic (F-015/FR-8).
+        await aggregates.schedule(connection, workspace.id)
+        if destination.id != workspace.id:
+            await aggregates.schedule(connection, destination.id)
     return await summarize(connection, moved)
 
 

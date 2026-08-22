@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import handlers, operations, scanning, workspaces
+from store_everything import aggregates, handlers, operations, scanning, workspaces
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.app import create_app
 from store_everything.config import Settings
@@ -138,6 +138,17 @@ async def scan_pending(database_url: str, settings: Settings) -> list[dict[str, 
     """
     return await run_pending(
         database_url, {scanning.KIND: handlers.registry(settings)[scanning.KIND]}
+    )
+
+
+async def rollup_pending(database_url: str, settings: Settings) -> list[dict[str, Any]]:
+    """Run every due `workspace.rollup` — the drain and the drift sweep, as the worker runs them.
+
+    Through the registry for the same reason as `scan_pending`: a test that hand-called the
+    handler would not exercise the claim, the lease, or the commit the handler's writes ride on.
+    """
+    return await run_pending(
+        database_url, {aggregates.KIND: handlers.registry(settings)[aggregates.KIND]}
     )
 
 

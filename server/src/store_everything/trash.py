@@ -32,7 +32,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import events, files, names
+from store_everything import aggregates, events, files, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
 from store_everything.tables import trash_entry
@@ -104,8 +104,20 @@ async def record(
     The deadline is computed by the database from the same clock that stamps `trashed_at`, so
     an entry can never claim a retention window it did not get.
     """
-    await files.set_state(connection, file_id=found.id, state="trashed")
+    # Whether this call is the one that trashed it. The delta below hangs off that answer: a
+    # folder's totals must lose this file exactly once however many times the deletion is
+    # reported.
+    newly_trashed = await files.set_state(connection, file_id=found.id, state="trashed")
     await files.set_current_restorable(connection, file_id=found.id, restorable=restorable)
+    if newly_trashed:
+        size = await files.current_size(connection, found.id)
+        await aggregates.record(
+            connection,
+            workspace_id=found.workspace_id,
+            folder_id=found.folder_id,
+            files=-1,
+            size_bytes=-size,
+        )
 
     values: dict[str, Any] = {
         "id": new_id(),
@@ -173,6 +185,15 @@ async def reactivate(
         seen_at=seen_at,
     )
     await connection.execute(delete(trash_entry).where(trash_entry.c.file_id == found.id))
+    # Back in its folder's totals. Guarded by the state flip above, so a second report of the
+    # same reappearance adds nothing.
+    await aggregates.record(
+        connection,
+        workspace_id=found.workspace_id,
+        folder_id=found.folder_id,
+        files=1,
+        size_bytes=await files.current_size(connection, found.id),
+    )
 
     await events.record(
         connection,

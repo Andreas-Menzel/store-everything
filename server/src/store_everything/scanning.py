@@ -59,6 +59,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import (
+    aggregates,
     events,
     filestore,
     folders,
@@ -112,6 +113,17 @@ class Tally:
     conflicts: int = 0
     skipped: int = 0
     findings: list[scans.Finding] = field(default_factory=list)
+
+    @property
+    def changed_totals(self) -> bool:
+        """Whether this batch changed what a folder holds, and so owes a rollup a run.
+
+        A re-scan that only confirms what is already known is the common case, and it writes no
+        delta — so asking for a rollup after every directory of a 100k-directory tree would be
+        100k round trips buying nothing (F-015/FR-8)."""
+        return bool(
+            self.files_registered or self.files_changed or self.files_moved or self.files_restored
+        )
 
 
 # --------------------------------------------------------------------- the filesystem
@@ -403,6 +415,10 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
             skipped=tally.skipped,
         )
         await scans.complete_directory(job.connection, run_id=run.id, path=pending.path)
+        if tally.changed_totals:
+            # Per batch rather than once per run: a scan of a large tree takes a while, and the
+            # folder totals should converge as it goes rather than all at the end.
+            await aggregates.schedule(job.connection, workspace.id)
         # The checkpoint: this directory's registrations, its discoveries and its removal from
         # the frontier become durable together. The fault points bracket exactly that seam,
         # because it is the one place a crash could apply a batch without recording it — or
@@ -425,6 +441,9 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
         if trashed == 0:
             break
         await scans.record_progress(job.connection, run_id=run.id, files_trashed=trashed)
+        # Unconditional here: the loop only reaches this line when something was trashed, and
+        # every one of those left a folder's totals smaller.
+        await aggregates.schedule(job.connection, workspace.id)
         fault_point("scan.after-sweep-batch")
         await job.connection.commit()
         fault_point("scan.after-sweep-commit")

@@ -94,6 +94,18 @@ Every crash leaks *by design*: staging files, stale upload sessions, blobs whose
 
 Grace window and upload-session expiry are in [§ tuning defaults](#tuning-defaults).
 
+## Folder rollups
+
+Folder counts and sizes ([F-015/FR-8](../features/F-015-folders.md)) are maintained by a per-workspace `workspace.rollup` operation over a **delta queue**: every change inserts a row saying how much to add to its folder, on the same connection and in the same transaction as the change. This is the [ADR-0007](../decisions/ADR-0007-unified-event-log.md) outbox pattern applied to arithmetic rather than audit, and deliberately **not** a fourth consumer of the event log — a cursor over an append-only log can be overtaken by a transaction that commits behind the cursor's position, and a delta skipped that way is a number that stays wrong until something recomputes it.
+
+Three properties make that queue cheap to trust:
+
+- **Addition commutes**, so there is no ordering, no cursor and no exactly-once *delivery* requirement. The statement that claims a batch (`DELETE … RETURNING`) is the statement that applies it, so a crash re-applies nothing and loses nothing — the queue is simply still full. Batches commit individually, the scan's checkpoint pattern ([§ job atomicity](#job-atomicity)).
+- **The closure does the fan-out.** A delta names one folder; joining the ancestor closure and grouping by ancestor turns a thousand uploads into one row written per folder in the chain. Nothing on the upload path updates an aggregate, which is what stops an import from serialising on the workspace root's row.
+- **A rollup and a folder move are mutually exclusive per workspace** (`pg_advisory_xact_lock`), because a delta is expanded over the ancestors the closure holds *at drain time* and a move rewrites exactly those. The move reads the moved subtree's total from the stored aggregate, never from ground truth: ground truth would include changes still queued, and those land on the new chain by themselves.
+
+Drift is therefore possible only through a bug, and a rotating sweep riding each rollup run recomputes a small subset from ground truth, corrects what disagrees and logs it — skipping folders with a queued change beneath them, where a difference is lag. A workspace nothing has changed is armed by the janitor's pass, so quiet trees are verified too.
+
 ## Durable schedules, lossy doorbells
 
 Generalizing [ADR-0007](../decisions/ADR-0007-unified-event-log.md)'s `LISTEN/NOTIFY` pattern: **every push channel is a lossy wake-up over durable state plus a periodic poll.** `NOTIFY` (job dispatch, event fan-out), filesystem watchers ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md) — a watcher event only ever *hastens* a scan the schedule would have run anyway), WebSocket pushes — all may drop; none may be load-bearing. The durable side is always a table: queued operations, `next_due_at` schedules (re-scan, janitor, retry backoff), the event log with consumer-held cursors. Server-side WebSocket state is deliberately none: thin notifications are lossy by design and clients resync via the `/events` cursor feed on reconnect ([F-012](../features/F-012-live-updates.md)).
@@ -148,6 +160,7 @@ The normative list of effectful operations and how each converges. A feature tha
 | Reprocess run ([F-009](../features/F-009-reprocessing.md)) | run + generation | generation is the fencing token; per-file generation swap is one transaction (FR-4) |
 | Event fan-out ([ADR-0007](../decisions/ADR-0007-unified-event-log.md)) | the log itself | server holds no durable consumer state: `/events` clients own their cursors; WebSocket is lossy by design |
 | Janitor runs ([above](#debris--the-janitor)) | janitor op (leased) | deletions idempotent; grace windows prevent racing in-flight operations; staging is collected only once its operation is terminal or gone |
+| Folder rollups ([above](#folder-rollups)) | the delta queue itself, written with the change it describes | claim and apply are one statement, so a crash leaves the queue intact rather than half-applied; addition commutes, so no ordering is needed; a rollup and a folder move in one workspace exclude each other, so no delta is expanded over a tree that has since changed; a rotating ground-truth sweep corrects what a bug got wrong |
 | Recurring work (janitor, scheduled re-scan) | the pending operation row itself, keyed `schedule:{kind}` — plus the subject where the cadence is per-object rather than per-instance (`schedule:workspace.scan:{workspace}`, since every workspace carries its own interval), and a narrower scope where the work is a slice of that subject (a subtree re-scan) | a run queues its successor **in the transaction that completes it**, so the chain cannot break between the two; `ensure_scheduled` is the floor under it, safe to call on every start-up and the way a chain broken by a dead-letter is restored |
 | Migrations ([10](10-deployment-and-operations.md#upgrades--migrations)) | migration ledger | transactional or internally idempotent; single-runner lock |
 

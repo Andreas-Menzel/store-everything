@@ -41,7 +41,7 @@ from sqlalchemy.dialects.postgresql import UUID as UUID_TYPE
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import events, filestore, names
+from store_everything import aggregates, events, filestore, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
 from store_everything.tables import file, folder, folder_closure
@@ -209,6 +209,8 @@ async def create_root(
 
     created = _as_folder(tuple(inserted))
     await _link_to_itself(connection, created.id)
+    # A folder's totals start at zero and that is not an approximation — it holds nothing yet.
+    await aggregates.initialise(connection, created.id)
     await events.record(
         connection,
         action=events.FOLDER_CREATED,
@@ -366,6 +368,7 @@ async def _create_child(
 
     created = _as_folder(tuple(inserted))
     await _link_to_itself(connection, created.id)
+    await aggregates.initialise(connection, created.id)
     # One statement for the whole ancestry: every ancestor of the parent is an ancestor of the
     # child, one level deeper. This is the closure-table insert, and the reason ancestry stays
     # a single indexed join instead of a recursive query.
@@ -559,7 +562,9 @@ async def relocate(
     move into its own descendant, a name that is taken at the destination is not merged into, and
     two workspaces on different filesystems cannot exchange a subtree with one rename.
     """
-    if found.is_root:
+    # `is_root` in its own words: spelled out so that everything below has a parent folder to
+    # name rather than a maybe — the aggregates shift between two real chains.
+    if found.parent_id is None:
         raise RootFolderError()
     if await _is_ancestor_of(connection, ancestor_id=found.id, descendant_id=parent.id):
         raise CycleError(found.id, parent.id)
@@ -574,6 +579,14 @@ async def relocate(
             raise NameTakenError(name)
 
     crossing = parent.workspace_id != found.workspace_id
+
+    # From here on the closure and the folder totals have to agree, and this is the one place
+    # that changes both. A rollup expands each queued delta over the ancestors it finds *at that
+    # moment*, so a drain running inside this rewrite would file a change against a tree that no
+    # longer exists. Holding both workspaces still is the whole correctness argument for
+    # F-015/FR-8's arithmetic — and nothing on the upload path takes this lock.
+    await aggregates.lock(connection, found.workspace_id, parent.workspace_id)
+
     old_relative = await path_of(connection, found)
     new_parent_path = await path_of(connection, parent)
     new_relative = f"{new_parent_path}/{name}" if new_parent_path else name
@@ -591,8 +604,8 @@ async def relocate(
     await _detach(connection, subtree)
     await _attach(connection, folder_id=found.id, parent_id=parent.id)
 
-    shift = (parent.depth + 1) - found.depth
-    values: dict[str, Any] = {"depth": folder.c.depth + shift, "updated_at": func.now()}
+    depth_shift = (parent.depth + 1) - found.depth
+    values: dict[str, Any] = {"depth": folder.c.depth + depth_shift, "updated_at": func.now()}
     if crossing:
         values["workspace_id"] = parent.workspace_id
     await connection.execute(update(folder).where(folder.c.id.in_(subtree)).values(**values))
@@ -620,6 +633,21 @@ async def relocate(
             ).one()
         )
     )
+
+    # O(depth), as FR-8 requires: the subtree's own totals leave one parent chain and join the
+    # other, and the folders above the two parents' common ancestor see the pair cancel. The
+    # subtree's own numbers never move, because they did not change.
+    await aggregates.shift(
+        connection,
+        folder_id=found.id,
+        from_parent=found.parent_id,
+        from_workspace=found.workspace_id,
+        to_parent=parent.id,
+        to_workspace=parent.workspace_id,
+    )
+    await aggregates.schedule(connection, found.workspace_id)
+    if crossing:
+        await aggregates.schedule(connection, parent.workspace_id)
 
     renamed = parent.id == found.parent_id
     await events.record(

@@ -41,7 +41,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import filestore, operations, scanning, uploads, workspaces
+from store_everything import aggregates, filestore, operations, scanning, uploads, workspaces
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.runner import Job
@@ -148,6 +148,12 @@ async def collect(
     # only when that chain broke — a dead-lettered scan — but the cost is one query per sweep
     # and the alternative is a workspace that silently stops being scanned.
     await scanning.ensure_all_scheduled(job.connection)
+    # The floor under the rollup chain, and the only thing that gets a *quiet* workspace's folder
+    # totals verified: the rollup is armed by changes, and a workspace with none would otherwise
+    # never run the drift sweep that rides along with it (F-015/FR-8). Arming is not the same as
+    # doing the work here — this holds its transaction open across filesystem sweeps, so it must
+    # never take the aggregate lock itself.
+    rollups_armed = await aggregates.schedule_all(job.connection)
 
     roots = await all_staging_roots(job.connection, settings)
     candidates, inspected = await asyncio.to_thread(_aged_candidates, roots, grace=grace)
@@ -198,4 +204,5 @@ async def collect(
         "staging_collected": collected,
         "blobs_collected": blobs_collected,
         "sessions_expired": sessions_expired,
+        "rollups_armed": rollups_armed,
     }
