@@ -48,11 +48,25 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import files, filestore, mediatypes, names, scans, trash, workspaces
+from store_everything import (
+    aggregates,
+    events,
+    files,
+    filestore,
+    folders,
+    mediatypes,
+    names,
+    scans,
+    trash,
+    workspaces,
+)
 from store_everything.blobs import BlobStore
 from store_everything.events import Actor
+from store_everything.tables import file as file_table
+from store_everything.tables import folder as folder_table
 
 _logger = logging.getLogger(__name__)
 
@@ -294,6 +308,17 @@ async def directory(
                 match=match,
                 from_path=candidate.path,
             )
+            if candidate.file.folder_id != folder_id:
+                # Counted now or not at all: the row has just stopped saying where it came from,
+                # and a folder that lost a majority of its files to one directory is a folder that
+                # was renamed (F-015/FR-7).
+                await scans.record_relocation(
+                    connection,
+                    run_id=run.id,
+                    from_folder_id=candidate.file.folder_id,
+                    to_folder_id=folder_id,
+                    files=1,
+                )
             outcome.moved += 1
             continue
 
@@ -405,3 +430,360 @@ async def sweep_batch(
             restorable=held[known.version.content_hash],
         )
     return len(missing)
+
+
+# ------------------------------------------------------------------- folder identity
+
+
+@dataclass(frozen=True, slots=True)
+class Claim:
+    """A vanished folder, the new directory its content turned up in, and on what evidence."""
+
+    source: folders.Folder
+    destination: folders.Folder
+    evidence: str
+    matched: int
+    known: int
+
+
+@dataclass(slots=True)
+class Verdicts:
+    """What the identity pass concluded, for the run's counters."""
+
+    transferred: int = 0
+    ambiguous: int = 0
+
+
+async def _known_content(
+    connection: AsyncConnection,
+    *,
+    folder_id: UUID,
+    started_at: datetime,
+    moves: list[scans.Relocation],
+) -> tuple[int, int]:
+    """What this folder held when the run started: files, then child folders.
+
+    The denominator the majority is measured against. Both halves are needed because what left is
+    no longer filed here and what stayed never appears in the relocation counts. Files are counted
+    in **every** state: a file the sweep trashed was in this folder and is evidence about it.
+    """
+    stayed_files = (
+        await connection.execute(
+            select(func.count())
+            .select_from(file_table)
+            .where(file_table.c.folder_id == folder_id, file_table.c.created_at < started_at)
+        )
+    ).scalar_one()
+    stayed_folders = (
+        await connection.execute(
+            select(func.count())
+            .select_from(folder_table)
+            .where(folder_table.c.parent_id == folder_id, folder_table.c.created_at < started_at)
+        )
+    ).scalar_one()
+    return (
+        stayed_files + sum(move.files for move in moves),
+        stayed_folders + sum(move.folders for move in moves),
+    )
+
+
+def _majority(
+    moves: list[scans.Relocation], *, known_files: int, known_folders: int
+) -> tuple[UUID, str, int, int] | None:
+    """The one destination a majority of this folder's content went to, and which kind it was.
+
+    Two independent readings of the same question, because a directory holding nothing but
+    subdirectories has no files to vouch for it (F-015/FR-7) and one holding nothing but files has
+    no subdirectories. A strict majority is unique, so each reading yields at most one answer —
+    and if the two disagree, that disagreement *is* the ambiguity.
+    """
+    by_files = [move for move in moves if known_files and move.files * 2 > known_files]
+    by_folders = [move for move in moves if known_folders and move.folders * 2 > known_folders]
+    if by_files and by_folders and by_files[0].to_folder_id != by_folders[0].to_folder_id:
+        return None
+    if by_files:
+        return by_files[0].to_folder_id, "files", by_files[0].files, known_files
+    if by_folders:
+        return by_folders[0].to_folder_id, "folders", by_folders[0].folders, known_folders
+    return None
+
+
+async def _claim(
+    connection: AsyncConnection,
+    *,
+    run: scans.Run,
+    root_folder_id: UUID,
+    source_id: UUID,
+    moves: list[scans.Relocation],
+) -> Claim | None:
+    """Whether this folder's content is evidence that its directory was renamed, not deleted.
+
+    Every refusal here is a rule rather than a guard:
+
+    - the workspace root is not a directory that can be renamed away ([F-015/FR-1]);
+    - a folder outside the run's own root is one this traversal never looked for, and a subtree
+      rescan concludes nothing about the rest of the workspace;
+    - a folder whose directory this run *did* account for is not a rename at all — its files
+      simply moved somewhere else;
+    - a destination that already existed is a place files were moved **into**, not a directory
+      that appeared in the shape of one that went away;
+    - a destination inside the source's own subtree would make the tree its own ancestor.
+    """
+    source = await folders.get(connection, source_id)
+    if source is None or source.is_root:
+        return None
+    if not await folders.contains(connection, ancestor_id=root_folder_id, descendant_id=source_id):
+        return None
+    if not await folders.vanished(
+        connection, folder_id=source_id, run_id=run.id, started_at=run.started_at
+    ):
+        return None
+
+    known_files, known_folders = await _known_content(
+        connection, folder_id=source_id, started_at=run.started_at, moves=moves
+    )
+    verdict = _majority(moves, known_files=known_files, known_folders=known_folders)
+    if verdict is None:
+        return None
+    destination_id, evidence, matched, known = verdict
+
+    destination = await folders.get(connection, destination_id)
+    if destination is None or destination.created_at < run.started_at:
+        return None
+    if await folders.contains(  # pragma: no cover - insurance, see below
+        connection, ancestor_id=source_id, descendant_id=destination_id
+    ):
+        # A directory cannot exist inside one that is gone, so on a tree that agrees with itself
+        # this cannot happen. It is checked anyway because the cost of being wrong is a folder
+        # that is its own ancestor, and a corrupted closure is not a recoverable state.
+        return None
+    return Claim(source, destination, evidence, matched, known)
+
+
+async def _ambiguous(
+    connection: AsyncConnection,
+    *,
+    source: folders.Folder,
+    reason: str,
+    moves: list[scans.Relocation],
+) -> None:
+    """Record that a folder's content scattered, or that two folders' content converged.
+
+    FR-7's audit event. The new identity is already there — it was created by the traversal — so
+    nothing is undone here; what is written is *why* the old one was not reused, which is what a
+    later review surface ([Q24](../../../OPEN-QUESTIONS.md)) would read.
+    """
+    await events.record(
+        connection,
+        action=events.FOLDER_IDENTITY_AMBIGUOUS,
+        resource_type=events.RESOURCE_FOLDER,
+        resource_id=source.id,
+        actor=Actor.system(),
+        details={
+            "workspace": str(source.workspace_id),
+            "path": await folders.path_of(connection, source),
+            "reason": reason,
+            "candidates": [
+                {
+                    "folder": str(move.to_folder_id),
+                    "files": move.files,
+                    "folders": move.folders,
+                }
+                for move in moves
+            ],
+        },
+    )
+
+
+async def _transfer(
+    connection: AsyncConnection,
+    *,
+    run: scans.Run,
+    workspace: workspaces.Workspace,
+    claim: Claim,
+) -> None:
+    """Give the vanished folder its directory's new place, and delete the row that stood in.
+
+    The order is the whole of it. The stand-in is emptied and **deleted before** the survivor is
+    moved, because until it is gone the two would be siblings under one name — which sibling
+    uniqueness (F-015/FR-6) rightly refuses.
+
+    Three things about the rollup queue, and each of them is a way this could go quietly wrong
+    ([F-015/FR-8](../../../features/F-015-folders.md)):
+
+    - the stand-in's queued changes are handed over before it is deleted, or they would cascade
+      away with it and leave a total permanently short;
+    - the survivor's own queued changes were written while it was somewhere else, and after the
+      move they will expand over the chain it has *now* — so the amount is measured first and the
+      two chains are compensated, which is the same `+n`/`-n` pair a deliberate move writes;
+    - the survivor's totals **add** the stand-in's rather than replacing them, because its own
+      number is not zero but minus whatever it still has queued.
+
+    All of it under the workspace lock, because the closure moves.
+    """
+    await aggregates.lock(connection, workspace.id)
+    parent = await folders.get(connection, claim.destination.parent_id or claim.destination.id)
+    if parent is None:  # pragma: no cover - a non-root folder always has its parent
+        raise RuntimeError(f"folder {claim.destination.id} has no parent to inherit")
+
+    # Measured before anything moves: these are the changes queued against the survivor's *old*
+    # subtree, and they are about to start expanding over a different chain.
+    files, size_bytes = await aggregates.queued_under(connection, claim.source.id)
+    await aggregates.repoint(
+        connection, from_folder=claim.destination.id, to_folder=claim.source.id
+    )
+
+    await folders.absorb(connection, into=claim.source, discarded=claim.destination)
+    await folders.discard(connection, claim.destination.id)
+    moved = await folders.reposition(
+        connection,
+        found=claim.source,
+        parent=parent,
+        name=claim.destination.name,
+        actor=Actor.system(),
+        detected="external",
+    )
+    await folders.stamp_seen(connection, folder_ids=[moved.id], seen_at=run.started_at)
+    await aggregates.inherit(connection, heir=moved.id, from_folder=claim.destination.id)
+    if claim.source.parent_id != parent.id and (files or size_bytes):
+        # The old chain keeps what it was owed and the new one gives back what it was not: above
+        # the two parents' common ancestor the pair cancels, exactly as for a deliberate move.
+        await aggregates.record(
+            connection,
+            workspace_id=workspace.id,
+            folder_id=claim.source.parent_id or claim.source.id,
+            files=files,
+            size_bytes=size_bytes,
+        )
+        await aggregates.record(
+            connection,
+            workspace_id=workspace.id,
+            folder_id=parent.id,
+            files=-files,
+            size_bytes=-size_bytes,
+        )
+    _logger.info(
+        "a folder kept its identity through an external rename",
+        extra={
+            "workspace": str(workspace.id),
+            "folder": str(moved.id),
+            "evidence": claim.evidence,
+            "matched": claim.matched,
+            "known": claim.known,
+        },
+    )
+
+
+def _by_source(moves: list[scans.Relocation]) -> dict[UUID, list[scans.Relocation]]:
+    grouped: dict[UUID, list[scans.Relocation]] = {}
+    for move in moves:
+        grouped.setdefault(move.from_folder_id, []).append(move)
+    return grouped
+
+
+async def identities(
+    connection: AsyncConnection,
+    *,
+    run: scans.Run,
+    workspace: workspaces.Workspace,
+    root_folder_id: UUID,
+) -> Verdicts:
+    """Transfer the identity of every folder whose directory was renamed rather than replaced.
+
+    [F-015/FR-7](../../../features/F-015-folders.md), and it runs only once the traversal *and*
+    the sweep are done: "this directory is gone" needs the whole tree read, and a file still
+    waiting to be trashed would count towards the wrong denominator.
+
+    **Deepest first**, for two reasons that both come from a renamed directory containing others.
+    A parent processed first would put two folders of the same name under one parent. And a
+    directory holding nothing but subdirectories has no files to vouch for it — its evidence *is*
+    its children's transfers, so those have to have happened, which is why the evidence is re-read
+    from the table on every turn rather than held in memory.
+    """
+    verdicts = Verdicts()
+    if not await scans.relocations(connection, run.id):
+        return verdicts
+
+    # A destination two vanished folders both claim is a merge, and FR-7 gives neither of them the
+    # identity. Decided up front from the file evidence, which is where a merge shows up.
+    claimants: dict[UUID, set[UUID]] = {}
+    for source_id, moves in _by_source(await scans.relocations(connection, run.id)).items():
+        claim = await _claim(
+            connection, run=run, root_folder_id=root_folder_id, source_id=source_id, moves=moves
+        )
+        if claim is not None:
+            claimants.setdefault(claim.destination.id, set()).add(source_id)
+    contested = {destination for destination, sources in claimants.items() if len(sources) > 1}
+
+    handled: set[UUID] = set()
+    while True:
+        grouped = _by_source(await scans.relocations(connection, run.id))
+        candidates: list[Claim] = []
+        for source_id, moves in grouped.items():
+            if source_id in handled:
+                continue
+            claim = await _claim(
+                connection,
+                run=run,
+                root_folder_id=root_folder_id,
+                source_id=source_id,
+                moves=moves,
+            )
+            if claim is not None:
+                candidates.append(claim)
+        if not candidates:
+            break
+
+        # Deepest first, then by id so a retry makes the same choices in the same order.
+        chosen = max(candidates, key=lambda claim: (claim.source.depth, claim.source.id.bytes))
+        handled.add(chosen.source.id)
+
+        if chosen.destination.id in contested:
+            await _ambiguous(
+                connection,
+                source=chosen.source,
+                reason="merge",
+                moves=grouped[chosen.source.id],
+            )
+            verdicts.ambiguous += 1
+            continue
+
+        await _transfer(connection, run=run, workspace=workspace, claim=chosen)
+        contested.add(chosen.destination.id)
+        verdicts.transferred += 1
+
+        # What the transfer proves about the folder *above* the one that moved: one of its child
+        # folders is now somewhere else. That is the only evidence a directory holding no files of
+        # its own ever leaves (F-015/FR-7), and the next turn — shallower — reads it.
+        if (
+            chosen.source.parent_id is not None
+            and chosen.destination.parent_id is not None
+            and chosen.source.parent_id != chosen.destination.parent_id
+        ):
+            await scans.record_relocation(
+                connection,
+                run_id=run.id,
+                from_folder_id=chosen.source.parent_id,
+                to_folder_id=chosen.destination.parent_id,
+                folders=1,
+            )
+
+    # Everything left with evidence and no majority is a split: its content went several ways.
+    for source_id, moves in _by_source(await scans.relocations(connection, run.id)).items():
+        if source_id in handled:
+            continue
+        source = await folders.get(connection, source_id)
+        if source is None or source.is_root:
+            continue
+        if not await folders.vanished(
+            connection, folder_id=source_id, run_id=run.id, started_at=run.started_at
+        ):
+            continue
+        if not await folders.contains(
+            connection, ancestor_id=root_folder_id, descendant_id=source_id
+        ):
+            continue
+        await _ambiguous(connection, source=source, reason="split", moves=moves)
+        verdicts.ambiguous += 1
+
+    return verdicts

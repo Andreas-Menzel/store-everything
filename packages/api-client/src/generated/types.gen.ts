@@ -508,6 +508,14 @@ export type ScanSummary = {
      */
     files_restored: number;
     /**
+     * Folders Transferred
+     */
+    folders_transferred: number;
+    /**
+     * Folders Ambiguous
+     */
+    folders_ambiguous: number;
+    /**
      * Conflicts
      */
     conflicts: number;

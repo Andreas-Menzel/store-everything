@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -339,5 +340,98 @@ def live_paths(database_url: str) -> list[str]:
                 )
                 names.append("/".join([*(part for part in segments if part), name]))
             return names
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.fr("F-015/FR-7")
+async def test_a_folder_identity_transfer_survives_a_crash_before_its_commit(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The identity pass is one transaction, and this is what makes that safe.
+
+    Its evidence — which directory's content turned up where — belongs to the *run*, and a crashed
+    scan operation resumes its own run rather than starting a second one. So a crash before the
+    pass commits costs nothing: the resumed run reads the same evidence and transfers the same
+    folder. Losing that evidence would mean a renamed directory silently getting a new identity,
+    taking every grant and tag on it out of reach.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"Album/a.txt": b"one", "Album/b.txt": b"two"})
+
+    async with adopt(identity_settings, identity_database, tree) as (_client, _workspace):
+        pass
+    assert (
+        run_worker(
+            identity_database,
+            worker="import",
+            crash_at=None,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == 0
+    )
+    engine = create_engine(identity_database)
+    try:
+        with engine.connect() as connection:
+            album = connection.execute(
+                select(folder.c.id).where(folder.c.name == "Album")
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    (tree / "Album").rename(tree / "Photos")
+    request_rescan(identity_database)
+
+    assert (
+        run_worker(
+            identity_database,
+            worker="crash/identities",
+            crash_at="scan.after-identities",
+            app_data_root=identity_settings.app_data_root,
+        )
+        == CRASH_EXIT_STATUS
+    ), "the fault point has to be reachable to be a test"
+    assert named(identity_database, album) == "Album", "the transfer was not committed"
+
+    expire_lease(identity_database)
+    assert (
+        run_worker(
+            identity_database,
+            worker="resume",
+            crash_at=None,
+            app_data_root=identity_settings.app_data_root,
+        )
+        == 0
+    )
+
+    assert named(identity_database, album) == "Photos", (
+        "the resumed run read its own evidence and transferred the folder"
+    )
+    assert observe(identity_database)["scan_run"] == 2, "one run per scan, resumed not restarted"
+
+
+def request_rescan(database_url: str) -> None:
+    """Make the pending scan due now, the way the rescan endpoint does."""
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text(
+                    "UPDATE operation SET next_due_at = now() "
+                    "WHERE kind = 'workspace.scan' AND state = 'queued'"
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
+
+
+def named(database_url: str, folder_id: UUID) -> str:
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return connection.execute(
+                select(folder.c.name).where(folder.c.id == folder_id)
+            ).scalar_one()
     finally:
         engine.dispose()

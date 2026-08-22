@@ -316,6 +316,14 @@ async def process_directory(
         )
         discovered.append(scans.Pending(_child_path(pending.path, name), child.id))
     await scans.push(connection, run_id=run.id, pending=discovered)
+    # This listing accounts for these directories, which is what makes their *absence* from it
+    # mean something later (F-015/FR-7). The folder itself is stamped too: its parent already
+    # did so, except for the run's own root, which has no parent in this traversal.
+    await folders.stamp_seen(
+        connection,
+        folder_ids=[folder.id, *(item.folder_id for item in discovered)],
+        seen_at=run.started_at,
+    )
 
     outcome = await reconcile.directory(
         connection,
@@ -448,6 +456,24 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
         await job.connection.commit()
         fault_point("scan.after-sweep-commit")
 
+    # Last, because it reads what the two loops above concluded: which directories turned out not
+    # to be there, and where their content went (F-015/FR-7).
+    verdicts = await reconcile.identities(
+        job.connection, run=run, workspace=workspace, root_folder_id=root_folder.id
+    )
+    if verdicts.transferred or verdicts.ambiguous:
+        await scans.record_progress(
+            job.connection,
+            run_id=run.id,
+            folders_transferred=verdicts.transferred,
+            folders_ambiguous=verdicts.ambiguous,
+        )
+        # A transferred folder took over another one's totals outright, so the sweep should look
+        # at it — and it sorts first, because `assign` cleared its verification stamp.
+        await aggregates.schedule(job.connection, workspace.id)
+    fault_point("scan.after-identities")
+    await job.connection.commit()
+
     finished = await scans.get(job.connection, run.id)
     await scans.finish(job.connection, run_id=run.id, state="completed")
     await _rearm(job.connection, workspace=workspace)
@@ -470,6 +496,8 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
             "files_restored": 0 if finished is None else finished.files_restored,
             "conflicts": 0 if finished is None else finished.conflicts,
             "skipped": 0 if finished is None else finished.skipped,
+            "folders_transferred": verdicts.transferred,
+            "folders_ambiguous": verdicts.ambiguous,
         },
     )
     return {
@@ -479,6 +507,7 @@ async def scan(job: Job, *, settings: Settings) -> dict[str, Any]:
         "directories": processed,
         "files_registered": 0 if finished is None else finished.files_registered,
         "files_trashed": 0 if finished is None else finished.files_trashed,
+        "folders_transferred": verdicts.transferred,
     }
 
 

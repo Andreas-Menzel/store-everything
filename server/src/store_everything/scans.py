@@ -29,7 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import operations
 from store_everything.ids import new_id
-from store_everything.tables import scan_blocked, scan_finding, scan_frontier, scan_run
+from store_everything.tables import (
+    scan_blocked,
+    scan_finding,
+    scan_frontier,
+    scan_relocation,
+    scan_run,
+)
 
 type Trigger = Literal["initial", "scheduled", "manual", "watcher"]
 type State = Literal["running", "completed", "failed", "cancelled"]
@@ -80,6 +86,8 @@ class Run:
     files_moved: int
     files_trashed: int
     files_restored: int
+    folders_transferred: int
+    folders_ambiguous: int
     conflicts: int
     skipped: int
     started_at: datetime
@@ -120,6 +128,8 @@ _COLUMNS = (
     scan_run.c.files_moved,
     scan_run.c.files_trashed,
     scan_run.c.files_restored,
+    scan_run.c.folders_transferred,
+    scan_run.c.folders_ambiguous,
     scan_run.c.conflicts,
     scan_run.c.skipped,
     scan_run.c.started_at,
@@ -134,6 +144,8 @@ type _Row = tuple[
     State,
     str,
     UUID,
+    int,
+    int,
     int,
     int,
     int,
@@ -260,6 +272,8 @@ async def record_progress(
     files_moved: int = 0,
     files_trashed: int = 0,
     files_restored: int = 0,
+    folders_transferred: int = 0,
+    folders_ambiguous: int = 0,
     conflicts: int = 0,
     skipped: int = 0,
 ) -> None:
@@ -275,6 +289,8 @@ async def record_progress(
             files_moved=scan_run.c.files_moved + files_moved,
             files_trashed=scan_run.c.files_trashed + files_trashed,
             files_restored=scan_run.c.files_restored + files_restored,
+            folders_transferred=scan_run.c.folders_transferred + folders_transferred,
+            folders_ambiguous=scan_run.c.folders_ambiguous + folders_ambiguous,
             conflicts=scan_run.c.conflicts + conflicts,
             skipped=scan_run.c.skipped + skipped,
         )
@@ -342,6 +358,70 @@ async def block(connection: AsyncConnection, *, run_id: UUID, folder_id: UUID) -
         .values(run_id=run_id, folder_id=folder_id)
         .on_conflict_do_nothing(index_elements=[scan_blocked.c.run_id, scan_blocked.c.folder_id])
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Relocation:
+    """How much of one folder's content this run found under another."""
+
+    from_folder_id: UUID
+    to_folder_id: UUID
+    files: int
+    folders: int
+
+
+async def record_relocation(
+    connection: AsyncConnection,
+    *,
+    run_id: UUID,
+    from_folder_id: UUID,
+    to_folder_id: UUID,
+    files: int = 0,
+    folders: int = 0,
+) -> None:
+    """Count one piece of content that turned up under a different folder than it was filed in.
+
+    The evidence F-015/FR-7 decides on, and it has to be written *as* the move happens: once the
+    file's row names its new folder, nothing anywhere remembers the old one.
+    """
+    await connection.execute(
+        pg_insert(scan_relocation)
+        .values(
+            run_id=run_id,
+            from_folder_id=from_folder_id,
+            to_folder_id=to_folder_id,
+            files=files,
+            folders=folders,
+        )
+        .on_conflict_do_update(
+            index_elements=[
+                scan_relocation.c.run_id,
+                scan_relocation.c.from_folder_id,
+                scan_relocation.c.to_folder_id,
+            ],
+            set_={
+                "files": scan_relocation.c.files + files,
+                "folders": scan_relocation.c.folders + folders,
+            },
+        )
+    )
+
+
+async def relocations(connection: AsyncConnection, run_id: UUID) -> list[Relocation]:
+    """Everything this run saw move between folders. Ordered, so a retry decides the same way."""
+    rows = (
+        await connection.execute(
+            select(
+                scan_relocation.c.from_folder_id,
+                scan_relocation.c.to_folder_id,
+                scan_relocation.c.files,
+                scan_relocation.c.folders,
+            )
+            .where(scan_relocation.c.run_id == run_id)
+            .order_by(scan_relocation.c.from_folder_id, scan_relocation.c.to_folder_id)
+        )
+    ).all()
+    return [Relocation(row[0], row[1], row[2], row[3]) for row in rows]
 
 
 async def blocked_directories(connection: AsyncConnection, run_id: UUID) -> int:

@@ -2325,6 +2325,14 @@
             "type": "integer",
             "title": "Files Restored"
           },
+          "folders_transferred": {
+            "type": "integer",
+            "title": "Folders Transferred"
+          },
+          "folders_ambiguous": {
+            "type": "integer",
+            "title": "Folders Ambiguous"
+          },
           "conflicts": {
             "type": "integer",
             "title": "Conflicts"
@@ -2380,6 +2388,8 @@
           "files_moved",
           "files_trashed",
           "files_restored",
+          "folders_transferred",
+          "folders_ambiguous",
           "conflicts",
           "skipped",
           "directories_pending",
