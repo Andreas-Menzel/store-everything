@@ -49,7 +49,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as UUID_TYPE
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import events, mediatypes, names
+from store_everything import aggregates, events, mediatypes, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
 from store_everything.tables import file, file_version, folder, folder_closure, scan_blocked
@@ -382,6 +382,16 @@ async def register(
             "origin": origin,
         },
     )
+    # One more file, and its bytes, for this folder and everything above it (F-015/FR-8). Queued
+    # here rather than applied here: the rollup is what keeps an import from serialising itself
+    # on the workspace root's row. Asking for a run is the *caller's* job, once per transaction.
+    await aggregates.record(
+        connection,
+        workspace_id=workspace_id,
+        folder_id=folder_id,
+        files=1,
+        size_bytes=version.size_bytes,
+    )
     return created, version
 
 
@@ -483,11 +493,16 @@ async def add_version(
     predecessor is demoted in the same statement batch, and a second attempt after a crash
     finds the new version already current and the old one already demoted.
     """
-    await connection.execute(
-        update(file_version)
-        .where(file_version.c.file_id == found.id, file_version.c.is_current.is_(True))
-        .values(is_current=False, restorable=predecessor_restorable)
-    )
+    # The demoted version's size comes back from the statement that demotes it: the folder's
+    # total moves by the *difference*, and this is the only moment both numbers are in hand.
+    superseded = (
+        await connection.execute(
+            update(file_version)
+            .where(file_version.c.file_id == found.id, file_version.c.is_current.is_(True))
+            .values(is_current=False, restorable=predecessor_restorable)
+            .returning(file_version.c.size_bytes)
+        )
+    ).scalar_one_or_none()
     version = _as_version(
         tuple(
             (
@@ -536,6 +551,15 @@ async def add_version(
             "predecessor_restorable": predecessor_restorable,
         },
     )
+    if found.is_live:
+        # A trashed file contributes nothing to a folder's totals, so new content for one changes
+        # nothing to adjust — reactivation is what puts its current size back.
+        await aggregates.record(
+            connection,
+            workspace_id=found.workspace_id,
+            folder_id=found.folder_id,
+            size_bytes=version.size_bytes - (superseded or 0),
+        )
     return version
 
 
@@ -625,7 +649,38 @@ async def relocate(
         actor=actor,
         details=details,
     )
+    if moved.folder_id != found.folder_id and moved.is_live:
+        # Two deltas, no common-ancestor arithmetic: each expands over its own folder's chain, so
+        # every ancestor the two share sees `+n` and `-n` and stays exactly where it was. A pure
+        # rename changes no folder and therefore no total.
+        size = await current_size(connection, moved.id)
+        await aggregates.record(
+            connection,
+            workspace_id=found.workspace_id,
+            folder_id=found.folder_id,
+            files=-1,
+            size_bytes=-size,
+        )
+        await aggregates.record(
+            connection,
+            workspace_id=moved.workspace_id,
+            folder_id=moved.folder_id,
+            files=1,
+            size_bytes=size,
+        )
     return moved
+
+
+async def current_size(connection: AsyncConnection, file_id: UUID) -> int:
+    """The size the aggregates count for this file: its current version's, or nothing."""
+    size = (
+        await connection.execute(
+            select(file_version.c.size_bytes).where(
+                file_version.c.file_id == file_id, file_version.c.is_current.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+    return size or 0
 
 
 async def set_state(connection: AsyncConnection, *, file_id: UUID, state: str) -> bool:

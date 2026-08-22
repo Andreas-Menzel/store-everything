@@ -1815,6 +1815,42 @@
         "title": "FilesystemVerdict",
         "description": "What the `fs-check` probe found on the filesystem holding this workspace."
       },
+      "FolderAggregates": {
+        "properties": {
+          "direct_files": {
+            "type": "integer",
+            "title": "Direct Files"
+          },
+          "total_files": {
+            "type": "integer",
+            "title": "Total Files"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "pending": {
+            "type": "boolean",
+            "title": "Pending"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "direct_files",
+          "total_files",
+          "total_bytes",
+          "as_of",
+          "pending"
+        ],
+        "title": "FolderAggregates",
+        "description": "How much a folder holds ([F-015/FR-8](../../../../features/F-015-folders.md)).\n\nTwo different guarantees in one object, and the field names are the only place a client can\nlearn which is which — so they say so."
+      },
       "FolderCreateRequest": {
         "properties": {
           "name": {
@@ -1913,6 +1949,9 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "aggregates": {
+            "$ref": "#/components/schemas/FolderAggregates"
           }
         },
         "additionalProperties": false,
@@ -1924,7 +1963,8 @@
           "name",
           "path",
           "depth",
-          "created_at"
+          "created_at",
+          "aggregates"
         ],
         "title": "FolderSummary"
       },

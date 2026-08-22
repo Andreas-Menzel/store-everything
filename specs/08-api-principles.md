@@ -76,7 +76,8 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/workspaces/{ws}/folders      create folder (F-015)
 /api/v1/workspaces/{ws}/trash        trash listing · POST …/trash/empty (F-014)
 /api/v1/trash/restore                batch restore (batch id / item ids) (F-014)
-/api/v1/folders/{id}                 metadata + aggregates (count/size, as_of);
+/api/v1/folders/{id}                 metadata + aggregates (exact direct count; recursive
+                                     count/size with as_of + pending);
                                      /children · /move (incl. cross-workspace) · /tags (F-015)
 /api/v1/files/{id}                   metadata, tags, versions, extraction status
 /api/v1/files/{id}/content           download (range), upload new version
@@ -144,7 +145,7 @@ flowchart LR
 
     subgraph FOLDG["Folders"]
         FOCR["POST /workspaces/{ws}/folders"]
-        FOMETA["GET /folders/{id}<br/>(aggregates: count·size, as_of)"]
+        FOMETA["GET /folders/{id}<br/>(aggregates: count·size, as_of + pending)"]
         FOCH["GET /folders/{id}/children<br/>(cursor, sortable)"]
         FOMV["POST /folders/{id}/move<br/>(rename/move, incl. cross-workspace)"]
         FOTAG["GET·POST·DELETE /folders/{id}/tags"]

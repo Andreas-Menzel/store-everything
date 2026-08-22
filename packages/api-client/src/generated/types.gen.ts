@@ -197,6 +197,37 @@ export type FilesystemVerdict = {
 };
 
 /**
+ * FolderAggregates
+ *
+ * How much a folder holds ([F-015/FR-8](../../../../features/F-015-folders.md)).
+ *
+ * Two different guarantees in one object, and the field names are the only place a client can
+ * learn which is which — so they say so.
+ */
+export type FolderAggregates = {
+    /**
+     * Direct Files
+     */
+    direct_files: number;
+    /**
+     * Total Files
+     */
+    total_files: number;
+    /**
+     * Total Bytes
+     */
+    total_bytes: number;
+    /**
+     * As Of
+     */
+    as_of: string;
+    /**
+     * Pending
+     */
+    pending: boolean;
+};
+
+/**
  * FolderCreateRequest
  */
 export type FolderCreateRequest = {
@@ -256,6 +287,7 @@ export type FolderSummary = {
      * Created At
      */
     created_at: string;
+    aggregates: FolderAggregates;
 };
 
 /**

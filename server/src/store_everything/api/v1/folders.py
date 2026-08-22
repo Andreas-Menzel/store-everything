@@ -26,7 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import Field
 
-from store_everything import files, filestore, folders, names, workspaces
+from store_everything import aggregates, files, filestore, folders, names, workspaces
 from store_everything.api.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -55,6 +55,32 @@ _FILE_SEGMENT = "file"
 _CURSOR_PARTS = 4
 
 
+class FolderAggregates(BaseSchema):
+    """How much a folder holds ([F-015/FR-8](../../../../features/F-015-folders.md)).
+
+    Two different guarantees in one object, and the field names are the only place a client can
+    learn which is which — so they say so."""
+
+    direct_files: int
+    """Files in this folder itself. **Exact**: one indexed count, computed for this response."""
+
+    total_files: int
+    """Files anywhere beneath it, this folder included. Eventually consistent."""
+
+    total_bytes: int
+    """What those files' current versions add up to. Version history and trashed content are
+    storage this number deliberately does not report — they have their own categories in
+    `/stats/storage`."""
+
+    as_of: datetime
+    """When this workspace's queue of pending changes was last empty. Not "when these numbers
+    were touched": a folder nothing has changed for a week is not stale."""
+
+    pending: bool
+    """Whether a change beneath this folder is still queued. A client that needs the exact
+    number polls until this is `false` rather than guessing at the window."""
+
+
 class FolderSummary(BaseSchema):
     id: UUID
     workspace: UUID
@@ -68,6 +94,7 @@ class FolderSummary(BaseSchema):
 
     depth: int
     created_at: datetime
+    aggregates: FolderAggregates
 
 
 class ChildFolder(BaseSchema):
@@ -170,6 +197,7 @@ async def _readable(
 async def _summarize(
     connection: DatabaseConnection, found: folders.Folder, *, root: UUID
 ) -> FolderSummary:
+    counted = await aggregates.totals(connection, found.id)
     return FolderSummary(
         id=found.id,
         workspace=found.workspace_id,
@@ -179,6 +207,13 @@ async def _summarize(
         path=await folders.path_of(connection, found, relative_to=root),
         depth=found.depth,
         created_at=found.created_at,
+        aggregates=FolderAggregates(
+            direct_files=counted.direct_files,
+            total_files=counted.total_files,
+            total_bytes=counted.total_bytes,
+            as_of=counted.as_of,
+            pending=counted.pending,
+        ),
     )
 
 

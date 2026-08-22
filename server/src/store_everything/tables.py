@@ -334,6 +334,15 @@ workspace = Table(
     # user asking "why did my change take an hour?" has an answer that is not a log file.
     Column("watch_state", Text, nullable=False, server_default=text("'unwatched'")),
     Column("watch_detail", Text, nullable=True),
+    # The moment this workspace's rollup queue was last observed empty (F-015/FR-8). Not "when
+    # the numbers were last touched": a folder nothing has changed for a week is not stale, and a
+    # timestamp saying so would be noise. Per workspace because that is the unit a drain claims.
+    Column(
+        "aggregates_as_of",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    ),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # One user's workspace names are unique on the comparison key, which is also what keeps
@@ -426,6 +435,85 @@ folder_closure = Table(
 """Precomputed ancestry (F-015/FR-2, the ADR-0006 pattern): one indexed join answers
 "everything under folder F", which is the permission filter's hottest question. Every folder
 carries a depth-0 row for itself, so a subtree includes its own root without a special case."""
+
+
+folder_aggregate = Table(
+    "folder_aggregate",
+    metadata,
+    Column(
+        "folder_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("total_files", BigInteger, nullable=False, server_default=text("0")),
+    Column("total_bytes", BigInteger, nullable=False, server_default=text("0")),
+    # When the rotating sweep last compared these numbers against ground truth. NULL sorts
+    # first, so a folder that has never been checked — a new one, or one an upsert created
+    # because its row was missing — is the next one checked.
+    Column("verified_at", DateTime(timezone=True), nullable=True),
+    # A count of files cannot be negative and neither can a sum of their sizes, so a rollup
+    # that would make one negative is a bug in the arithmetic rather than a number to serve.
+    # Structural on purpose: the rollup fails, retries, and dead-letters loudly, which is what
+    # this system does with code that is wrong.
+    CheckConstraint("total_files >= 0", name="total_files_not_negative"),
+    CheckConstraint("total_bytes >= 0", name="total_bytes_not_negative"),
+    Index("ix_folder_aggregate_verified_at", "verified_at"),
+)
+"""What a folder's whole subtree adds up to (F-015/FR-8) — recursive file count and recursive
+size, over **live** files and their current version's bytes. Version history and trash are their
+own categories in `/stats/storage` ([09](09-previews.md#disk-usage-visibility)) and are not here.
+
+A table of its own rather than columns on `folder`, for two reasons: these numbers are rewritten
+on every upload while the `folder` row is read by every closure join and every path assembly, and
+`verified_at` is bookkeeping about the aggregate rather than about the folder.
+
+The **direct** file count FR-8 also asks for is deliberately absent: it is one indexed count over
+`file` (`uq_file_live_name`'s leading column), so it is computed at read time and is always
+exact. Only the recursive pair is eventually consistent, and only it needs a stamp."""
+
+
+folder_delta = Table(
+    "folder_delta",
+    metadata,
+    # An integer rather than a UUID: an import writes one of these per file, and they are only
+    # ever read as an ordered batch on the way to being deleted.
+    Column("id", BigInteger, Identity(always=True), primary_key=True),
+    # Which workspace's rollup owns this row. Denormalised from the folder deliberately: it is
+    # what lets one drain claim one workspace's work while holding only that workspace's lock,
+    # and a cross-workspace folder move re-tags the rows it moves.
+    Column(
+        "workspace_id",
+        UUID(as_uuid=True),
+        ForeignKey("workspace.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "folder_id", UUID(as_uuid=True), ForeignKey("folder.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("file_count", BigInteger, nullable=False),
+    Column("size_bytes", BigInteger, nullable=False),
+    _created_at(),
+    # The drain's claim: this workspace's oldest rows first.
+    Index("ix_folder_delta_workspace_id_id", "workspace_id", "id"),
+    # "Is anything still queued under this folder?" — the `pending` flag every read reports,
+    # driven from the closure into this index.
+    Index("ix_folder_delta_folder_id", "folder_id"),
+)
+"""**The rollup outbox** (F-015/FR-8): one row per change, written on the same connection and in
+the same transaction as the change it describes — the [events](../events.py) pattern, for
+arithmetic instead of audit.
+
+A second outbox rather than a consumer of the event log, and the reason is ordering. Addition
+commutes, so this queue needs no cursor, no order and no exactly-once delivery: a batch is
+`DELETE … RETURNING`-ed and added to the aggregates **in one transaction**, so a crash re-applies
+nothing and loses nothing. Reading the event log instead would mean holding a cursor over a table
+where a transaction can commit *behind* the cursor's position, and a delta silently skipped there
+is a number that stays wrong until the next drift sweep.
+
+A row's numbers apply to `folder_id` **and to every one of its ancestors** — the drain expands
+them over the closure. That is why a file move needs no common-ancestor arithmetic: -1 at the old
+folder and +1 at the new one net to zero at every ancestor they share."""
 
 
 #: A file's lifecycle (02 § file, [F-014](../../../features/F-014-deletion-and-trash.md)).

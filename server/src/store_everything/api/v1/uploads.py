@@ -34,6 +34,7 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from store_everything import (
+    aggregates,
     files,
     filestore,
     folders,
@@ -280,6 +281,10 @@ async def _finalize(
         raise _invalid(
             "the uploaded content does not match the declared content_hash", "/query/content_hash"
         ) from mismatch
+
+    # One request, one file, one ask for a rollup — whichever of the three ways below it lands
+    # (a new version, a reappearance, or a new file), a folder total moved (F-015/FR-8).
+    await aggregates.schedule(connection, workspace.id)
 
     if replacing is not None:
         version = await files.add_version(

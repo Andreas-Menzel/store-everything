@@ -10,7 +10,8 @@ keeps them testable against a temporary directory instead of `/var/lib`.
 instance; `maintenance.janitor` collects the debris a crash-only system leaks by design
 (12 § debris & the janitor); `workspace.provision` turns a requested workspace into a real
 directory tree (ADR-0018); `workspace.scan` walks a tree and registers what is in it
-(ADR-0019). Every later feature adds its kind here.
+(ADR-0019); `workspace.rollup` keeps folder counts and sizes current from the delta queue every
+change writes (F-015/FR-8). Every later feature adds its kind here.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import files, janitor, operations, scanning, workspaces
+from store_everything import aggregates, files, janitor, operations, scanning, workspaces
 from store_everything.config import Settings
 from store_everything.runner import Handler, Job
 
@@ -79,6 +80,9 @@ def registry(settings: Settings) -> dict[str, Handler]:
         # Provisioning needs no settings: a workspace's root is on its row.
         workspaces.KIND: workspaces.provision,
         scanning.KIND: walk,
+        # Folder counts and sizes (F-015/FR-8): one run per workspace, draining the delta queue
+        # every change writes and verifying a rotating handful of folders against ground truth.
+        aggregates.KIND: aggregates.roll_up,
     }
 
 
@@ -100,6 +104,9 @@ async def install_schedules(engine: AsyncEngine, settings: Settings) -> None:
         # workspaces that exist, which is also how a chain broken by a dead-letter is
         # restored (12 § operation inventory).
         armed = await scanning.ensure_all_scheduled(connection)
+        # Same reasoning, for the same reason: the rollup is normally armed by a change, so a
+        # workspace nothing has touched would never have its folder totals verified.
+        await aggregates.schedule_all(connection)
         await connection.commit()
     if armed:
         _logger.info("scan schedules asserted", extra={"workspaces": armed})
