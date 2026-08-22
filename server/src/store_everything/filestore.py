@@ -115,13 +115,51 @@ def fsync_directory(path: Path) -> None:
 
 
 def ensure_directory(path: Path) -> None:
-    """Create a directory and make its existence durable. Idempotent."""
+    """Create a directory and make its existence durable. Idempotent.
+
+    **Every** level created is fsynced in the parent that now holds its entry, not just the
+    last one. One `mkdir(parents=True)` can create several, and fsyncing only the leaf's parent
+    leaves the upper ones no more durable than the page cache: a version snapshot into a fresh
+    `ab/cd/` shard survives as far as `cd`, and a power cut after the row committed loses the
+    lot — a `restorable=true` version pointing at nothing, which is the one durability promise
+    this product makes.
+
+    Not detectable by the crash tests, and worth saying so: `os._exit` leaves the page cache
+    for the kernel to flush, so a *missing* `fsync` looks exactly like a present one there.
+    The sequence is asserted directly instead (`tests/test_filestore.py`).
+    """
     if path.is_dir():
         return
-    path.mkdir(parents=True, exist_ok=True)
-    # The parent's entry for this directory has to survive too, or a crash can lose the
-    # directory that the file we are about to write lives in.
-    fsync_directory(path.parent)
+
+    missing: list[Path] = []
+    for candidate in (path, *path.parents):
+        if candidate.is_dir():
+            break
+        missing.append(candidate)
+
+    # Shallowest first, so each `mkdir` is immediately made durable in a parent that exists.
+    for directory in reversed(missing):
+        directory.mkdir(exist_ok=True)
+        fsync_directory(directory.parent)
+
+
+def freshen(path: Path) -> bool:
+    """Set a file's mtime to now. `False` means it is no longer there.
+
+    For content-addressed storage, where "already stored" is a *reference*, not a no-op. The
+    janitor's grace window reads a blob's mtime as "recently written, so its row may still be
+    committing" — true of a blob just created, false of an aged one a new version has converged
+    on, whose reference is exactly as young. Git freshens loose objects before a `gc` for the
+    same reason.
+
+    Not fsynced, deliberately: a crash that loses the timestamp also loses the transaction that
+    was referencing the blob, and collecting it then is correct.
+    """
+    try:
+        os.utime(path, None)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def resolve_within(root: Path, candidate: Path) -> Path:

@@ -132,6 +132,26 @@ def _vanished() -> ProblemException:
     )
 
 
+def _unregistered(path: str) -> ProblemException:
+    """Something is at the destination that the app has never seen.
+
+    A file hand-copied onto the storage since the last scan, or one a scan *refused* — an
+    unusable name, the loser of a case collision, a symlink. The collision checks consult
+    registered rows, so this is the one writer that could otherwise destroy content the app
+    never recorded, with no version and no trash entry to recover it from. `move_entry` and
+    `folders.create` both refuse exactly this state; ADR-0019's rule is report, never repair.
+    """
+    return ProblemException(
+        status=409,
+        slug="conflict",
+        title="Conflict",
+        detail=(
+            f"Something is already on the storage at {path!r} that the app has not registered. "
+            "A re-scan has to record it before it can be replaced."
+        ),
+    )
+
+
 def _occupied(path: str) -> ProblemException:
     """F-001/FR-7: a collision is refused rather than resolved. On the comparison key, so
     `Report.pdf` collides with `report.pdf` (ADR-0019)."""
@@ -259,6 +279,14 @@ async def _finalize(
     destination = await asyncio.to_thread(
         filestore.resolve_within, workspace.root_path, Path(*segments)
     )
+    if replacing is None and await asyncio.to_thread(_occupied_on_disk, destination):
+        # Nothing registered here, but something *is* here. Publishing over it would destroy
+        # content the app never recorded — no snapshot, no version, no trash entry — which is
+        # the one thing this path is not allowed to do (F-001/FR-20). Best-effort by the same
+        # standard as `move_entry`: a file arriving in the instant after this check is a race
+        # the filesystem cannot close, and a scan reconciles it.
+        raise _unregistered(session.target_path)
+
     # Before a byte of the destination is overwritten: the content it holds now becomes a
     # version, or this upload is refused (F-007/FR-9, F-001/FR-20).
     snapshot = (
@@ -338,6 +366,15 @@ async def _finalize(
     )
     await uploads.complete(connection, session=session, file_id=found.id)
     return FileSummary.of(found, version, await files.path_of(connection, found))
+
+
+def _occupied_on_disk(destination: Path) -> bool:
+    """Whether anything at all is at this path. **Blocking.**
+
+    Symlinks included, without following them: a link is something, and one pointing out of the
+    workspace is the shape this refusal exists for.
+    """
+    return destination.exists(follow_symlinks=False)
 
 
 async def _snapshot(

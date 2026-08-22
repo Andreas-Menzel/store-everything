@@ -326,6 +326,29 @@ async def test_a_collision_is_refused_on_the_comparison_key(
     assert cased.status_code == 409
 
 
+@pytest.mark.fr("F-001/FR-20")
+async def test_an_unregistered_file_on_the_storage_is_never_overwritten(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """A file hand-copied onto the NAS since the last scan is content the app has never seen.
+
+    The collision checks consult registered rows, so this path — the one writer that publishes
+    over a destination — could destroy it with no snapshot, no version and no trash entry to
+    recover from. `move_entry` and `folders.create` both refuse exactly this state; ADR-0019's
+    rule is report, never repair, and the window is up to a whole scan interval wide.
+    """
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, root):
+        arrived = root / "arrived-by-hand.txt"
+        arrived.write_bytes(b"copied straight onto the share")
+
+        response = await create_upload(client, workspace, "arrived-by-hand.txt", body=CONTENT)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"].startswith("Something is already on the storage")
+    assert arrived.read_bytes() == b"copied straight onto the share", "the bytes were replaced"
+    assert await count_files(identity_database) == 0
+
+
 async def test_a_nested_path_creates_its_folders(
     identity_settings: Settings, identity_database: str
 ) -> None:
