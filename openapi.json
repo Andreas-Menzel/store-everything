@@ -2908,6 +2908,18 @@
             "type": "string",
             "title": "Root Path"
           },
+          "root_folder": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Folder"
+          },
           "filesystem": {
             "$ref": "#/components/schemas/FilesystemVerdict"
           },
@@ -2931,6 +2943,7 @@
           "placement",
           "state",
           "root_path",
+          "root_folder",
           "filesystem",
           "scan_interval_minutes",
           "created_at"

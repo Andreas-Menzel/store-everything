@@ -8,3 +8,7 @@ allowBuilds:
   vue-demi: true
   # Links the platform-native binary; Storybook and Vite cannot bundle without it.
   esbuild: true
+  # Install-time telemetry that swagger-ui-dist depends on (F-027/FR-9). Refused: this product is
+  # self-hosted and phones home about nothing, least of all at install time. Nothing imports the
+  # package at runtime, so refusing its script is enough to make it inert.
+  '@scarf/scarf': false

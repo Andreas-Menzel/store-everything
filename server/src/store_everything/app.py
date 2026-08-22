@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from store_everything import bootstrap
+from store_everything import bootstrap, web
 from store_everything.api import health
 from store_everything.api.v1.router import build_public_v1_router, build_v1_router
 from store_everything.config import Settings, load_settings
@@ -85,6 +85,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(build_public_v1_router())
     app.include_router(build_v1_router(api_docs_enabled=resolved.api_docs_enabled))
+    # Last, so its fallback route is reached only after every API route has declined
+    # (F-027/FR-1).
+    app.state.serves_web = web.install(app, resolved.web_root)
 
     # Last added is outermost: CORS → security headers → request context → routes.
     app.add_middleware(RequestContextMiddleware)

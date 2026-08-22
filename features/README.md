@@ -34,6 +34,7 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-024](F-024-offline-files-and-downloads.md) | Mobile: offline files & downloads | Android, iOS | Draft | P1 |
 | [F-025](F-025-client-parity.md) | Mobile: native app parity (full web feature set) | Android, iOS | Draft | P1 |
 | [F-026](F-026-offline-cache-and-prefetch.md) | Offline cache, instant navigation & prefetch | all | Draft | P1 |
+| [F-027](F-027-web-application-shell.md) | Web application shell (serving, login, frame, API docs) | web | Draft | P0 |
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
 

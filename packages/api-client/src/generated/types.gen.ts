@@ -829,6 +829,10 @@ export type WorkspaceSummary = {
      * Root Path
      */
     root_path: string;
+    /**
+     * Root Folder
+     */
+    root_folder: string | null;
     filesystem: FilesystemVerdict;
     /**
      * Scan Interval Minutes
