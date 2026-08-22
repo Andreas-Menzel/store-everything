@@ -1,6 +1,6 @@
 # F-015 — Folders
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P0
 **Clients:** all
 **Depends on:** F-001

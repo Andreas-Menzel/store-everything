@@ -12,7 +12,7 @@ const FAILURE: Failure = {
   fields: [],
 };
 
-describe('AppAlert', () => {
+describe('AppAlert', { tags: ['@F-027/FR-8'] }, () => {
   it('renders the problem as prose, request id included', () => {
     const wrapper = mount(AppAlert, { props: { failure: FAILURE } });
 

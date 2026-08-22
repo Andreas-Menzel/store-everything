@@ -202,6 +202,7 @@ async def test_a_finished_file_is_not_mistaken_for_debris(
 # ------------------------------------------------------------------ blob collection
 
 
+@pytest.mark.fr("02/INV-8")
 async def test_blobs_are_never_collected_without_a_reference_source(
     engine: AsyncEngine, identity_database: str, tmp_path: Path
 ) -> None:
@@ -221,6 +222,7 @@ async def test_blobs_are_never_collected_without_a_reference_source(
     assert result["blobs_collected"] == 0
 
 
+@pytest.mark.fr("02/INV-8")
 async def test_an_unreferenced_blob_is_collected_when_references_are_known(
     engine: AsyncEngine, identity_database: str, tmp_path: Path
 ) -> None:

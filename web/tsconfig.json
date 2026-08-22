@@ -20,7 +20,16 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    // The test and tooling configs are loaded by node itself, which wants the real file name.
+    "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "e2e/**/*.ts", "*.config.ts", ".storybook/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "e2e/**/*.ts",
+    "*.config.ts",
+    ".storybook/**/*.ts",
+    "tools/**/*.ts"
+  ]
 }

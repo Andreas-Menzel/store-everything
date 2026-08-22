@@ -51,11 +51,17 @@ corpus: ## Regenerate the corpus fixtures, manifest hashes and attribution
 spec-lint: ## Check the specification documents against their authoring rules
 	$(UV) run python -m tools.spec_lint
 
-matrix: ## Build the requirement traceability matrix from the last test run
+# One report per test layer, all three merged: a requirement the browser suite proves must
+# reach the same gate as one the core suite proves (11 § requirement traceability).
+matrix: ## Build the requirement traceability matrix from the last full test run
 	$(UV) run python -m tools.traceability \
-		--report ../traceability-report.json --output ../traceability-matrix.md
+		--report ../traceability-report.json \
+		--report ../traceability-report.web.json \
+		--report ../traceability-report.e2e.json \
+		--output ../traceability-matrix.md
 
-check: lint spec-lint typecheck test matrix e2e ## Everything the pipeline will check
+# `matrix` runs last on purpose: it reads what every suite before it wrote.
+check: lint spec-lint typecheck test e2e matrix ## Everything the pipeline will check
 
 # `check` runs against the working tree, which is not what gets pushed. This runs the
 # pipeline's own steps against the *staged* tree, exported to a scratch directory with a

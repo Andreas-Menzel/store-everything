@@ -1,6 +1,6 @@
 # F-011 — Full Audit Trail
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P1
 **Clients:** all
 **Depends on:** —

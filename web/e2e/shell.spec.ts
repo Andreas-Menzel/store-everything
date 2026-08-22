@@ -34,201 +34,277 @@ async function signedIn(page: Page): Promise<void> {
   );
 }
 
-test('an unauthenticated visit lands on login and comes back afterwards', async ({ page }) => {
-  await signedOut(page);
+test(
+  'an unauthenticated visit lands on login and comes back afterwards',
+  { tag: ['@F-027/FR-4', '@F-027/FR-5'] },
+  async ({ page }) => {
+    await signedOut(page);
 
-  await page.goto('/folders/01a02900-0000-7000-8000-0000000000ff');
+    await page.goto('/folders/01a02900-0000-7000-8000-0000000000ff');
 
-  await expect(page.getByLabel('Email')).toBeVisible();
-  expect(new URL(page.url()).pathname).toBe('/login');
+    await expect(page.getByLabel('Email')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/login');
 
-  // Signing in returns to where the person was going, not to the front door (F-027/FR-5).
-  await page.route('**/api/v1/auth/login', (route) => route.fulfill({ status: 204, body: '' }));
-  await page.unroute('**/api/v1/auth/me');
-  await page.route('**/api/v1/auth/me', (route) => route.fulfill({ status: 200, json: IDENTITY }));
-  await page.route('**/api/v1/folders/*', (route) =>
-    route.fulfill({
-      status: 200,
-      json: {
-        id: '01a02900-0000-7000-8000-0000000000ff',
-        workspace: '01a02900-0000-7000-8000-00000000000a',
-        parent: null,
-        name: '',
-        path: '',
-        depth: 0,
-        created_at: '2026-08-22T10:00:00Z',
-        aggregates: {
-          direct_files: 0,
-          total_files: 0,
-          total_bytes: 0,
-          as_of: '2026-08-22T10:00:00Z',
-          pending: false,
+    // Signing in returns to where the person was going, not to the front door (F-027/FR-5).
+    await page.route('**/api/v1/auth/login', (route) => route.fulfill({ status: 204, body: '' }));
+    await page.unroute('**/api/v1/auth/me');
+    await page.route('**/api/v1/auth/me', (route) =>
+      route.fulfill({ status: 200, json: IDENTITY }),
+    );
+    await page.route('**/api/v1/folders/*', (route) =>
+      route.fulfill({
+        status: 200,
+        json: {
+          id: '01a02900-0000-7000-8000-0000000000ff',
+          workspace: '01a02900-0000-7000-8000-00000000000a',
+          parent: null,
+          name: '',
+          path: '',
+          depth: 0,
+          created_at: '2026-08-22T10:00:00Z',
+          aggregates: {
+            direct_files: 0,
+            total_files: 0,
+            total_bytes: 0,
+            as_of: '2026-08-22T10:00:00Z',
+            pending: false,
+          },
         },
-      },
-    }),
-  );
-  await page.route('**/api/v1/folders/*/children**', (route) =>
-    route.fulfill({ status: 200, json: { data: [], next_cursor: null } }),
-  );
-
-  await page.getByLabel('Email').fill('owner@example.com');
-  await page.getByLabel('Password').fill('correct-horse');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-
-  await expect(page.getByRole('heading', { name: 'All files' })).toBeVisible();
-  expect(new URL(page.url()).pathname).toBe('/folders/01a02900-0000-7000-8000-0000000000ff');
-});
-
-test('a rejected credential shows the server’s own message', async ({ page }) => {
-  await signedOut(page);
-  // Deliberately undifferentiated: "no such account" and "wrong password" must look identical
-  // (07 § abuse protection).
-  await page.route('**/api/v1/auth/login', (route) =>
-    route.fulfill({
-      status: 401,
-      contentType: 'application/problem+json',
-      body: JSON.stringify({
-        title: 'Invalid credentials',
-        detail: 'That email and password do not match an account.',
-        status: 401,
-        instance: 'req_deadbeef',
       }),
-    }),
-  );
+    );
+    await page.route('**/api/v1/folders/*/children**', (route) =>
+      route.fulfill({ status: 200, json: { data: [], next_cursor: null } }),
+    );
 
-  await page.goto('/login');
-  await page.getByLabel('Email').fill('owner@example.com');
-  await page.getByLabel('Password').fill('wrong');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByLabel('Email').fill('owner@example.com');
+    await page.getByLabel('Password').fill('correct-horse');
+    await page.getByRole('button', { name: 'Sign in' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('do not match an account');
-  await expect(page.getByRole('alert')).toContainText('req_deadbeef');
-  await expect(page.getByLabel('Email')).toBeVisible();
-});
+    await expect(page.getByRole('heading', { name: 'All files' })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/folders/01a02900-0000-7000-8000-0000000000ff');
+  },
+);
 
-test('a 401 mid-session returns to login with no wall of errors', async ({ page }) => {
-  await page.route('**/api/v1/auth/me', (route) => route.fulfill({ status: 200, json: IDENTITY }));
-  await page.route('**/api/v1/workspaces**', (route) =>
-    route.fulfill({
-      status: 200,
-      json: {
-        data: [
-          {
-            id: '01a02900-0000-7000-8000-00000000000a',
-            owner: IDENTITY.id,
-            name: 'Photos',
-            source: 'local',
-            placement: 'managed',
-            state: 'active',
-            root_path: '/srv/photos',
-            root_folder: '01a02900-0000-7000-8000-0000000000ff',
-            filesystem: { probed: '/srv/photos', usable: true, properties: {}, facts: {} },
-            scan_interval_minutes: 60,
-            created_at: '2026-08-22T10:00:00Z',
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
-  );
+test(
+  'a rejected credential shows the server’s own message',
+  { tag: ['@F-027/FR-4', '@F-027/FR-8'] },
+  async ({ page }) => {
+    await signedOut(page);
+    // Deliberately undifferentiated: "no such account" and "wrong password" must look identical
+    // (07 § abuse protection).
+    await page.route('**/api/v1/auth/login', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          title: 'Invalid credentials',
+          detail: 'That email and password do not match an account.',
+          status: 401,
+          instance: 'req_deadbeef',
+        }),
+      }),
+    );
 
-  await page.goto('/');
-  await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('owner@example.com');
+    await page.getByLabel('Password').fill('wrong');
+    await page.getByRole('button', { name: 'Sign in' }).click();
 
-  // The session ages out. The guard already let this navigation through on the cached identity,
-  // so the `401` arrives from the surface's own request — which is the case FR-6 is about.
-  await page.unroute('**/api/v1/auth/me');
-  await page.unroute('**/api/v1/workspaces**');
-  await signedOut(page);
-  await page.route('**/api/v1/workspaces**', (route) =>
-    route.fulfill({
-      status: 401,
-      contentType: 'application/problem+json',
-      body: JSON.stringify({ title: 'Not authenticated', status: 401 }),
-    }),
-  );
+    await expect(page.getByRole('alert')).toContainText('do not match an account');
+    await expect(page.getByRole('alert')).toContainText('req_deadbeef');
+    await expect(page.getByLabel('Email')).toBeVisible();
+  },
+);
 
-  await page.getByRole('link', { name: 'Photos' }).click();
+test(
+  'a 401 mid-session returns to login with no wall of errors',
+  { tag: ['@F-027/FR-6'] },
+  async ({ page }) => {
+    await page.route('**/api/v1/auth/me', (route) =>
+      route.fulfill({ status: 200, json: IDENTITY }),
+    );
+    await page.route('**/api/v1/workspaces**', (route) =>
+      route.fulfill({
+        status: 200,
+        json: {
+          data: [
+            {
+              id: '01a02900-0000-7000-8000-00000000000a',
+              owner: IDENTITY.id,
+              name: 'Photos',
+              source: 'local',
+              placement: 'managed',
+              state: 'active',
+              root_path: '/srv/photos',
+              root_folder: '01a02900-0000-7000-8000-0000000000ff',
+              filesystem: { probed: '/srv/photos', usable: true, properties: {}, facts: {} },
+              scan_interval_minutes: 60,
+              created_at: '2026-08-22T10:00:00Z',
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
 
-  await expect(page.getByLabel('Password')).toBeVisible();
-  expect(new URL(page.url()).pathname).toBe('/login');
-  await expect(page.getByRole('alert')).toHaveCount(0);
-});
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Photos' })).toBeVisible();
 
-test('the documentation route renders this instance’s own schema', async ({ page }) => {
-  await signedIn(page);
-  // Bundled with the app and never fetched from a CDN: the schema is the only thing that comes
-  // over the network here (F-027/FR-9).
-  await page.route('**/api/v1/openapi.json', (route) =>
-    route.fulfill({
-      status: 200,
-      json: {
-        openapi: '3.1.0',
-        info: { title: 'Store Everything', version: '0.1.0' },
-        paths: {
-          '/api/v1/workspaces': {
-            get: { operationId: 'listWorkspaces', summary: 'List your workspaces', responses: {} },
+    // The session ages out. The guard already let this navigation through on the cached identity,
+    // so the `401` arrives from the surface's own request — which is the case FR-6 is about.
+    await page.unroute('**/api/v1/auth/me');
+    await page.unroute('**/api/v1/workspaces**');
+    await signedOut(page);
+    await page.route('**/api/v1/workspaces**', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({ title: 'Not authenticated', status: 401 }),
+      }),
+    );
+
+    await page.getByRole('link', { name: 'Photos' }).click();
+
+    await expect(page.getByLabel('Password')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/login');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  },
+);
+
+test(
+  'the documentation route renders this instance’s own schema',
+  { tag: ['@F-027/FR-9'] },
+  async ({ page }) => {
+    await signedIn(page);
+    // Bundled with the app and never fetched from a CDN: the schema is the only thing that comes
+    // over the network here (F-027/FR-9).
+    await page.route('**/api/v1/openapi.json', (route) =>
+      route.fulfill({
+        status: 200,
+        json: {
+          openapi: '3.1.0',
+          info: { title: 'Store Everything', version: '0.1.0' },
+          paths: {
+            '/api/v1/workspaces': {
+              get: {
+                operationId: 'listWorkspaces',
+                summary: 'List your workspaces',
+                responses: {},
+              },
+            },
           },
         },
-      },
-    }),
-  );
+      }),
+    );
 
-  await page.goto('/docs');
+    await page.goto('/docs');
 
-  await expect(page.getByRole('heading', { name: 'API', exact: true })).toBeVisible();
-  await expect(page.getByText('List your workspaces')).toBeVisible();
-});
+    await expect(page.getByRole('heading', { name: 'API', exact: true })).toBeVisible();
+    await expect(page.getByText('List your workspaces')).toBeVisible();
+  },
+);
 
-test('the documentation route says so when the instance has it switched off', async ({ page }) => {
-  await signedIn(page);
-  // `SE_API_DOCS_ENABLED=false` removes the schema route entirely.
-  await page.route('**/api/v1/openapi.json', (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: 'application/problem+json',
-      body: JSON.stringify({ title: 'Not found', status: 404 }),
-    }),
-  );
+test(
+  'the documentation route says so when the instance has it switched off',
+  { tag: ['@F-027/FR-9'] },
+  async ({ page }) => {
+    await signedIn(page);
+    // `SE_API_DOCS_ENABLED=false` removes the schema route entirely.
+    await page.route('**/api/v1/openapi.json', (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({ title: 'Not found', status: 404 }),
+      }),
+    );
 
-  await page.goto('/docs');
+    await page.goto('/docs');
 
-  await expect(page.getByRole('alert')).toContainText('not available');
-  await expect(page.getByText('SE_API_DOCS_ENABLED=false')).toBeVisible();
-});
+    await expect(page.getByRole('alert')).toContainText('not available');
+    await expect(page.getByText('SE_API_DOCS_ENABLED=false')).toBeVisible();
+  },
+);
 
-test('the frame names the signed-in user and signs them out', async ({ page }) => {
-  await signedIn(page);
-  await page.route('**/api/v1/auth/logout', (route) => route.fulfill({ status: 204, body: '' }));
+test(
+  'the frame names the signed-in user and signs them out',
+  { tag: ['@F-027/FR-7', '@F-027/FR-10'] },
+  async ({ page }) => {
+    await signedIn(page);
+    await page.route('**/api/v1/auth/logout', (route) => route.fulfill({ status: 204, body: '' }));
 
-  await page.goto('/');
-  await expect(page.getByText('owner@example.com')).toBeVisible();
+    await page.goto('/');
+    await expect(page.getByText('owner@example.com')).toBeVisible();
 
-  await page.unroute('**/api/v1/auth/me');
-  await signedOut(page);
-  await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.unroute('**/api/v1/auth/me');
+    await signedOut(page);
+    await page.getByRole('button', { name: 'Sign out' }).click();
 
-  await expect(page.getByLabel('Password')).toBeVisible();
-});
+    await expect(page.getByLabel('Password')).toBeVisible();
+  },
+);
 
-test('login is reachable without a session, and says whether the instance is up', async ({
-  page,
-}) => {
-  await signedOut(page);
-  await page.route('**/readyz', (route) =>
-    route.fulfill({ status: 503, contentType: 'application/problem+json', body: '{}' }),
-  );
+test(
+  'login is reachable without a session, and says whether the instance is up',
+  { tag: ['@F-027/FR-4'] },
+  async ({ page }) => {
+    await signedOut(page);
+    await page.route('**/readyz', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/problem+json', body: '{}' }),
+    );
 
-  await page.goto('/login');
+    await page.goto('/login');
 
-  // A sign-in failing because the database is unreachable is not a wrong password.
-  await expect(page.getByText('Instance unavailable')).toBeVisible();
-});
+    // A sign-in failing because the database is unreachable is not a wrong password.
+    await expect(page.getByText('Instance unavailable')).toBeVisible();
+  },
+);
 
-test('a client route that does not exist says so', async ({ page }) => {
+test('a client route that does not exist says so', { tag: ['@F-027/FR-10'] }, async ({ page }) => {
   await signedIn(page);
 
   await page.goto('/not-a-real-route');
 
   await expect(page.getByRole('heading', { name: 'Not found' })).toBeVisible();
 });
+
+test(
+  'a login in flight cannot be submitted a second time',
+  { tag: ['@F-027/FR-4'] },
+  async ({ page }) => {
+    await signedOut(page);
+
+    // Held open so the in-flight state is observable rather than a race: a double submission
+    // would be two authentication attempts against the rate limiter, and on a slow link the
+    // second click is the natural thing for a person to do.
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const attempts: string[] = [];
+    await page.route('**/api/v1/auth/login', async (route) => {
+      attempts.push(route.request().url());
+      await held;
+      await route.fulfill({ status: 204, body: '' });
+    });
+
+    await page.goto('/login');
+    await page.getByLabel('Email').fill('owner@example.com');
+    await page.getByLabel('Password').fill('correct-horse');
+
+    const submit = page.getByRole('button', { name: 'Signing in…' });
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(submit).toBeDisabled();
+
+    // Forced past the disabled attribute, because "the control is greyed out" is styling and
+    // "the form cannot be submitted twice" is the requirement.
+    await submit.dispatchEvent('click');
+    await page.getByLabel('Password').press('Enter');
+    expect(attempts).toHaveLength(1);
+
+    // And once the request finishes the form is usable again — disabled while in flight, not
+    // disabled for good.
+    release();
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+    expect(attempts).toHaveLength(1);
+  },
+);

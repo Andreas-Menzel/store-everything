@@ -1,6 +1,6 @@
 # F-001 — File Upload & Workspace Import
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P0
 **Clients:** all
 **Depends on:** —
@@ -26,7 +26,7 @@ Get files into the system two ways: upload through the API into a chosen workspa
 - **FR-6** Re-scan reconciles external changes: new file → register + ingest; changed content (hash differs) → new version ([F-007](F-007-versioning.md)); missing file → a trash entry badged "removed outside the app" ([F-014/FR-10](F-014-deletion-and-trash.md)), never silently purged from the index.
 - **FR-7** Name collisions on upload are handled predictably (reject or new-version, per explicit parameter; default: reject with clear error). A collision is a clash on the comparison key ([F-015/FR-6](F-015-folders.md)), so uploading `Report.pdf` beside an existing `report.pdf` collides.
 - **FR-8** Every registered file is immediately visible in listings with basic file metadata, with extraction status `pending` — searchability by content follows as extractors complete.
-- **FR-9** *(superseded by [FR-14](#functional-requirements) — the interim `104` it required is out of reach on ASGI; [Q58](../OPEN-QUESTIONS.md))*
+- **FR-9** *(removed — superseded by [FR-14](#functional-requirements); the interim `104` it required is out of reach on ASGI, see [Q58](../OPEN-QUESTIONS.md))*
 - **FR-10** **Adoption is admin-gated** ([ADR-0018](../decisions/ADR-0018-workspace-layout-and-adoption.md)): creating a workspace over an existing directory requires an admin and a path resolving inside the `SE_ADOPTION_ROOTS` allow-list; a path outside it, a path overlapping another workspace root, or a filesystem failing the `fs-check` probe is refused with a problem response naming the reason. Non-admin callers cannot adopt at all.
 - **FR-11** **Scan conflicts are reported, never resolved on disk** ([ADR-0019](../decisions/ADR-0019-source-tree-semantics.md)): when a scan finds sibling names colliding on the comparison key (NFC-normalized, case-folded), the first in traversal order registers and each other is listed as a conflict with both names; no file on disk is renamed, moved, deleted, or overwritten by the app to resolve one.
 - **FR-12** *(negative space)* **No path outside the workspace root is ever read or written**: symlinks are not dereferenced by any scan (each is recorded as a skipped entry), and every content read or write re-resolves its path and refuses one that leaves the workspace root — including a dangling link and a link whose lexical path looks contained.

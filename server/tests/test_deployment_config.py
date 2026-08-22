@@ -78,7 +78,6 @@ def test_the_exception_list_stays_honest() -> None:
     assert stale == set(), f"stale exceptions: {sorted(stale)}"
 
 
-<<<<<<< Updated upstream
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/release.yml"
 
@@ -107,7 +106,8 @@ def test_every_place_that_builds_the_image_uses_the_repository_root() -> None:
             f"{path.name} builds from the service directory ({offending.group(0).strip()!r}), "
             "which cannot see the web client"
         )
-=======
+
+
 #: The mounts that hold a user's own bytes, and the variable each one is switched with. Read by
 #: Docker rather than by the service, so they carry no `SE_` prefix — and so no other test here
 #: covers them.
@@ -133,4 +133,3 @@ def test_the_areas_holding_files_can_be_put_on_the_operators_own_storage() -> No
             assert f"${{{variable}:-" in mount, (
                 f"{mount} pins its source; it should default through ${variable}"
             )
->>>>>>> Stashed changes

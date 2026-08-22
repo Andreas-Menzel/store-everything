@@ -44,6 +44,7 @@ async def read_events(database_url: str, *, action: str | None = None) -> list[d
         event.c.resource_id,
         event.c.details,
         event.c.request_id,
+        event.c.occurred_at,
     ).order_by(event.c.id)
     if action is not None:
         query = query.where(event.c.action == action)

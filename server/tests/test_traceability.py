@@ -8,7 +8,15 @@ import sys
 from pathlib import Path
 
 from tools.specdocs import Feature, Finding, Invariant, Requirement
-from tools.traceability import Coverage, build_rows, gate, load_coverage, render_markdown
+from tools.traceability import (
+    Coverage,
+    build_rows,
+    describe_sources,
+    gate,
+    load_coverage,
+    main,
+    render_markdown,
+)
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,7 +148,7 @@ def test_coverage_is_inverted_from_the_plugin_report(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    coverage = load_coverage(report)
+    coverage = load_coverage([report])
 
     assert sorted(coverage) == ["F-901/FR-1", "F-901/FR-2"]
     assert coverage["F-901/FR-1"][0].outcome == "passed"
@@ -185,3 +193,119 @@ def test_the_plugin_records_markers_from_a_real_run(tmp_path: Path) -> None:
     assert entry["requirements"] == ["F-901/FR-1"]
     assert entry["methods"] == ["test"]
     assert entry["outcome"] == "passed"
+
+
+# ------------------------------------------------------------------ more than one layer
+
+
+def _report(path: Path, layer: str, tests: dict[str, dict[str, object]]) -> Path:
+    path.write_text(json.dumps({"layer": layer, "tests": tests}), encoding="utf-8")
+    return path
+
+
+def test_reports_from_several_layers_are_merged(tmp_path: Path) -> None:
+    """A requirement the browser suite proves must reach the same row as one the core suite
+    proves — that is the whole of [Q59](../../OPEN-QUESTIONS.md)."""
+    core = _report(
+        tmp_path / "core.json",
+        "core",
+        {
+            "tests/test_a.py::test_x": {
+                "requirements": ["F-901/FR-1"],
+                "methods": ["test"],
+                "outcome": "passed",
+            }
+        },
+    )
+    browser = _report(
+        tmp_path / "e2e.json",
+        "web-e2e",
+        {
+            "web/e2e/b.spec.ts::signs in": {
+                "requirements": ["F-901/FR-1", "F-901/FR-2"],
+                "methods": ["test"],
+                "outcome": "passed",
+            }
+        },
+    )
+
+    coverage = load_coverage([core, browser])
+
+    assert sorted(coverage) == ["F-901/FR-1", "F-901/FR-2"]
+    assert {record.layer for record in coverage["F-901/FR-1"]} == {"core", "web-e2e"}
+    assert coverage["F-901/FR-2"][0].layer == "web-e2e"
+
+
+def test_a_requirement_only_the_browser_can_verify_still_reaches_implemented(
+    tmp_path: Path,
+) -> None:
+    one = feature("Implemented", requirement(1))
+    coverage = load_coverage(
+        [
+            _report(
+                tmp_path / "e2e.json",
+                "web-e2e",
+                {
+                    "web/e2e/b.spec.ts::signs in": {
+                        "requirements": ["F-901/FR-1"],
+                        "methods": ["test"],
+                        "outcome": "passed",
+                    }
+                },
+            )
+        ]
+    )
+    rows = build_rows([one], [], coverage)
+
+    assert errors(gate([one], rows, coverage)) == []
+    assert rows[0].verified
+
+
+def test_the_matrix_names_the_layer_that_covered_each_row(tmp_path: Path) -> None:
+    one = feature("Draft", requirement(1))
+    coverage = load_coverage(
+        [
+            _report(
+                tmp_path / "e2e.json",
+                "web-e2e",
+                {
+                    "web/e2e/b.spec.ts::signs in": {
+                        "requirements": ["F-901/FR-1"],
+                        "methods": ["test"],
+                        "outcome": "passed",
+                    }
+                },
+            )
+        ]
+    )
+
+    rendered = render_markdown(build_rows([one], [], coverage))
+
+    assert "web/e2e/b.spec.ts::signs in (web-e2e)" in rendered
+
+
+def test_the_matrix_says_what_it_was_built_from(tmp_path: Path) -> None:
+    """A *filtered* run writes a valid report holding one test, and a matrix built from it would
+    report the rest of that layer as uncovered. The provenance line is what makes that visible."""
+    core = _report(tmp_path / "core.json", "core", {})
+    browser = _report(
+        tmp_path / "e2e.json",
+        "web-e2e",
+        {
+            "web/e2e/b.spec.ts::x": {
+                "requirements": ["F-901/FR-1"],
+                "methods": [],
+                "outcome": "passed",
+            }
+        },
+    )
+
+    rendered = render_markdown([], describe_sources([core, browser]))
+
+    assert "Built from: core (0 marked tests), web-e2e (1 marked tests)." in rendered
+
+
+def test_a_missing_layer_report_is_refused_rather_than_read_as_uncovered(tmp_path: Path) -> None:
+    core = _report(tmp_path / "core.json", "core", {})
+
+    assert main(["--report", str(core), "--report", str(tmp_path / "absent.json")]) == 1

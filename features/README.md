@@ -8,21 +8,21 @@ A feature is **specified here before it is implemented** — no feature file, no
 
 | ID | Feature | Clients | Status | Priority |
 |---|---|---|---|---|
-| [F-001](F-001-upload-and-import.md) | File upload & workspace import | all | Draft | P0 |
+| [F-001](F-001-upload-and-import.md) | File upload & workspace import | all | Approved | P0 |
 | [F-002](F-002-hybrid-search.md) | Hybrid search (exact + semantic, positional) | all | Draft | P0 |
 | [F-003](F-003-tagging.md) | Tagging (manual + auto, provenance) | all | Draft | P0 |
 | [F-004](F-004-document-text-extraction.md) | Document text extraction & OCR | all | Draft | P0 |
 | [F-005](F-005-image-analysis.md) | Image analysis (objects, scene, OCR, embeddings) | all | Draft | P0 |
 | [F-006](F-006-av-transcription-and-keyframes.md) | Audio/video transcription & keyframes | all | Draft | P1 |
-| [F-007](F-007-versioning.md) | File versioning & version search | all | Draft | P1 |
+| [F-007](F-007-versioning.md) | File versioning & version search | all | Approved | P1 |
 | [F-008](F-008-sharing-and-public-links.md) | Permissions, sharing & public links | all | Draft | P1 |
 | [F-009](F-009-reprocessing.md) | Reprocessing with generations | all | Draft | P1 |
 | [F-010](F-010-auto-sort-inbox.md) | Auto-sort inbox workspace | all | Deferred | P2 |
-| [F-011](F-011-audit-trail.md) | Full audit trail | all | Draft | P1 |
+| [F-011](F-011-audit-trail.md) | Full audit trail | all | Approved | P1 |
 | [F-012](F-012-live-updates.md) | Live updates (WebSocket) | all | Draft | P1 |
 | [F-013](F-013-duplicate-detection.md) | Duplicate detection (exact) | all | Draft | P1 |
 | [F-014](F-014-deletion-and-trash.md) | Deletion & trash | all | Draft | P1 |
-| [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | all | Draft | P0 |
+| [F-015](F-015-folders.md) | Folders (identity, permissions, aggregates) | all | Approved | P0 |
 | [F-016](F-016-archive-download.md) | Archive download (folders & selections) | all | Draft | P1 |
 | [F-017](F-017-views.md) | Views (saved searches & library pages) | all | Draft | P1 |
 | [F-018](F-018-people.md) | People (faces, persons, naming & account links) | all | Deferred | P2 |
@@ -34,7 +34,7 @@ A feature is **specified here before it is implemented** — no feature file, no
 | [F-024](F-024-offline-files-and-downloads.md) | Mobile: offline files & downloads | Android, iOS | Draft | P1 |
 | [F-025](F-025-client-parity.md) | Mobile: native app parity (full web feature set) | Android, iOS | Draft | P1 |
 | [F-026](F-026-offline-cache-and-prefetch.md) | Offline cache, instant navigation & prefetch | all | Draft | P1 |
-| [F-027](F-027-web-application-shell.md) | Web application shell (serving, login, frame, API docs) | web | Draft | P0 |
+| [F-027](F-027-web-application-shell.md) | Web application shell (serving, login, frame, API docs) | web | Implemented | P0 |
 
 Priorities: **P0** — the product isn't this product without it · **P1** — needed for the v1 vision · **P2** — wanted, explicitly later.
 

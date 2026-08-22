@@ -46,7 +46,14 @@ VAGUE_WORDS = (
 _VAGUE = re.compile(r"\b(" + "|".join(VAGUE_WORDS) + r")\b", re.IGNORECASE)
 
 #: Documents that discuss the conventions rather than apply them.
-RULE_DOCUMENTS = {"features/README.md", "features/TEMPLATE.md"}
+#: Documents whose FR references are examples or rules rather than claims about a
+#: requirement, plus the generated matrix — which necessarily names every id there is,
+#: tombstones included, and is not a document anyone wrote.
+RULE_DOCUMENTS = {
+    "features/README.md",
+    "features/TEMPLATE.md",
+    "traceability-matrix.md",
+}
 
 
 def check_requirements(feature: Feature) -> list[Finding]:

@@ -7,7 +7,11 @@ never claimed in a feature file (11-engineering-standards.md § requirement trac
 The matrix is a CI artefact and is deliberately **not** committed: a generated file in
 the repository is a staleness bug waiting to happen.
 
-    python -m tools.traceability --report fr-report.json --output traceability-matrix.md
+    python -m tools.traceability --report core.json --report web.json --output matrix.md
+
+One report per test layer, merged here: the core suite is not the only place a requirement
+can be verified, and a client-side FR that only a browser can check must be able to reach
+the same gate (Q59).
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +56,9 @@ class Coverage:
     nodeid: str
     methods: tuple[str, ...]
     outcome: str
+    #: Which suite proved it — `core`, `web`, `web-e2e`. Two layers can cover one
+    #: requirement, and which one did is part of reading the row.
+    layer: str = "core"
 
 
 @dataclass(frozen=True)
@@ -81,15 +89,41 @@ class Row:
         return "passed"
 
 
-def load_coverage(path: Path) -> dict[str, list[Coverage]]:
-    """Invert the plugin's test → requirements report into requirement → tests."""
-    document = json.loads(path.read_text(encoding="utf-8"))
+def load_coverage(paths: Sequence[Path]) -> dict[str, list[Coverage]]:
+    """Invert each runner's test → requirements report into requirement → tests.
+
+    The reports are merged, not chosen between: a requirement may be covered from the core
+    suite and the browser suite at once, and both belong in its row.
+    """
     coverage: dict[str, list[Coverage]] = defaultdict(list)
-    for nodeid, entry in document.get("tests", {}).items():
-        record = Coverage(nodeid, tuple(entry.get("methods", [])), str(entry.get("outcome", "")))
-        for requirement_id in entry.get("requirements", []):
-            coverage[str(requirement_id)].append(record)
+    for path in paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        layer = str(document.get("layer", "core"))
+        for nodeid, entry in document.get("tests", {}).items():
+            record = Coverage(
+                nodeid,
+                tuple(entry.get("methods", [])),
+                str(entry.get("outcome", "")),
+                layer,
+            )
+            for requirement_id in entry.get("requirements", []):
+                coverage[str(requirement_id)].append(record)
     return dict(coverage)
+
+
+def describe_sources(paths: Sequence[Path]) -> list[tuple[str, int]]:
+    """Which layer each report speaks for, and how many marked tests it carried.
+
+    Printed with the matrix because a *filtered* run writes a perfectly valid report
+    containing one test, and the matrix built from it would report everything else in that
+    layer as uncovered. A missing report is caught by the CLI; a thin one is caught here, by
+    a reader who can see that `web-e2e` contributed 1 test where it usually contributes 17.
+    """
+    sources: list[tuple[str, int]] = []
+    for path in paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        sources.append((str(document.get("layer", "core")), len(document.get("tests", {}))))
+    return sources
 
 
 def build_rows(
@@ -127,7 +161,7 @@ def build_rows(
     return rows
 
 
-def render_markdown(rows: list[Row]) -> str:
+def render_markdown(rows: list[Row], sources: Sequence[tuple[str, int]] = ()) -> str:
     verified = sum(1 for row in rows if row.verified)
     live = [row for row in rows if not row.note]
 
@@ -139,12 +173,21 @@ def render_markdown(rows: list[Row]) -> str:
         "",
         f"**{verified} of {len(live)}** live requirements are verified by their declared method.",
         "",
+    ]
+
+    if sources:
+        marked = ", ".join(f"{layer} ({count} marked tests)" for layer, count in sources)
+        lines += [f"Built from: {marked}.", ""]
+
+    lines += [
         "| Id | Requirement | Owner | Method | Covering tests | Result | Note |",
         "|---|---|---|---|---|---|---|",
     ]
 
     for row in rows:
-        tests = "<br>".join(coverage.nodeid for coverage in row.covering) or UNCOVERED
+        tests = (
+            "<br>".join(f"{cover.nodeid} ({cover.layer})" for cover in row.covering) or UNCOVERED
+        )
         requirement = row.requirement.replace("|", "\\|")
         if len(requirement) > 160:
             requirement = requirement[:159].rstrip() + "…"
@@ -218,15 +261,23 @@ def gate(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=Path, required=True, help="JSON written by --fr-report")
+    parser.add_argument(
+        "--report",
+        type=Path,
+        action="append",
+        required=True,
+        metavar="PATH",
+        help="a runner's requirement report; repeat once per test layer",
+    )
     parser.add_argument("--output", type=Path, help="write the matrix here")
     args = parser.parse_args(argv)
 
-    if not args.report.exists():
-        print(
-            f"{args.report} does not exist — run the suite with --fr-report first",
-            file=sys.stderr,
-        )
+    # A layer whose report is absent would silently read as "nothing there verifies this",
+    # which is the one wrong answer the matrix must never give.
+    missing = [path for path in args.report if not path.exists()]
+    if missing:
+        for path in missing:
+            print(f"{path} does not exist — run that layer's suite first", file=sys.stderr)
         return 1
 
     features = load_features()
@@ -237,7 +288,9 @@ def main(argv: list[str] | None = None) -> int:
     findings = gate(features, rows, coverage)
 
     if args.output is not None:
-        args.output.write_text(render_markdown(rows), encoding="utf-8")
+        args.output.write_text(
+            render_markdown(rows, describe_sources(args.report)), encoding="utf-8"
+        )
         print(f"wrote {args.output}")
 
     for finding in findings:

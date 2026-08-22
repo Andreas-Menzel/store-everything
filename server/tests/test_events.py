@@ -26,6 +26,7 @@ async def _count(connection: object, table: object) -> int:
     return (await connection.execute(select(func.count()).select_from(table))).scalar_one()  # pyright: ignore[reportArgumentType]
 
 
+@pytest.mark.fr("F-011/FR-4", "02/INV-6")
 async def test_a_rolled_back_change_leaves_no_event(identity_database: str) -> None:
     """F-011/FR-4, from the failing side: no phantom entries."""
     engine = create_async_engine(identity_database)
@@ -51,6 +52,7 @@ async def test_a_rolled_back_change_leaves_no_event(identity_database: str) -> N
         await engine.dispose()
 
 
+@pytest.mark.fr("F-011/FR-1", "F-011/FR-4", "02/INV-6")
 async def test_a_committed_change_always_leaves_one_event(identity_database: str) -> None:
     engine = create_async_engine(identity_database)
     try:
@@ -104,6 +106,7 @@ async def test_a_credential_shaped_detail_key_is_refused(identity_database: str,
         await engine.dispose()
 
 
+@pytest.mark.fr("F-011/FR-1")
 async def test_ordinary_details_are_accepted(identity_database: str) -> None:
     engine = create_async_engine(identity_database)
     try:

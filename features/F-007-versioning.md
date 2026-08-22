@@ -1,6 +1,6 @@
 # F-007 — File Versioning & Version Search
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P1
 **Clients:** all
 **Depends on:** F-001
