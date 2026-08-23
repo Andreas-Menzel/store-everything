@@ -132,7 +132,7 @@ The same tree is written by Linux, macOS and Windows machines, whose name rules 
 - Names arriving **through the API** are normalized to **NFC** before storage; names found **on disk** are stored verbatim with the key derived from them.
 - A rename changing only case, or only normalization, **is a rename**.
 - **Collisions found on disk are scan conflicts**, not errors and not merges: the first entry in the deterministic traversal order registers, the rest are listed as conflicts — visible, unregistered, untouched. Resolution is a human renaming something; the app never renames, moves, or deletes a user's file to resolve a collision.
-- Limits, explicit so they fail predictably rather than at the filesystem's whim: **255 bytes** per name (UTF-8), **4096 bytes** per workspace-relative path, no `/`, no control characters, and `.workspace` reserved at the workspace root.
+- Limits, explicit so they fail predictably rather than at the filesystem's whim: **255 bytes** per name (UTF-8), **4096 bytes** per workspace-relative path, no `/`, no control characters, and `.workspace` reserved at the workspace root. The reservation is a property of the **destination**, not of the request: it holds for a create, a rename *into* a root, and a move into a root that carries its old name along, and it is checked on the comparison key so a case variant is refused too. Anywhere below the root the same name is ordinary, because nothing of the app's lives there.
 
 ## Symlinks
 

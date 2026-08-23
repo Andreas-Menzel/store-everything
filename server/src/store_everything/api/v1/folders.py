@@ -239,12 +239,16 @@ async def create_folder(
 ) -> FolderSummary:
     """Create one folder, on disk and in the index — the directory is the point of a folder."""
     workspace = await _owned_workspace(connection, workspace_id, credential)
+    parent = await _parent_for(connection, workspace, payload.parent, credential)
+    # After the parent is known, because what a name may be depends on where it goes: the
+    # control directory's name is reserved at a workspace root and ordinary below it. Validating
+    # first — which is what this did — let a folder called `.workspace` be created at the root,
+    # adopting the app's own control directory as a user folder.
     try:
-        names.validate_name(payload.name)
+        names.validate_name(payload.name, at_root=parent.is_root)
     except names.InvalidNameError as invalid:
         raise _invalid(invalid.reason, "/body/name") from invalid
 
-    parent = await _parent_for(connection, workspace, payload.parent, credential)
     try:
         created = await folders.create(
             connection,
@@ -441,11 +445,6 @@ async def move_folder(
     """
     found, workspace, root = await _readable(connection, folder_id, credential)
     name = found.name if payload.name is None else names.normalize_api_name(payload.name)
-    if payload.name is not None:
-        try:
-            names.validate_name(name)
-        except names.InvalidNameError as invalid:
-            raise _invalid(invalid.reason, "/body/name") from invalid
 
     parent = found
     destination = workspace
@@ -456,6 +455,17 @@ async def move_folder(
         if holding is None:  # pragma: no cover - a non-root folder always has its parent
             raise _not_found()
         parent = holding
+
+    # Validated against the destination rather than in the abstract, and *unconditionally*: a
+    # move with no new name still carries the old one somewhere new, and the control
+    # directory's name is only reserved at a workspace root. Checking it as a property of the
+    # request's name — which is what this did — missed both doors into the root.
+    try:
+        names.validate_name(name, at_root=parent.is_root)
+    except names.InvalidNameError as invalid:
+        raise _invalid(
+            invalid.reason, "/body/name" if payload.name is not None else "/body/parent"
+        ) from invalid
 
     try:
         moved = await folders.relocate(

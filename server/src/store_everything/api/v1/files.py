@@ -316,12 +316,6 @@ async def move_file(
         )
 
     name = found.name if payload.name is None else names.normalize_api_name(payload.name)
-    if payload.name is not None:
-        try:
-            names.validate_name(name)
-        except names.InvalidNameError as invalid:
-            raise _invalid(invalid.reason, "/body/name") from invalid
-
     destination_folder, destination = await _destination(
         connection,
         found=found,
@@ -329,6 +323,16 @@ async def move_file(
         folder_id=payload.folder,
         credential=credential,
     )
+    # After the destination is known, and whether or not a new name was asked for: the control
+    # directory's name is reserved at a workspace root and ordinary below it, so a move alone
+    # can carry a name somewhere it may not be.
+    try:
+        names.validate_name(name, at_root=destination_folder.is_root)
+    except names.InvalidNameError as invalid:
+        raise _invalid(
+            invalid.reason, "/body/name" if payload.name is not None else "/body/folder"
+        ) from invalid
+
     if await files.find_in_folder(connection, folder_id=destination_folder.id, name=name) not in (
         None,
         found,
