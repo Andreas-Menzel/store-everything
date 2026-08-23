@@ -37,6 +37,27 @@ jobs:
           uvx --from commitizen cz check
           --rev-range ${{ github.event.pull_request.base.sha }}..${{ github.sha }}
 
+  extractors:
+    name: Extractor SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --directory extractors --all-groups --locked
+      - name: Lint
+        run: |
+          uv run --directory extractors ruff check .
+          uv run --directory extractors ruff format --check .
+      - name: Types
+        run: uv run --directory extractors pyright
+      # Fast and hermetic: the loop against a scripted core. The loop against a *real* core
+      # is in the core suite, where the reference extractor is the end-to-end double.
+      - name: Tests
+        run: uv run --directory extractors pytest
+
   server:
     name: Core service
     runs-on: ubuntu-latest
@@ -45,6 +66,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      # The extractor SDK is a path dependency of the core's *dev* group: one test runs the
+      # real three-sided arrangement (API, worker, extractor) rather than a mock of the
+      # plugin boundary, so the lockfile resolves it from the working tree.
       - name: Install
         run: uv sync --directory server --all-groups --locked
       - name: Lint
@@ -259,22 +283,52 @@ jobs:
       # cookie same-site by construction (10 § topology, F-027/FR-1).
       - name: Build
         run: docker build -f server/Dockerfile -t store-everything-core:ci .
+      # The reference extractor's image, held to the same baseline (05 § container
+      # requirements): it is the shape every official extractor image follows, so a
+      # regression here would be inherited by all of them.
+      - name: Build the reference extractor
+        run: docker build -f extractors/Dockerfile -t store-everything-reference-extractor:ci extractors
       # The virtualenv is built at image-build time, so a package installer in the
       # runtime is unnecessary — and a liability: pip carries its own vendored
       # dependency tree, which is where this image's only CVEs came from.
-      - name: Runtime carries no package installer
+      - name: Runtimes carry no package installer
         run: |
-          if docker run --rm --entrypoint sh store-everything-core:ci \
-              -c 'command -v pip || command -v pip3'; then
-            echo '::error::pip is present in the runtime image'
+          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+            if docker run --rm --entrypoint sh "$image" \
+                -c 'command -v pip || command -v pip3'; then
+              echo "::error::pip is present in $image"
+              exit 1
+            fi
+          done
+      - name: Extractor images run unprivileged
+        run: |
+          if [ "$(docker run --rm --entrypoint id store-everything-reference-extractor:ci -u)" = "0" ]; then
+            echo '::error::the reference extractor image runs as root'
             exit 1
           fi
+      # The core ships none of its development dependencies. Asserted rather than assumed
+      # because the extractor SDK is one of them — a path dependency of the dev group, so that
+      # one test can drive the real plugin boundary — and an image that shipped it would be
+      # carrying a client of its own API around for no reason.
+      - name: The core image ships no development dependency
+        run: |
+          if docker run --rm --entrypoint python store-everything-core:ci -c \
+              'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("se_extractor") else 1)'; then
+            echo '::error::the core image contains the extractor SDK, which is dev-only'
+            exit 1
+          fi
+      # And it still starts: `--frozen` installs the lockfile's pins without re-resolving them
+      # (see server/Dockerfile), so the thing worth checking is that what it installed runs.
+      - name: The core image imports its own application
+        run: docker run --rm --entrypoint python store-everything-core:ci -c 'import store_everything'
       # Publishing happens from tags only (11-engineering-standards.md § versioning).
       - name: Vulnerability scan
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
-            --ignore-unfixed --no-progress store-everything-core:ci
+          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
+              --ignore-unfixed --no-progress "$image"
+          done
       - name: Software bill of materials
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \

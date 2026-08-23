@@ -39,7 +39,15 @@ dev = [
     "hypothesis>=6.140",
     "ruff>=0.14",
     "pyright>=1.1.400",
+    # The extractor SDK, reference extractor and conformance kit. A *development* dependency
+    # only: the core neither imports nor ships them, and an extractor talks to it over HTTP
+    # like anything else. It is here so one test can run the real three-sided arrangement —
+    # API, worker, extractor — instead of a mock of the plugin boundary.
+    "store-everything-extractors",
 ]
+
+[tool.uv.sources]
+store-everything-extractors = { path = "../extractors", editable = true }
 
 # ---------------------------------------------------------------- lint / format
 

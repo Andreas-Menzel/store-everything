@@ -20,12 +20,14 @@
     "Python Software Foundation License",
     "PSF-2.0",
     "MPL-2.0",
+    "Mozilla Public License 2.0 (MPL 2.0)",
     "LGPL-3.0-only"
   ],
   "rationale": {
     "MIT-0": "cffi (via argon2-cffi, the password hasher). MIT with the attribution clause removed — strictly more permissive than MIT, which is already allowed, so nothing about distribution changes.",
     "LGPL-3.0-only": "psycopg and its helpers. The LGPL explicitly permits use by, and distribution with, a (A)GPL-3.0 work; we link it unmodified and ship its source availability notice.",
     "MPL-2.0": "lightningcss (via Tailwind). File-level copyleft: MPL-2.0 §3.3 permits distribution as part of a larger AGPL-3.0 work provided the MPL-covered files stay under the MPL.",
+    "Mozilla Public License 2.0 (MPL 2.0)": "certifi (via httpx, in the extractor SDK). The same licence as the entry above, spelled as a classifier rather than as an SPDX id — the substance, and the reasoning, are identical.",
     "Apache Software License; MIT License": "uvloop declares both; either alone is compatible."
   },
   "packageExceptions": {

@@ -1,0 +1,77 @@
+[project]
+name = "store-everything-extractors"
+version = "0.2.0"
+description = "Store Everything — extractor SDK, reference extractor and conformance kit"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "AGPL-3.0-only"
+# One runtime dependency, deliberately: an extractor image should be mostly its own analysis
+# tooling, and every dependency here is one a third-party author inherits from us.
+dependencies = ["httpx>=0.28"]
+
+[project.scripts]
+se-reference-extractor = "se_extractor.reference:main"
+se-conformance = "se_extractor.conformance:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/se_extractor"]
+
+[dependency-groups]
+dev = ["pytest>=8.4", "ruff>=0.14", "pyright>=1.1.400"]
+
+# ---------------------------------------------------------------- lint / format
+# The same gates as the core, because this is the code third-party authors read as the
+# example: it has to look like the standard it is held to (11 § engineering standards).
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+# Markdown stays hand-formatted, as everywhere else in this repository (`.prettierignore` says
+# the same, for the same reason): ruff would reflow the Python examples in README.md and bury
+# real changes in whitespace. The examples are written to be read, not to be formatted.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # import sorting
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtin shadowing
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "S",         # bandit
+    "RUF",       # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+# ---------------------------------------------------------------- type checking
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+# The same relaxations as the core, for the same reason: a JSON document from the wire is `Any`
+# however carefully it is read afterwards, and this package's whole job is reading them
+# tolerantly. Every other strict rule stays on.
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+
+# ---------------------------------------------------------------- tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"

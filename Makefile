@@ -1,5 +1,9 @@
 SERVER := server
 UV := uv --directory $(SERVER)
+# The extractor SDK, reference extractor and conformance kit: its own package, because an
+# extractor is a separate program that speaks HTTP to the core rather than importing it.
+EXTRACTORS := extractors
+UVX := uv --directory $(EXTRACTORS)
 PNPM := pnpm
 
 .DEFAULT_GOAL := help
@@ -16,28 +20,36 @@ help: ## Show this help
 
 install: ## Install all dependencies from the lockfiles
 	$(UV) sync --all-groups
+	$(UVX) sync --all-groups
 	$(PNPM) install
 
 lint: ## Check lint rules and formatting
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
+	$(UVX) run ruff check .
+	$(UVX) run ruff format --check .
 	$(PNPM) run lint
 	$(PNPM) run format:check
 
 format: ## Apply safe lint fixes and formatting
 	$(UV) run ruff check --fix .
 	$(UV) run ruff format .
+	$(UVX) run ruff check --fix .
+	$(UVX) run ruff format .
 	$(PNPM) run format
 
 typecheck: ## Static type check
 	$(UV) run pyright
+	$(UVX) run pyright
 	$(PNPM) run typecheck
 
 test: ## Run the unit and integration suites (needs Docker for the database)
+	$(UVX) run pytest
 	$(UV) run pytest --cov --fr-report=../traceability-report.json
 	$(PNPM) run test
 
 test-unit: ## Run only the tests that need no container
+	$(UVX) run pytest
 	$(UV) run pytest -m "not integration"
 	$(PNPM) run test
 
@@ -72,8 +84,13 @@ check-staged: ## Run the pipeline against the staged tree, in a clean cold check
 	@rm -rf $(STAGED_TREE)
 	@mkdir -p $(STAGED_TREE)
 	@git checkout-index -a -f --prefix=$(STAGED_TREE)/
-	@echo "--> cold install from the staged lockfile"
+	@echo "--> cold install from the staged lockfiles"
+	@cd $(STAGED_TREE) && uv sync --directory extractors --all-groups --locked
 	@cd $(STAGED_TREE) && uv sync --directory server --all-groups --locked
+	@cd $(STAGED_TREE) && uv run --directory extractors ruff check .
+	@cd $(STAGED_TREE) && uv run --directory extractors ruff format --check .
+	@cd $(STAGED_TREE) && uv run --directory extractors pyright
+	@cd $(STAGED_TREE) && uv run --directory extractors pytest -q
 	@cd $(STAGED_TREE) && uv run --directory server ruff check .
 	@cd $(STAGED_TREE) && uv run --directory server ruff format --check .
 	@cd $(STAGED_TREE) && uv run --directory server pyright
