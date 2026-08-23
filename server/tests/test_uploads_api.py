@@ -108,7 +108,7 @@ async def test_a_one_request_upload_stores_the_file(
     assert response.status_code == 201, response.text
     assert response.headers[resumable.COMPLETE_HEADER] == "?1"
     body = response.json()
-    assert response.headers["Location"] == f"/files/{body['id']}"
+    assert response.headers["Location"] == f"{API_V1_PREFIX}/files/{body['id']}"
     assert body["path"] == "notes.txt"
     assert body["size"] == len(CONTENT)
     assert body["content_hash"] == DIGEST
@@ -149,7 +149,7 @@ async def test_an_upload_is_created_appended_to_and_finished(
         assert created.headers[resumable.COMPLETE_HEADER] == "?0"
         assert created.headers[resumable.OFFSET_HEADER] == "0"
         upload_id = created.json()["id"]
-        assert created.headers["Location"] == upload_url(upload_id).removeprefix(API_V1_PREFIX)
+        assert created.headers["Location"] == upload_url(upload_id)
 
         # While the upload is in flight its bytes live in the workspace's own staging area,
         # on the destination's filesystem so that finalizing is a rename (ADR-0018).
@@ -172,6 +172,38 @@ async def test_an_upload_is_created_appended_to_and_finished(
     assert (root / "video.mp4").read_bytes() == CONTENT
     # Nothing is left staged once the rename has happened.
     assert list(workspacefs.staging_directory(root).iterdir()) == []
+
+
+@pytest.mark.fr("F-001/FR-14")
+async def test_every_location_the_protocol_announces_can_be_followed(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """`Location` is the whole address for a client that did not build the URL itself.
+
+    Our own web client rebuilds `/uploads/{id}` from the id in the body, which is exactly why
+    a `Location` missing the `/api/v1` prefix went unnoticed: it named a path the API does not
+    serve, so curl, tus tooling and the iOS background uploader ADR-0017 exists for all
+    followed it onto the SPA fallback. So this asserts nothing about the string's shape — it
+    sends the next request to whatever the header says and requires the resource to be there.
+    """
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, _):
+        created = await create_upload(
+            client, workspace, "clip.mp4", complete=False, length=len(CONTENT)
+        )
+        assert created.status_code == 201, created.text
+
+        # The protocol's own next step, sent where the creation said to send it.
+        probe = await client.head(created.headers["Location"])
+        assert probe.status_code == 204, probe.text
+        assert probe.headers[resumable.OFFSET_HEADER] == "0"
+
+        finished = await append(client, created.json()["id"], 0, CONTENT, complete=True)
+        assert finished.status_code == 200, finished.text
+
+        stored = await client.get(finished.headers["Location"])
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["id"] == finished.json()["id"]
+        assert stored.json()["path"] == "clip.mp4"
 
 
 @pytest.mark.fr("F-001/FR-2", "F-001/FR-14")

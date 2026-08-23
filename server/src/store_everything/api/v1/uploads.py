@@ -474,6 +474,26 @@ def _protocol_headers(
     return headers
 
 
+def _upload_location(request: Request, session_id: UUID) -> str:
+    """Where the upload resource lives, asked of the routing table rather than assembled here.
+
+    `Location` is the *only* thing a client that did not build its own URLs has to go on —
+    curl, tus tooling, and the iOS background uploader this protocol exists for (ADR-0017)
+    all resolve it and send the next request there. Written by hand it read `/uploads/{id}`,
+    which omits the router's own `/api/v1` prefix and therefore resolves onto the SPA
+    fallback: HTML, or a `405`, where the upload should have been. Our own web client only
+    survived because it rebuilds the URL from the id in the body.
+
+    Asking the app means the header cannot drift from where the route actually is.
+    """
+    return str(request.app.url_path_for("upload_offset", upload_id=str(session_id)))
+
+
+def _file_location(request: Request, file_id: UUID) -> str:
+    """Where the file this upload produced lives — same reason, same source of truth."""
+    return str(request.app.url_path_for("read_file", file_id=str(file_id)))
+
+
 async def _session_for(
     connection: DatabaseConnection, upload_id: UUID, credential: CurrentCredential, *, lock: bool
 ) -> uploads.Session:
@@ -622,7 +642,7 @@ async def create_upload(
             UploadState.of(session).model_dump(mode="json"),
             status_code=201,
             headers={
-                "Location": f"{UPLOADS_PATH}/{session.id}",
+                "Location": _upload_location(request, session.id),
                 **_protocol_headers(session, limits, complete=False),
             },
         )
@@ -643,7 +663,7 @@ async def create_upload(
         summary.model_dump(mode="json"),
         status_code=201,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
@@ -719,7 +739,7 @@ async def append_to_upload(
     if session.is_complete:
         # A retry whose predecessor's response was lost: replay the recorded outcome rather
         # than re-executing it (08 § idempotency).
-        return await _replay(connection, session, limits)
+        return await _replay(request, connection, session, limits)
 
     media_type = mediatypes.normalize(request.headers.get("content-type"))
     if media_type != resumable.MEDIA_TYPE:
@@ -778,7 +798,7 @@ async def append_to_upload(
         summary.model_dump(mode="json"),
         status_code=200,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
@@ -821,7 +841,10 @@ async def cancel_upload(
 
 
 async def _replay(
-    connection: DatabaseConnection, session: uploads.Session, limits: resumable.Limits
+    request: Request,
+    connection: DatabaseConnection,
+    session: uploads.Session,
+    limits: resumable.Limits,
 ) -> Response:
     """The outcome a completed session recorded, for a client whose response was lost."""
     if session.file_id is None:  # pragma: no cover - completion always records its file
@@ -837,7 +860,7 @@ async def _replay(
         summary.model_dump(mode="json"),
         status_code=200,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
