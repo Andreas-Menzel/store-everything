@@ -46,7 +46,7 @@ from store_everything import (
     uploads,
     workspaces,
 )
-from store_everything.api.v1.files import FileSummary
+from store_everything.api.v1.files import FileSummary, summarize
 from store_everything.blobs import BlobStore
 from store_everything.config import Settings
 from store_everything.db import DatabaseConnection
@@ -324,7 +324,7 @@ async def _finalize(
     await aggregates.schedule(connection, workspace.id)
 
     if replacing is not None:
-        version = await files.add_version(
+        await files.add_version(
             connection,
             found=replacing,
             content_hash=assembled.content_hash,
@@ -338,7 +338,7 @@ async def _finalize(
             predecessor_restorable=snapshot is not None,
         )
         await uploads.complete(connection, session=session, file_id=replacing.id)
-        return FileSummary.of(replacing, version, await files.path_of(connection, replacing))
+        return await summarize(connection, replacing)
 
     revived = await _reappeared(
         connection, folder_id=folder.id, name=name, content_hash=assembled.content_hash
@@ -359,9 +359,9 @@ async def _finalize(
         if current is None or live is None:  # pragma: no cover - both were just written
             raise RuntimeError(f"file {revived.id} vanished while being restored")
         await uploads.complete(connection, session=session, file_id=live.id)
-        return FileSummary.of(live, current, await files.path_of(connection, live))
+        return await summarize(connection, live)
 
-    found, version = await files.register(
+    found, _version = await files.register(
         connection,
         workspace_id=workspace.id,
         folder_id=folder.id,
@@ -374,7 +374,7 @@ async def _finalize(
         actor=actor,
     )
     await uploads.complete(connection, session=session, file_id=found.id)
-    return FileSummary.of(found, version, await files.path_of(connection, found))
+    return await summarize(connection, found)
 
 
 def _occupied_on_disk(destination: Path) -> bool:
@@ -855,7 +855,7 @@ async def _replay(
     version = await files.current_version(connection, found.id)
     if version is None:  # pragma: no cover - a file is registered with its version
         raise _not_found()
-    summary = FileSummary.of(found, version, await files.path_of(connection, found))
+    summary = await summarize(connection, found)
     return JSONResponse(
         summary.model_dump(mode="json"),
         status_code=200,

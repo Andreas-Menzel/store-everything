@@ -17,16 +17,16 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from store_everything.api import operation_id
-from store_everything.api.extractor_api import registration
+from store_everything.api.extractor_api import EXTRACTOR_API_PREFIX, jobs, registration
 from store_everything.api.extractor_api.security import require_extractor
 from store_everything.problems import install_exception_handlers
 from store_everything.security import enforce_request_ceiling
 from store_everything.tables import EXTRACTOR_API_VERSION
 
-EXTRACTOR_API_PREFIX = f"/extractor-api/{EXTRACTOR_API_VERSION}"
+__all__ = ["EXTRACTOR_API_PREFIX", "build_extractor_api_router", "extractor_api_document"]
 
 _TITLE = "Store Everything — extractor contract"
 _SUMMARY = "The fixed API between the core and an extractor container."
@@ -75,6 +75,70 @@ def build_extractor_api_router(*, api_docs_enabled: bool) -> APIRouter:
         responses={
             403: {"description": "The manifest declares a different extractor id"},
             409: {"description": "Unsupported contract version, or a kind another produces"},
+        },
+    )
+
+    # The job's life, in the order an extractor lives it (ADR-0020).
+    router.add_api_route(
+        "/jobs/claim",
+        jobs.claim_job,
+        methods=["POST"],
+        summary="Claim the next job",
+        response_model=None,
+        responses={
+            200: {
+                "description": "A claimed job, with its fencing token and inputs",
+                "model": jobs.ClaimedJobResponse,
+            },
+            204: {"description": "Nothing is due for this extractor"},
+            409: {"description": "An administrator has disabled this extractor"},
+        },
+    )
+    router.add_api_route(
+        "/jobs/{job_id}/heartbeat",
+        jobs.heartbeat_job,
+        methods=["POST"],
+        summary="Extend the lease, and learn whether to stop",
+        response_model=jobs.HeartbeatResponse,
+        responses={
+            404: {"description": "No such job for this extractor"},
+            409: {"description": "The lease is no longer this caller's"},
+        },
+    )
+    router.add_api_route(
+        "/jobs/{job_id}/inputs/{index}",
+        jobs.read_input,
+        methods=["GET"],
+        summary="Read one of a job's inputs",
+        response_class=FileResponse,
+        response_model=None,
+        responses={
+            200: {"description": "The bytes to analyse", "content": {"*/*": {}}},
+            206: {"description": "The requested byte range"},
+            404: {"description": "No such job or input for this extractor"},
+            410: {"description": "This version's content is no longer stored"},
+        },
+    )
+    router.add_api_route(
+        "/jobs/{job_id}/result",
+        jobs.submit_result,
+        methods=["POST"],
+        summary="Finish a job",
+        response_model=jobs.JobOutcome,
+        responses={
+            404: {"description": "No such job for this extractor"},
+            409: {"description": "The lease is no longer this caller's"},
+        },
+    )
+    router.add_api_route(
+        "/jobs/{job_id}/error",
+        jobs.report_error,
+        methods=["POST"],
+        summary="Report a failed attempt",
+        response_model=jobs.JobOutcome,
+        responses={
+            404: {"description": "No such job for this extractor"},
+            409: {"description": "The lease is no longer this caller's"},
         },
     )
     return router

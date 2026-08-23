@@ -27,6 +27,26 @@ const file = useQuery({
 });
 
 const href = computed(() => `/api/v1/files/${id.value}/content`);
+
+/**
+ * What the analysis status means to somebody looking at their own file.
+ *
+ * The API's five words are about jobs; these are about the person's question, which is "can I
+ * find this by its content yet?" ([F-001/FR-8](../../../features/F-001-upload-and-import.md)).
+ * `none` is deliberately not an error: nothing installed analyses this kind of file.
+ */
+const EXTRACTION_LABELS: Record<string, string> = {
+  pending: 'Analysing…',
+  indexed: 'Analysed',
+  partial: 'Partly analysed',
+  failed: 'Analysis failed',
+  none: 'Not analysed',
+};
+
+const extraction = computed(() => {
+  const status = file.data.value?.extraction_status;
+  return status === undefined ? undefined : (EXTRACTION_LABELS[status] ?? status);
+});
 </script>
 
 <template>
@@ -53,6 +73,10 @@ const href = computed(() => `/api/v1/files/${id.value}/content`);
         <div>
           <dt class="text-(--color-ink-muted)">State</dt>
           <dd>{{ file.data.value.state }}</dd>
+        </div>
+        <div>
+          <dt class="text-(--color-ink-muted)">Content analysis</dt>
+          <dd data-testid="extraction-status">{{ extraction }}</dd>
         </div>
         <div class="col-span-2 sm:col-span-3">
           <dt class="text-(--color-ink-muted)">Content hash</dt>

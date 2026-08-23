@@ -26,7 +26,15 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import Field
 
-from store_everything import aggregates, files, filestore, folders, names, workspaces
+from store_everything import (
+    aggregates,
+    extraction,
+    files,
+    filestore,
+    folders,
+    names,
+    workspaces,
+)
 from store_everything.api.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -114,6 +122,12 @@ class ChildFile(BaseSchema):
     content_hash: str
     media_type: str
     media_class: Literal["image", "video", "audio", "document", "archive", "other"]
+    version: UUID
+    """The current version's id — what a client builds a pinned thumbnail URL from (09)."""
+
+    extraction_status: extraction.Status
+    """`pending` while content analysis is still running for this version (F-001/FR-8)."""
+
     modified_at: datetime | None
     created_at: datetime
 
@@ -372,7 +386,13 @@ async def list_children(
         limit=remaining + 1,
         after=None if identifier is None else (key, identifier),
     )
-    items.extend(_as_child_file(known, here) for known in page_of_files[:remaining])
+    shown = page_of_files[:remaining]
+    # One query for the whole page's extraction status, not one per row: a folder listing is the
+    # hottest read in the app, and `pending` is what makes a just-uploaded file honest (F-001/FR-8).
+    statuses = await extraction.statuses_of(connection, [known.version.id for known in shown])
+    items.extend(
+        _as_child_file(known, here, statuses.get(known.version.id, "none")) for known in shown
+    )
     if len(page_of_files) <= remaining:
         return Page(data=items, next_cursor=None)
 
@@ -424,7 +444,7 @@ def _as_child_folder(found: folders.Folder, here: str) -> ChildFolder:
     )
 
 
-def _as_child_file(known: files.Known, here: str) -> ChildFile:
+def _as_child_file(known: files.Known, here: str, status: extraction.Status) -> ChildFile:
     return ChildFile(
         id=known.file.id,
         name=known.file.name,
@@ -433,6 +453,8 @@ def _as_child_file(known: files.Known, here: str) -> ChildFile:
         content_hash=known.version.content_hash,
         media_type=known.version.media_type,
         media_class=known.version.media_class,  # pyright: ignore[reportArgumentType]
+        version=known.version.id,
+        extraction_status=status,
         modified_at=known.version.modified_at,
         created_at=known.file.created_at,
     )

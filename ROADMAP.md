@@ -159,6 +159,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Sandbox negative test: a default extractor container cannot reach the outside network.
 - Images and PDFs have thumbnails at the fixed tier set; heavy renditions generate on demand and cache per policy.
 - Tag DAG with query-time expansion works; `manual`/`confirmed` survive a re-run, `rejected` suppresses re-adding ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) state machine tests).
+- **[F-001](features/F-001-upload-and-import.md) completes**: [FR-3](features/F-001-upload-and-import.md)'s queued-extraction reference and [FR-8](features/F-001-upload-and-import.md)'s `pending` status are verifiable once jobs exist, so the feature computes `Implemented` here rather than in phase 1.
 - F-003 green **except** [F-003/FR-7](features/F-003-tagging.md) and F-004 green **except** [F-004/FR-5](features/F-004-document-text-extraction.md) — each names a phase-3 surface (search facets; the `text-embed` extractor) and stays unverified rather than claimed early (see the split above). [F-028](features/F-028-thumbnails-and-previews.md) green. [F-015/FR-9](features/F-015-folders.md) joins (folder tags), leaving only F-015's search part open. The phase-2 domain invariants carry markers — [02 § invariants](specs/02-domain-model.md#invariants) #3, #4, #5. Matrix green for everything claimed; phase tagged.
 
 ---

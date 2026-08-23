@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse
 
 from store_everything import (
     aggregates,
+    extraction,
     files,
     filestore,
     folders,
@@ -86,6 +87,15 @@ class FileSummary(BaseSchema):
     digest_algorithm: Literal["sha256"] = "sha256"
     media_type: str
     media_class: Literal["image", "video", "audio", "document", "archive", "other"]
+    version: UUID
+    """The current version's id — what a pinned thumbnail URL and a segment query are about."""
+
+    extraction_status: extraction.Status
+    """Where content analysis stands for the current version
+    ([F-001/FR-8](../../../../features/F-001-upload-and-import.md)): `pending` from the moment
+    the file lands until every matching extractor has finished; `none` when nothing analyses
+    this type. Details per extractor: `GET /files/{id}/extraction`."""
+
     state: Literal["live", "trashed"]
     created_at: datetime
     modified_at: datetime | None
@@ -100,6 +110,7 @@ class FileSummary(BaseSchema):
         found: files.File,
         version: files.Version,
         path: str,
+        extraction_status: extraction.Status,
         trash: TrashInfo | None = None,
     ) -> FileSummary:
         return cls(
@@ -111,11 +122,37 @@ class FileSummary(BaseSchema):
             content_hash=version.content_hash,
             media_type=version.media_type,
             media_class=version.media_class,  # pyright: ignore[reportArgumentType]
+            version=version.id,
+            extraction_status=extraction_status,
             state=found.state,  # pyright: ignore[reportArgumentType]
             created_at=found.created_at,
             modified_at=version.modified_at,
             trash=trash,
         )
+
+
+class ExtractionRunInfo(BaseSchema):
+    """One extractor's run over this version, with the provenance it was stamped with."""
+
+    extractor: str
+    state: str
+    generation: int
+    extractor_version: str | None
+    """What actually ran. Absent until the job is claimed — nothing has run yet."""
+
+    model_version: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    error: str | None
+    """The last failure's message, kept while a retry is pending and after a dead-letter."""
+
+
+class ExtractionStatus(BaseSchema):
+    """Per-file extraction status (04 § status & observability)."""
+
+    version: UUID
+    status: extraction.Status
+    runs: list[ExtractionRunInfo]
 
 
 def not_found() -> ProblemException:
@@ -148,6 +185,7 @@ async def summarize(connection: DatabaseConnection, found: files.File) -> FileSu
         found,
         version,
         await files.path_of(connection, found),
+        extraction.status_of(await extraction.runs_for(connection, version.id)),
         await _trash_info(connection, found),
     )
 
@@ -184,6 +222,47 @@ async def read_file(
 ) -> FileSummary:
     found, _ = await readable(connection, file_id=file_id, credential=credential)
     return await summarize(connection, found)
+
+
+@router.get(
+    "/{file_id}/extraction",
+    summary="Extraction status of one file",
+    response_model=ExtractionStatus,
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_extraction(
+    file_id: UUID, credential: CurrentCredential, connection: DatabaseConnection
+) -> ExtractionStatus:
+    """Which extractors ran over this file's current version, and how each one ended.
+
+    The reference an upload response points at (F-001/FR-3): extraction is asynchronous, so what
+    a client gets back is not a result but somewhere to ask.
+    Per version rather than per file, because that is what a run is about — an older version
+    keeps its own runs and its own results (F-007).
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await files.current_version(connection, found.id)
+    if version is None:  # pragma: no cover - see `summarize`
+        raise RuntimeError(f"file {found.id} has no current version")
+
+    runs = await extraction.runs_for(connection, version.id)
+    return ExtractionStatus(
+        version=version.id,
+        status=extraction.status_of(runs),
+        runs=[
+            ExtractionRunInfo(
+                extractor=run.extractor_id,
+                state=run.state,
+                generation=run.generation,
+                extractor_version=run.extractor_version,
+                model_version=run.model_version,
+                started_at=run.started_at,
+                finished_at=run.finished_at,
+                error=run.error,
+            )
+            for run in runs
+        ],
+    )
 
 
 @router.get(

@@ -43,6 +43,11 @@ export type ChildFile = {
      */
     media_class: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
     /**
+     * Version
+     */
+    version: string;
+    extraction_status: Status;
+    /**
      * Modified At
      */
     modified_at: string | null;
@@ -99,6 +104,63 @@ export type CurrentIdentity = {
      * Scope
      */
     scope: 'read' | 'full';
+};
+
+/**
+ * ExtractionRunInfo
+ *
+ * One extractor's run over this version, with the provenance it was stamped with.
+ */
+export type ExtractionRunInfo = {
+    /**
+     * Extractor
+     */
+    extractor: string;
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Generation
+     */
+    generation: number;
+    /**
+     * Extractor Version
+     */
+    extractor_version: string | null;
+    /**
+     * Model Version
+     */
+    model_version: string | null;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * Finished At
+     */
+    finished_at: string | null;
+    /**
+     * Error
+     */
+    error: string | null;
+};
+
+/**
+ * ExtractionStatus
+ *
+ * Per-file extraction status (04 § status & observability).
+ */
+export type ExtractionStatus = {
+    /**
+     * Version
+     */
+    version: string;
+    status: Status;
+    /**
+     * Runs
+     */
+    runs: Array<ExtractionRunInfo>;
 };
 
 /**
@@ -293,6 +355,11 @@ export type FileSummary = {
      * Media Class
      */
     media_class: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    /**
+     * Version
+     */
+    version: string;
+    extraction_status: Status;
     /**
      * State
      */
@@ -714,6 +781,8 @@ export type SessionSummary = {
      */
     current: boolean;
 };
+
+export type Status = 'none' | 'pending' | 'indexed' | 'partial' | 'failed';
 
 /**
  * TokenCreateRequest
@@ -2186,6 +2255,40 @@ export type ReadFileResponses = {
 };
 
 export type ReadFileResponse = ReadFileResponses[keyof ReadFileResponses];
+
+export type ReadFileExtractionData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/extraction';
+};
+
+export type ReadFileExtractionErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileExtractionError = ReadFileExtractionErrors[keyof ReadFileExtractionErrors];
+
+export type ReadFileExtractionResponses = {
+    /**
+     * Successful Response
+     */
+    200: ExtractionStatus;
+};
+
+export type ReadFileExtractionResponse = ReadFileExtractionResponses[keyof ReadFileExtractionResponses];
 
 export type ReadFileContentData = {
     body?: never;

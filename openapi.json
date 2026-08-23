@@ -1705,6 +1705,53 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/extraction": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Extraction status of one file",
+        "description": "Which extractors ran over this file's current version, and how each one ended.\n\nThe reference an upload response points at (F-001/FR-3): extraction is asynchronous, so what\na client gets back is not a result but somewhere to ask.\nPer version rather than per file, because that is what a run is about — an older version\nkeeps its own runs and its own results (F-007).",
+        "operationId": "read_file_extraction",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/content": {
       "get": {
         "tags": [
@@ -1870,6 +1917,14 @@
             ],
             "title": "Media Class"
           },
+          "version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version"
+          },
+          "extraction_status": {
+            "$ref": "#/components/schemas/Status"
+          },
           "modified_at": {
             "anyOf": [
               {
@@ -1898,6 +1953,8 @@
           "content_hash",
           "media_type",
           "media_class",
+          "version",
+          "extraction_status",
           "modified_at",
           "created_at"
         ],
@@ -1985,6 +2042,121 @@
         ],
         "title": "CurrentIdentity",
         "description": "Who the caller is, and how they proved it."
+      },
+      "ExtractionRunInfo": {
+        "properties": {
+          "extractor": {
+            "type": "string",
+            "title": "Extractor"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "extractor_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor Version"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "extractor",
+          "state",
+          "generation",
+          "extractor_version",
+          "model_version",
+          "started_at",
+          "finished_at",
+          "error"
+        ],
+        "title": "ExtractionRunInfo",
+        "description": "One extractor's run over this version, with the provenance it was stamped with."
+      },
+      "ExtractionStatus": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractionRunInfo"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "status",
+          "runs"
+        ],
+        "title": "ExtractionStatus",
+        "description": "Per-file extraction status (04 § status & observability)."
       },
       "ExtractorProvisionRequest": {
         "properties": {
@@ -2353,6 +2525,14 @@
             ],
             "title": "Media Class"
           },
+          "version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version"
+          },
+          "extraction_status": {
+            "$ref": "#/components/schemas/Status"
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -2400,6 +2580,8 @@
           "content_hash",
           "media_type",
           "media_class",
+          "version",
+          "extraction_status",
           "state",
           "created_at",
           "modified_at"
@@ -3091,6 +3273,16 @@
           "current"
         ],
         "title": "SessionSummary"
+      },
+      "Status": {
+        "type": "string",
+        "enum": [
+          "none",
+          "pending",
+          "indexed",
+          "partial",
+          "failed"
+        ]
       },
       "TokenCreateRequest": {
         "properties": {

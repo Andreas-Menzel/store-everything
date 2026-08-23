@@ -1090,3 +1090,65 @@ extractor_claim = Table(
 """Which extractor owns each exclusive output name — rendition kinds, derived-asset kinds and
 embedding spaces (ADR-0020). Segments, metadata and tags are deliberately absent: those are
 multi-producer, and every row of them carries the run that produced it instead."""
+
+
+#: One run of one extractor over one file version. The states are the *job's* states
+#: ([05 § job lifecycle](../../../specs/05-extractor-contract.md#job-lifecycle)), which is why
+#: this is the operation vocabulary rather than a second one beside it.
+EXTRACTION_RUN_STATES = OPERATION_STATES
+
+#: The first generation. Reprocessing increments it per run (ADR-0004); nothing does yet.
+FIRST_GENERATION = 1
+
+
+extraction_run = Table(
+    "extraction_run",
+    metadata,
+    # The job's id *is* the run's id (ADR-0020): one row of durable intent in `operation`, one
+    # row of durable provenance here, and an extractor that knows one knows the other.
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    # RESTRICT, like the event log's actor: provenance outlives convenience, so retiring an
+    # extractor is a decision about derived data rather than a cascade nobody asked for.
+    Column(
+        "extractor_id",
+        Text,
+        ForeignKey("extractor.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column(
+        "file_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("file_version.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("generation", Integer, nullable=False, server_default=text(str(FIRST_GENERATION))),
+    Column("state", Text, nullable=False, server_default=text("'queued'")),
+    # What actually ran, stamped when the job is claimed rather than when it is created: an
+    # extractor upgraded in between is a different program, and provenance has to name the one
+    # that produced the rows (02 § invariants #3).
+    Column("extractor_version", Text, nullable=True),
+    Column("model_version", Text, nullable=True),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    Column("error", Text, nullable=True),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # One run per (version, extractor, generation) — the structural half of "routing is
+    # idempotent", so a re-detected file cannot grow a second run of the same work.
+    UniqueConstraint("file_version_id", "extractor_id", "generation"),
+    CheckConstraint(one_of("state", EXTRACTION_RUN_STATES), name="state_known"),
+    CheckConstraint("generation >= 1", name="generation_positive"),
+    # The per-file status query (04 § status & observability): every run of one version.
+    Index("ix_extraction_run_file_version_id", "file_version_id"),
+    # And its per-extractor counterpart — queue depth and failure rate for one extractor.
+    Index("ix_extraction_run_extractor_id_state", "extractor_id", "state"),
+)
+"""**The provenance anchor.** Every derived row references the run that produced it (02 §
+invariants #3), and this table is deliberately not the queue: terminal operation rows are
+pruned once history outgrows them (12 § queue hygiene, Q33), while "which extractor version
+produced this" has to stay answerable forever.
+
+It is also why extraction needs no event per run. A successful run *is* this row — queryable,
+stamped, and joined to its outputs — so duplicating it into the log would add millions of rows
+saying what a table already says. Failures still reach the log, through the operation layer's
+own `operation.dead_lettered`."""
