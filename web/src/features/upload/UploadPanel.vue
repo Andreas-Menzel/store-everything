@@ -7,7 +7,7 @@
  * its place in the list with the server's reason attached, because the useful thing after
  * uploading forty files is knowing which one the storage refused and why.
  */
-import { ref } from 'vue';
+import { reactive, ref } from 'vue';
 
 import { upload, UploadFailed, type Progress } from './resumable';
 import { AppAlert, AppButton, AppCard, type Failure } from '@/shared';
@@ -34,12 +34,16 @@ async function send(files: FileList): Promise<void> {
   isSending.value = true;
   try {
     for (const file of Array.from(files)) {
-      const item: Item = {
+      // `reactive` before the push, not after: putting a plain object into the list and then
+      // mutating the variable that still points at it writes straight past the proxy the
+      // template rendered from, so nothing re-renders and every upload reads 0% until some
+      // unrelated change forces a repaint.
+      const item = reactive<Item>({
         name: file.name,
         progress: { sent: 0, total: file.size },
         state: 'sending',
-      };
-      items.value = [...items.value, item];
+      });
+      items.value.push(item);
       try {
         await upload(props.workspaceId, targetPath(file.name), file, {
           onProgress: (progress) => {
