@@ -117,7 +117,10 @@ services:
     stop_grace_period: 30s
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-    networks: [internal, edge]
+    # The only service on all three: the proxy's network for people, the internal one for the
+    # database, and the extractors' — which is the *only* thing an extractor can reach
+    # (ADR-0021). An extractor on that network has no route to postgres, to Traefik, or out.
+    networks: [internal, edge, extractors]
     labels:
       traefik.enable: 'true'
       traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
@@ -202,7 +205,9 @@ services:
     restart: 'no'
     networks: [internal]
 
-# The extractor containers join this file in phase 2, when there is something to run them on.
+# Extractors are ordinary services on the `extractors` network — see
+# `compose.extractor-example.yaml` for a working one, and docs/install.md for how to install it.
+# There are no official extractor images yet; the analysis capabilities arrive over phase 2.
 
 volumes:
   # Deliberately not switchable to a host path: PostgreSQL refuses a data directory whose
@@ -225,3 +230,15 @@ networks:
   edge:
     external: true
     name: ${TRAEFIK_NETWORK:-traefik}
+  # Where extractors live, and the reason the privacy promise is a property of the deployment
+  # rather than a hope about container code (ADR-0021). `internal: true` means no gateway: a
+  # container here can reach the other members of this network and *nothing else* — not the
+  # internet, not PostgreSQL (which is not a member), not the proxy.
+  #
+  # Requires Docker Engine >= 25.0.5. Before that, the embedded DNS forwarded lookups out of
+  # internal networks (CVE-2024-29018), which is a data-exfiltration channel however isolated
+  # the network looked. 28.x is recommended; it also drops unsolicited LAN traffic to
+  # unpublished container ports.
+  extractors:
+    driver: bridge
+    internal: true

@@ -11,7 +11,7 @@ PNPM := pnpm
 # Every target is a task, never a file — `corpus` in particular collides with the
 # directory of the same name, and make would otherwise consider it already built.
 .PHONY: help install lint format typecheck test test-unit e2e corpus spec-lint matrix \
-	check check-staged licenses notice audit verify-gates openapi build storybook migrate run clean \
+	check check-staged licenses notice audit verify-gates sandbox openapi build storybook migrate run clean \
 	release release-preview up down compose-migrate
 
 help: ## Show this help
@@ -100,6 +100,9 @@ check-staged: ## Run the pipeline against the staged tree, in a clean cold check
 	@cd $(STAGED_TREE) && uv run --directory server python -m tools.check_licenses
 	@rm -rf $(STAGED_TREE)
 	@echo "--> the staged tree passes the pipeline's server, contract and docs checks"
+
+sandbox: ## Prove the extractor sandbox from inside a running container (needs Docker)
+	./tools/sandbox-check.sh
 
 licenses: ## Check dependency licences against the policy
 	$(UV) run python -m tools.check_licenses

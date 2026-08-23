@@ -84,6 +84,25 @@ uv run --directory extractors se-reference-extractor
 the declared hash), `succeed`, `fail`, `fail-permanently`, `stall` (never finish, so the lease
 lapses and the re-run path can be exercised). `SE_REFERENCE_DELAY_SECONDS` slows it down.
 
+## Shipping one
+
+An extractor is a container on the `extractors` network, and that network has no gateway — it can
+reach the API and nothing else. `compose.extractor-example.yaml` at the repository root is a
+working service block with the whole hardening baseline: a read-only root filesystem, a `tmpfs`
+for scratch, no capabilities, an unprivileged user, bounded memory, CPU and processes, and no
+published port (nothing listens — dispatch is poll-based). Copy it and change the image, the
+token variable and the resource ceilings.
+
+Two properties your image has to hold up its end of:
+
+- **do not expect a mount.** Inputs arrive over HTTP, one job at a time. There is no bind mount
+  of the library, and asking for one is asking for the sandbox to be pointless.
+- **run unprivileged, and install nothing at runtime.** The `Dockerfile` here builds its
+  virtualenv in a builder stage and removes pip from the runtime; CI asserts both for every
+  official image.
+
+`make sandbox` proves the topology from inside a real container, positive control included.
+
 ## Running the conformance kit
 
 The kit needs an administrator on a running instance. Point it at one:

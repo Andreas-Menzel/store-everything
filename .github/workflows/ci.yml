@@ -242,6 +242,21 @@ jobs:
           REQUIRE_ALL_GATES: '1'
         run: ./tools/verify-gates.sh
 
+  sandbox:
+    name: Extractor sandbox
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The privacy promise — an extractor reaches the API and nothing else — is a property of
+      # the compose topology, not of any code in this repository, so the only honest place to
+      # check it is inside a running container (ADR-0021). The script has a positive control:
+      # an extractor that could reach *nothing* would pass a naive isolation test.
+      - name: The sandbox holds
+        run: ./tools/sandbox-check.sh
+      - name: Engine version, for the record
+        if: always()
+        run: docker version --format 'engine {{.Server.Version}}'
+
   security:
     name: Security scans
     runs-on: ubuntu-latest
