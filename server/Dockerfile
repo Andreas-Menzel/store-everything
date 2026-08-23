@@ -25,7 +25,17 @@ COPY web/ web/
 RUN pnpm --filter @store-everything/web run build
 
 
-# Build stage: resolve and install exactly what the lockfile pins.
+# Build stage: install exactly what the lockfile pins.
+#
+# `--frozen` rather than `--locked`, and the difference matters: `--locked` re-validates the
+# lockfile against `pyproject.toml`, which means reading the metadata of *every* source in it —
+# including the extractor SDK, a development-only path dependency that lives outside this build's
+# reach (`server/` is what is bound here, and the SDK is a sibling of it). `--frozen` installs the
+# pins as they are, which is what this stage wants anyway.
+#
+# The guarantee is not lost, only moved to where the whole tree exists: CI's core-service job
+# syncs `--all-groups --locked` on every run, as does `make check-staged` against the staged tree,
+# so a lockfile that has drifted from `pyproject.toml` fails the pipeline before it gets here.
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -40,11 +50,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=server/uv.lock,target=uv.lock \
     --mount=type=bind,source=server/pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=server/README.md,target=README.md \
-    uv sync --locked --no-install-project --no-dev
+    uv sync --frozen --no-install-project --no-dev
 
 COPY server /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
+    uv sync --frozen --no-dev
 
 
 # Runtime stage: no build tools, no uv, no dev dependencies.

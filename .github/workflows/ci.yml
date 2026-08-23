@@ -306,6 +306,21 @@ jobs:
             echo '::error::the reference extractor image runs as root'
             exit 1
           fi
+      # The core ships none of its development dependencies. Asserted rather than assumed
+      # because the extractor SDK is one of them — a path dependency of the dev group, so that
+      # one test can drive the real plugin boundary — and an image that shipped it would be
+      # carrying a client of its own API around for no reason.
+      - name: The core image ships no development dependency
+        run: |
+          if docker run --rm --entrypoint python store-everything-core:ci -c \
+              'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("se_extractor") else 1)'; then
+            echo '::error::the core image contains the extractor SDK, which is dev-only'
+            exit 1
+          fi
+      # And it still starts: `--frozen` installs the lockfile's pins without re-resolving them
+      # (see server/Dockerfile), so the thing worth checking is that what it installed runs.
+      - name: The core image imports its own application
+        run: docker run --rm --entrypoint python store-everything-core:ci -c 'import store_everything'
       # Publishing happens from tags only (11-engineering-standards.md § versioning).
       - name: Vulnerability scan
         run: |
