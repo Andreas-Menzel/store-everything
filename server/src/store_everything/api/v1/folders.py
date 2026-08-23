@@ -335,6 +335,7 @@ async def list_children(
     segment, sorted_by, key, identifier = _position(cursor, sort)
 
     items: list[Child] = []
+    last_folder: folders.Folder | None = None
     if segment == _FOLDER_SEGMENT:
         page = await folders.children(
             connection,
@@ -343,17 +344,27 @@ async def list_children(
             after=None if identifier is None else (key, identifier),
         )
         if len(page) > limit:
-            last = page[limit - 1]
             return Page(
                 data=[_as_child_folder(child, here) for child in page[:limit]],
-                next_cursor=encode_keyset_cursor(
-                    [_FOLDER_SEGMENT, sorted_by, folders.sort_key_of(last), str(last.id)]
-                ),
+                next_cursor=_folder_cursor(sorted_by, page[limit - 1]),
             )
         items = [_as_child_folder(child, here) for child in page]
+        last_folder = page[-1] if page else None
         key, identifier = "", None
 
     remaining = limit - len(items)
+    if remaining == 0:
+        # The subfolders ended exactly on the page boundary. There is no room for a file, and no
+        # way to write a cursor meaning "the start of the file segment", so the cursor stays in
+        # the folder segment and the next request falls through it into the files. Anchoring on a
+        # file instead anchored on one this page had no room to return — which deterministically
+        # lost the first file of every folder whose subfolders happened to fill a page exactly.
+        more = await files.page_in_folder(
+            connection, folder_id=found.id, sort=sorted_by, limit=1, after=None
+        )
+        resume = _folder_cursor(sorted_by, last_folder) if more and last_folder else None
+        return Page(data=items, next_cursor=resume)
+
     page_of_files = await files.page_in_folder(
         connection,
         folder_id=found.id,
@@ -376,6 +387,13 @@ async def list_children(
                 str(last_file.file.id),
             ]
         ),
+    )
+
+
+def _folder_cursor(sorted_by: str, last: folders.Folder) -> str:
+    """Resume the folder segment after this subfolder."""
+    return encode_keyset_cursor(
+        [_FOLDER_SEGMENT, sorted_by, folders.sort_key_of(last), str(last.id)]
     )
 
 

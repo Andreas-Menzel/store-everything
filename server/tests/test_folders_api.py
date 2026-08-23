@@ -377,6 +377,48 @@ async def test_a_page_is_filled_across_the_seam(
 
 
 @pytest.mark.fr("F-015/FR-5")
+async def test_no_child_is_lost_at_any_page_size(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """Walked at every page size around the seam, because one of them used to lose a row.
+
+    When the subfolders end *exactly* on a page boundary the page has no room for a file — and
+    the cursor was still anchored on the first file the query had fetched to look ahead with, a
+    file no page had returned. Deterministic: five subfolders at `limit=5` skipped the first
+    file, every time, and no test hit it because none of them chose a size that divided the
+    folder count.
+
+    So the assertion is the invariant rather than one arrangement: at every page size from one
+    to more than the whole listing, the pages concatenate to the same complete ordering.
+    """
+    tree = tmp_path / "nas"
+    contents: dict[str, bytes] = {f"file-{index}.txt": b"x" for index in range(5)}
+    contents.update({f"dir-{index}/x.txt": b"x" for index in range(5)})
+    build(tree, contents)
+    expected = [f"folder:dir-{index}" for index in range(5)] + [
+        f"file:file-{index}.txt" for index in range(5)
+    ]
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        root = await folder_at(identity_database, workspace, "")
+
+        for limit in range(1, 13):
+            seen: list[str] = []
+            cursor: str | None = None
+            for _ in range(len(expected) + 2):
+                page = await children(
+                    client, root.id, limit=limit, **({"cursor": cursor} if cursor else {})
+                )
+                seen.extend(f"{item['kind']}:{item['name']}" for item in page["data"])
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+            assert cursor is None, f"the listing did not finish at limit={limit}"
+            assert seen == expected, f"limit={limit} returned {seen}"
+
+
+@pytest.mark.fr("F-015/FR-5")
 async def test_every_child_appears_exactly_once_across_pages(
     identity_settings: Settings, identity_database: str, tmp_path: Path
 ) -> None:
