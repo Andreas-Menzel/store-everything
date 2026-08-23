@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-**Current phase:** 1 — Files & identity *(in progress; phase 0 closed at [v0.1.0](CHANGELOG.md))*
+**Current phase:** 2 — Extraction platform & tagging *(phase 1 closed at [v0.2.0](CHANGELOG.md))*
 
 The ordering authority for implementation. Each phase delivers **one clear new segment of the app**, is independently testable, and lists everything needed to work it: the features it delivers, the specs/ADRs to read first, the open questions to answer at entry, and the exit criteria that close it. This file records **order and rationale, not schedule** — dates are deliberately absent.
 
@@ -38,7 +38,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 |---|---|---|---|
 | [0](#phase-0--foundations--toolchain) | Foundations & toolchain | — (infrastructure only) | Q10, Q34, Q26, Q28 (v0), ADR-0001 acceptance |
 | [1](#phase-1--files--identity) | Files & identity | [F-001](features/F-001-upload-and-import.md), [F-015](features/F-015-folders.md) *(+ F-007 write path, F-011 log)* | Q38, Q31, Q32, Q2, Q25, Q22, Q3, Q30 |
-| [2](#phase-2--extraction-platform--tagging) | Extraction platform & tagging | [F-004](features/F-004-document-text-extraction.md), [F-003](features/F-003-tagging.md) *(+ F-009 generations schema, previews/thumbnails)* | Q5, Q7, Q42, Q9 (documents/OCR part) |
+| [2](#phase-2--extraction-platform--tagging) | Extraction platform & tagging | [F-004](features/F-004-document-text-extraction.md), [F-003](features/F-003-tagging.md), [F-028](features/F-028-thumbnails-and-previews.md) *(+ F-009 generations schema)* | Q5, Q7, Q42, Q9 (documents/OCR part) |
 | [3](#phase-3--search--library) | Search & library | [F-002](features/F-002-hybrid-search.md), [F-005](features/F-005-image-analysis.md), [F-006](features/F-006-av-transcription-and-keyframes.md), [F-017](features/F-017-views.md) *(sans map)* | Q8, Q27, Q9 (embeddings/vision/speech), Q14 |
 | [4](#phase-4--multi-user--data-safety) | Multi-user & data safety | [F-008](features/F-008-sharing-and-public-links.md), [F-014](features/F-014-deletion-and-trash.md) *(+ complete F-007, F-011)* | Q4, Q21, Q12 |
 | [5](#phase-5--live--complete-web) | Live & complete web (**web v1**) | [F-012](features/F-012-live-updates.md), [F-013](features/F-013-duplicate-detection.md), [F-016](features/F-016-archive-download.md) *(+ complete F-009, F-017 map)* | Q18, Q17, Q33, Q13, Q20, Q35 |
@@ -46,9 +46,11 @@ This file never records status. Feature statuses live in [features/README.md](fe
 | [7](#phase-7--mobile-backup--parity--v10) | Mobile backup & parity (**v1.0**) | [F-021](features/F-021-mobile-auto-upload.md), [F-022](features/F-022-device-storage-reclaim.md), [F-024](features/F-024-offline-files-and-downloads.md), [F-025](features/F-025-client-parity.md) | Q44 |
 | [pool](#post-v1-pool) | Post-v1 | [F-010](features/F-010-auto-sort-inbox.md), [F-018](features/F-018-people.md), [F-023](features/F-023-os-file-manager-integration.md), … | — |
 
-**Staged features** (split across phases, per maintenance rule 4): [F-007](features/F-007-versioning.md) (1 → 4), [F-011](features/F-011-audit-trail.md) (1 → 4), [F-015](features/F-015-folders.md) (1 → 2 → 3), [F-009](features/F-009-reprocessing.md) (2 → 5), [F-017](features/F-017-views.md) (3 → 5). A staged feature computes `Implemented` only when its last part lands.
+**Staged features** (split across phases, per maintenance rule 4): [F-007](features/F-007-versioning.md) (1 → 4), [F-011](features/F-011-audit-trail.md) (1 → 4), [F-015](features/F-015-folders.md) (1 → 2 → 3), [F-003](features/F-003-tagging.md) (2 → 3), [F-004](features/F-004-document-text-extraction.md) (2 → 3), [F-009](features/F-009-reprocessing.md) (2 → 5), [F-017](features/F-017-views.md) (3 → 5). A staged feature computes `Implemented` only when its last part lands.
 
 [F-015](features/F-015-folders.md)'s split: the entity, identity, closure, operations, aggregates and visibility roots land in phase 1; **folder tags** ([F-015/FR-9](features/F-015-folders.md)) wait for the tag vocabulary in phase 2 ([F-003](features/F-003-tagging.md)); **folders as search results** ([F-015/FR-10](features/F-015-folders.md)) wait for search in phase 3 ([F-002](features/F-002-hybrid-search.md)). Neither can be verified earlier, so neither is claimed earlier. One part goes the other way: **moving a folder between two filesystems** ([F-015/FR-14](features/F-015-folders.md)) is a resumable copy of what may be terabytes, not a request, and it joins the [post-v1 pool](#post-v1-pool) — phase 1 supports the cross-workspace move a single atomic rename can do and refuses the rest with that reason (FR-4).
+
+[F-003](features/F-003-tagging.md)'s and [F-004](features/F-004-document-text-extraction.md)'s splits: everything lands in phase 2 except the one FR in each that names a phase-3 surface — **tags as search facets** ([F-003/FR-7](features/F-003-tagging.md)) needs [F-002](features/F-002-hybrid-search.md), and **segments feeding `text-v1` embeddings** ([F-004/FR-5](features/F-004-document-text-extraction.md)) needs the `text-embed` extractor. Both stay unverified rather than being claimed on adjacent behavior, and close with search in phase 3.
 
 ---
 
@@ -136,12 +138,12 @@ This file never records status. Feature statuses live in [features/README.md](fe
 2. **Orchestrator** ([04](specs/04-ingestion-pipeline.md)) — routing by manifest, execution with leases, persistence, priority classes ([04 § prioritization](specs/04-ingestion-pipeline.md#prioritization--scheduling)); **provenance + generation columns on every extraction write from the first result** ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md)) — this is [F-009](features/F-009-reprocessing.md)'s schema *(staged; management surface in phase 5)*.
 3. **Conformance kit + reference extractor** ([11 § test infrastructure](specs/11-engineering-standards.md#test-infrastructure)) — runnable against any extractor image; the reference extractor doubles as E2E test double.
 4. **[F-003](features/F-003-tagging.md) — tagging**: tag DAG ([ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md)), provenance state machine ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md)), manual tagging UI, auto-tag write path (exercised via the reference extractor now; the first real auto-tagger is [F-005](features/F-005-image-analysis.md), phase 3). **Folder tags** ([F-015/FR-9](features/F-015-folders.md)) land here *(staged)* — manual and self-only, because a vocabulary to tag with exists only now.
-5. **`preview-gen` + thumbnails** ([09](specs/09-previews.md), [ADR-0008](decisions/ADR-0008-renditions.md)) — thumbnail tiers (Q42), preview descriptor, on-demand rendition policy.
+5. **[F-028](features/F-028-thumbnails-and-previews.md) — thumbnails & previews** ([09](specs/09-previews.md), [ADR-0008](decisions/ADR-0008-renditions.md)) — `preview-gen`, the 256/512/1024 tier set (Q42), placeholder hashes inline in listings, the preview descriptor, the renditions surface, on-demand rendition policy.
 6. **Metadata extraction** — EXIF/dates/typed metadata ([02 § MetadataEntry](specs/02-domain-model.md)); feeds phase 3's timeline and date facets.
 7. **[F-004](features/F-004-document-text-extraction.md) — document text**: `pdf-text` decision tree, `tesseract-ocr`, plain text/markdown/office/code — segments with page/line anchors, originals never modified.
 
 **Read first**
-- **Features:** [F-004](features/F-004-document-text-extraction.md) · [F-003](features/F-003-tagging.md) · [F-009](features/F-009-reprocessing.md) (generations schema part)
+- **Features:** [F-004](features/F-004-document-text-extraction.md) · [F-003](features/F-003-tagging.md) · [F-028](features/F-028-thumbnails-and-previews.md) · [F-009](features/F-009-reprocessing.md) (generations schema part)
 - **Specs:** [04-ingestion-pipeline](specs/04-ingestion-pipeline.md) · [05-extractor-contract](specs/05-extractor-contract.md) · [09-previews](specs/09-previews.md) · [02-domain-model](specs/02-domain-model.md) (Tag/FileTag, MetadataEntry, Segment, DerivedAsset, Extractor/ExtractionRun)
 - **ADRs:** [ADR-0002](decisions/ADR-0002-extractor-containers-fixed-api.md) · [ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) · [ADR-0006](decisions/ADR-0006-hierarchical-tags-dag.md) · [ADR-0008](decisions/ADR-0008-renditions.md)
 
@@ -157,7 +159,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Sandbox negative test: a default extractor container cannot reach the outside network.
 - Images and PDFs have thumbnails at the fixed tier set; heavy renditions generate on demand and cache per policy.
 - Tag DAG with query-time expansion works; `manual`/`confirmed` survive a re-run, `rejected` suppresses re-adding ([ADR-0004](decisions/ADR-0004-tag-provenance-and-reprocessing.md) state machine tests).
-- F-003 and F-004 matrix green; [F-015/FR-9](features/F-015-folders.md) joins them (folder tags), leaving only F-015's search part open; phase tagged.
+- F-003 green **except** [F-003/FR-7](features/F-003-tagging.md) and F-004 green **except** [F-004/FR-5](features/F-004-document-text-extraction.md) — each names a phase-3 surface (search facets; the `text-embed` extractor) and stays unverified rather than claimed early (see the split above). [F-028](features/F-028-thumbnails-and-previews.md) green. [F-015/FR-9](features/F-015-folders.md) joins (folder tags), leaving only F-015's search part open. The phase-2 domain invariants carry markers — [02 § invariants](specs/02-domain-model.md#invariants) #3, #4, #5. Matrix green for everything claimed; phase tagged.
 
 ---
 
@@ -191,7 +193,7 @@ This file never records status. Feature statuses live in [features/README.md](fe
 - Timeline histogram + compact projection serve a 100k-item library in one request each; geo filter + grid aggregation work (map *page* still absent).
 - Every search path joins the permission filter (query-plan/leak test proves no unfiltered path exists).
 - System views seeded and admin-manageable; user views CRUD; library tabs live in the web UI.
-- F-002, F-005, F-006 matrix green; F-017 green except map-page FRs (staged); **F-015 completes** — [F-015/FR-10](features/F-015-folders.md) (folders as permission-filtered search results) is its last staged part, so the feature computes `Implemented` here; phase tagged.
+- F-002, F-005, F-006 matrix green; F-017 green except map-page FRs (staged); **F-003, F-004, and F-015 complete** — [F-003/FR-7](features/F-003-tagging.md) (tag facets), [F-004/FR-5](features/F-004-document-text-extraction.md) (segments feed `text-v1`), and [F-015/FR-10](features/F-015-folders.md) (folders as permission-filtered search results) are their last staged parts, so all three compute `Implemented` here; phase tagged.
 
 ---
 

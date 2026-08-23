@@ -1,7 +1,7 @@
 # 10 — Deployment and Operations
 
 **Status:** Draft
-**Related ADRs:** [ADR-0005](../decisions/ADR-0005-single-server-docker-network.md), [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md)
+**Related ADRs:** [ADR-0005](../decisions/ADR-0005-single-server-docker-network.md), [ADR-0009](../decisions/ADR-0009-external-traefik-edge.md), [ADR-0021](../decisions/ADR-0021-extractor-sandbox-enforcement.md)
 
 ## Topology
 
@@ -11,7 +11,7 @@ The whole app is one Docker Compose deployment on one server (ADR-0005), attache
 flowchart LR
     C["Clients"] -->|HTTPS| TR["Traefik<br/>(pre-existing, separate deployment)<br/>TLS · redirect · HSTS · volumetric limits"]
 
-    subgraph app["App compose (this product) — internal network, no ingress"]
+    subgraph app["App compose (this product) — no ingress"]
         API["Core API"]
         ORCH["Orchestrator"]
         PG[("PostgreSQL")]
@@ -21,12 +21,12 @@ flowchart LR
     TR -->|"shared external<br/>Docker network"| API
     API --- PG
     ORCH --- PG
-    ORCH --- EX
+    EX -->|"poll: claim jobs, stream inputs,<br/>submit results — dedicated<br/>internal-only network (ADR-0021)"| API
 ```
 
 Rules:
 
-1. **Only the core API joins the Traefik network.** Orchestrator, PostgreSQL, and extractors live on the internal network with no ingress; extractors additionally have no egress by default (Q7).
+1. **Only the core API joins the Traefik network.** Orchestrator and PostgreSQL live on the internal network with no ingress. **Extractors live on their own dedicated network** (`internal: true` — no gateway, so no egress), which only the core API additionally joins: an extractor can reach the extractor API and nothing else — not PostgreSQL, not Traefik, not the internet ([ADR-0021](../decisions/ADR-0021-extractor-sandbox-enforcement.md)). A `network: outbound` extractor joins an explicit egress network on top, paired with its admin-visible manifest flag. **Host floor:** Docker Engine ≥ 25.0.5 (before it, embedded DNS forwarded lookups out of internal networks — CVE-2024-29018); 28.x recommended. The core never talks to the Docker API — no socket, no socket proxy; extractors are ordinary pre-started compose services.
 2. The API serves **plain HTTP internally**; TLS exists only at the edge.
 3. **The API and the orchestrator are separate processes** from the same image, differing
    only in their command (`store-everything worker`). Background work must never be able to
