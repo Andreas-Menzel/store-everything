@@ -1024,7 +1024,7 @@
             "description": "The offset does not match; Upload-Offset carries the real one"
           },
           "410": {
-            "description": "The upload expired"
+            "description": "The upload expired, or its staged content no longer covers its offset"
           },
           "413": {
             "description": "The body exceeds Upload-Limit: max-append-size"

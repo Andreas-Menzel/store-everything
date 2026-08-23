@@ -143,6 +143,9 @@ class Folder:
     name: str
     depth: int
     created_at: datetime
+    #: The filesystem the directory was on when a scan last listed it, or `None` before the
+    #: first listing. Only the scan reads it, and only to notice that it changed.
+    device_id: int | None = None
 
     @property
     def is_root(self) -> bool:
@@ -156,14 +159,18 @@ _COLUMNS = (
     folder.c.name,
     folder.c.depth,
     folder.c.created_at,
+    folder.c.device_id,
 )
 
 
-def _as_folder(row: tuple[UUID, UUID, UUID | None, str, int, datetime]) -> Folder:
+type _FolderRow = tuple[UUID, UUID, UUID | None, str, int, datetime, int | None]
+
+
+def _as_folder(row: _FolderRow) -> Folder:
     return Folder(*row)
 
 
-def _root_query(workspace_id: UUID) -> Select[tuple[UUID, UUID, UUID | None, str, int, datetime]]:
+def _root_query(workspace_id: UUID) -> Select[_FolderRow]:
     return select(*_COLUMNS).where(
         folder.c.workspace_id == workspace_id, folder.c.parent_id.is_(None)
     )
@@ -725,6 +732,18 @@ async def stamp_seen(
     return result.rowcount
 
 
+async def record_device(connection: AsyncConnection, *, folder_id: UUID, device: int) -> None:
+    """Remember which filesystem this directory was on when a scan last listed it.
+
+    Written on every listing whose device agrees with what is under it, and *not* written when a
+    change looks like a mount that went away — leaving the old number in place is what keeps that
+    subtree out of reconciliation until the storage is back (F-001/FR-22, `scanning`).
+    """
+    await connection.execute(
+        update(folder).where(folder.c.id == folder_id).values(device_id=device)
+    )
+
+
 async def vanished(
     connection: AsyncConnection, *, folder_id: UUID, run_id: UUID, started_at: datetime
 ) -> bool:
@@ -824,11 +843,45 @@ async def reposition(
     return moved
 
 
+async def namesakes(
+    connection: AsyncConnection, *, parent_id: UUID, other_id: UUID
+) -> list[tuple[Folder, Folder]]:
+    """Children of two parents that share a comparison key, paired (`parent_id`'s first).
+
+    Asked before one folder absorbs another, because sibling uniqueness (FR-6) would refuse the
+    re-parenting outright and take the whole identity pass down with it. Both rows are children
+    of directories the caller has already established are the same one, so a shared name is not
+    a clash to resolve but two rows describing one directory.
+    """
+    held = folder.alias("held")
+    incoming = folder.alias("incoming")
+    rows = (
+        await connection.execute(
+            select(
+                *(held.c[column.name] for column in _COLUMNS),
+                *(incoming.c[column.name] for column in _COLUMNS),
+            )
+            .select_from(held.join(incoming, held.c.name_key == incoming.c.name_key))
+            .where(held.c.parent_id == parent_id, incoming.c.parent_id == other_id)
+            .order_by(incoming.c.name)
+        )
+    ).all()
+    width = len(_COLUMNS)
+    return [
+        (_as_folder(tuple(row[:width])), _as_folder(tuple(row[width:])))  # type: ignore[arg-type]
+        for row in rows
+    ]
+
+
 async def absorb(connection: AsyncConnection, *, into: Folder, discarded: Folder) -> None:
     """Move everything one folder holds into another, so the emptied one can be deleted.
 
     Files change folder, subfolders change parent, and the closure is rewritten for each of them.
     Nothing on disk moves: this is two rows describing one directory, and only one may survive.
+
+    The caller must have settled any children the two share a name for — `namesakes` finds them —
+    because re-parenting one onto the other's name violates sibling uniqueness (FR-6) and rolls
+    back everything the transaction has done.
     """
     await connection.execute(
         update(file)

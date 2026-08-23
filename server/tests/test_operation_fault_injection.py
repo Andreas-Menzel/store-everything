@@ -10,7 +10,8 @@ The seam worth attacking is the one between a handler's writes and the transitio
 records them. They share a transaction, so the claim is that *no* crash can leave the effect
 applied without the operation succeeding, or the operation succeeded without the effect. A
 real `kill -9` is the only way to test it: `os._exit` in a subprocess, no unwinding, no
-`finally`, exactly what a power cut does.
+`finally`. It is `kill -9` rather than a power cut — the page cache survives it — so what is
+proven here is *ordering*, not the presence of the durability barriers.
 
 The crash points are armed in the production code path (`runner.py`), not in a test double —
 a fault a test injects into its own copy of the logic proves nothing about the real one.

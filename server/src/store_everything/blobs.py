@@ -63,7 +63,12 @@ class BlobStore:
         """Store bytes and return their digest. A second call with the same bytes is a no-op."""
         digest = filestore.digest_of(data)
         destination = self.path_for(digest)
-        if destination.is_file():
+        if destination.is_file() and filestore.freshen(destination):
+            # Already stored, and *referenced again now*: the janitor's grace window counts
+            # from a blob's mtime, so leaving an aged one untouched would let a sweep whose
+            # reference snapshot predates this transaction collect it out from under the row
+            # about to point at it. Falling through when the freshen fails is the other half:
+            # the blob was collected between the two calls, so the bytes get written again.
             return digest
 
         filestore.write_atomically(
@@ -83,9 +88,11 @@ class BlobStore:
         """
         resolved = digest or filestore.digest_of_file(source)
         destination = self.path_for(resolved)
-        if destination.is_file():
+        if destination.is_file() and filestore.freshen(destination):
             # The bytes are already stored — by an earlier attempt, or by another file with
-            # the same content. Either way this source is now redundant.
+            # the same content. Either way this source is now redundant. Freshened first,
+            # because dropping the only other copy of these bytes while the stored one is
+            # eligible for collection is the one ordering that loses content.
             filestore.remove(source)
             return resolved
 
@@ -116,8 +123,9 @@ class BlobStore:
         staging = filestore.staging_path(self.staging_root, operation_id, part="snapshot")
         digest = filestore.stage_copy(source, staging)
         destination = self.path_for(digest)
-        if destination.is_file():
-            # Already stored, by an earlier attempt or by another file with the same content.
+        if destination.is_file() and filestore.freshen(destination):
+            # Already stored, by an earlier attempt or by another file with the same content —
+            # and referenced again now, which is what the freshen records (`filestore.freshen`).
             filestore.remove(staging)
             return digest
         # The shard directory is only known once the digest is: the commit is a rename, and a

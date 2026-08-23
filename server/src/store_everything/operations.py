@@ -62,6 +62,12 @@ PRIORITY_SEARCHABILITY = 2
 PRIORITY_HEAVY = 3
 PRIORITY_REPROCESSING = 4
 
+#: How many times a convergent enqueue re-reads after its insert conflicted. Each turn either
+#: finds a row to converge on or leaves the key free for the next insert, so two is already
+#: generous — the third exists only so that an unlucky third party cannot make this the caller's
+#: problem, which is the whole point: the caller's transaction is somebody's upload.
+_CONVERGE_ATTEMPTS = 3
+
 _COLUMNS = (
     operation.c.id,
     operation.c.kind,
@@ -184,26 +190,42 @@ async def enqueue(
     # The unique index is partial (queued rows only), so the conflict target names the same
     # predicate; `DO NOTHING` then means "somebody queued this between the check and here",
     # and their row is the one to return.
-    inserted = (
-        await connection.execute(
-            insertion.on_conflict_do_nothing(
-                index_elements=[operation.c.idempotency_key],
-                index_where=text("idempotency_key IS NOT NULL AND state = 'queued'"),
-            ).returning(*_COLUMNS)
-        )
-    ).first()
-    if inserted is not None:
-        return Operation.of(tuple(inserted))
-
-    existing = (
-        await connection.execute(
-            select(*_COLUMNS).where(
-                operation.c.idempotency_key == idempotency_key,
-                operation.c.state == "queued",
+    #
+    # Both statements can lose the same race, and this used to end in `.one()` raising
+    # `NoResultFound`: the insert conflicts with a queued row, a worker claims that row before
+    # the look-up runs, and the look-up — filtered to `queued` — finds nothing. `ON CONFLICT DO
+    # NOTHING` takes no lock on the row it declined to touch, so nothing prevents it. The
+    # exception then aborted the *caller's* transaction, and the callers are every upload and
+    # every scan batch. So the pair is retried: a row that has started running is converged with
+    # exactly as the check above would have done a moment later, and if the key is free again the
+    # next insert takes it.
+    conflict_free = insertion.on_conflict_do_nothing(
+        index_elements=[operation.c.idempotency_key],
+        index_where=text("idempotency_key IS NOT NULL AND state = 'queued'"),
+    ).returning(*_COLUMNS)
+    pending = ("queued", "running") if converge_with_running else ("queued",)
+    for _ in range(_CONVERGE_ATTEMPTS):
+        inserted = (await connection.execute(conflict_free)).first()
+        if inserted is not None:
+            return Operation.of(tuple(inserted))
+        existing = (
+            await connection.execute(
+                select(*_COLUMNS)
+                .where(
+                    operation.c.idempotency_key == idempotency_key,
+                    operation.c.state.in_(pending),
+                )
+                # Queued before running: converging on work that has not started beats
+                # converging on work that may already have read what this call is about to write.
+                .order_by(operation.c.state.desc())
+                .limit(1)
             )
-        )
-    ).one()
-    return Operation.of(tuple(existing))
+        ).first()
+        if existing is not None:
+            return Operation.of(tuple(existing))
+    raise RuntimeError(  # pragma: no cover - the key would have to churn on every attempt
+        f"could not converge on the operation holding {idempotency_key!r}"
+    )
 
 
 def _claimable() -> Select[tuple[UUID]]:

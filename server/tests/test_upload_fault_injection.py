@@ -44,9 +44,9 @@ from store_everything import filestore, uploads
 root, session, offset, which = Path(sys.argv[1]), UUID(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 staging = filestore.staging_path(root / "staging", session)
 
-# Exactly what the append endpoint does, in the same order: discard anything a previous
-# attempt left unacknowledged, then write and make durable.
-uploads.discard_unacknowledged(staging, offset)
+# Exactly what the append endpoint does, in the same order: align staging with the offset the
+# client was promised, then write and make durable.
+uploads.align_staging(staging, offset)
 filestore.append_to_staging(staging, {FIRST!r} if which == "first" else {SECOND!r})
 """
 

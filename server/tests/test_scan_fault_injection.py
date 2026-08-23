@@ -14,8 +14,8 @@ transaction, and a crash on either side must leave exactly one entry per file �
 deleted, no deletion concluded twice.
 
 The crash is a real `os._exit(137)` inside a real `Runner`, so there is no unwinding and no
-`finally` — exactly what a power cut does — and the fault points are armed in the production
-code path, not in a test's own copy of the loop.
+`finally` — exactly what `kill -9` does, page cache included — and the fault points are armed
+in the production code path, not in a test's own copy of the loop.
 """
 
 from __future__ import annotations

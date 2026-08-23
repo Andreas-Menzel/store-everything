@@ -8,6 +8,8 @@ escapes the root it was resolved against.
 from __future__ import annotations
 
 import os
+import time
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -346,3 +348,118 @@ def test_the_directory_fsync_helper_works_on_a_real_directory(tmp_path: Path) ->
     filestore.fsync_directory(tmp_path)
 
     assert os.path.isdir(tmp_path)
+
+
+# --------------------------------------------------------- durability of the directories
+#
+# Asserted by watching the calls rather than by crashing: `os._exit` leaves the page cache for
+# the kernel to flush, so a *missing* `fsync` is invisible to the crash tests — the one class of
+# bug the fault harness structurally cannot see.
+
+
+def test_every_directory_level_created_is_made_durable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blob shard is two levels deep, and both have to survive the crash after the row commits.
+
+    Fsyncing only the leaf's parent leaves the upper level as durable as the page cache is: a
+    version snapshot into a fresh `ab/cd/` shard can vanish whole, leaving a `restorable=true`
+    row pointing at nothing.
+    """
+    fsynced: list[Path] = []
+    real_fsync_directory = filestore.fsync_directory
+
+    def recording(path: Path) -> None:
+        fsynced.append(path)
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(filestore, "fsync_directory", recording)
+    target = tmp_path / "ab" / "cd"
+
+    filestore.ensure_directory(target)
+
+    assert target.is_dir()
+    # Shallowest first: each new entry made durable in the parent that now holds it.
+    assert fsynced == [tmp_path, tmp_path / "ab"]
+
+
+def test_a_directory_that_already_exists_is_not_fsynced_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Idempotent and cheap: `ensure_directory` runs on every staged write."""
+    fsynced: list[Path] = []
+    monkeypatch.setattr(filestore, "fsync_directory", fsynced.append)
+
+    filestore.ensure_directory(tmp_path)
+
+    assert fsynced == []
+
+
+# ------------------------------------------------------------------ blob reuse and the GC
+
+
+def test_reusing_stored_content_freshens_it(tmp_path: Path) -> None:
+    """The janitor's grace window reads a blob's mtime as the age of its youngest reference.
+
+    That is only true if a *reference* touches it. Without this, a new version converging on an
+    aged orphan blob leaves the old mtime, and a janitor pass whose reference snapshot predates
+    the referencing transaction unlinks the bytes the committed row points at.
+    """
+    store = BlobStore(tmp_path / "versions")
+    digest = store.put_bytes(PAYLOAD, operation_id=uuid4())
+    aged = time.time() - timedelta(days=7).total_seconds()
+    os.utime(store.path_for(digest), (aged, aged))
+
+    store.put_bytes(PAYLOAD, operation_id=uuid4())
+
+    assert store.path_for(digest).stat().st_mtime > aged
+
+
+@pytest.mark.parametrize("reuse", ["put_file", "put_copy_of"])
+def test_every_way_of_reusing_content_freshens_it(tmp_path: Path, reuse: str) -> None:
+    """All three fast paths, because the one that is missed is the one that loses the bytes."""
+    store = BlobStore(tmp_path / "versions")
+    digest = store.put_bytes(PAYLOAD, operation_id=uuid4())
+    aged = time.time() - timedelta(days=7).total_seconds()
+    os.utime(store.path_for(digest), (aged, aged))
+
+    source = tmp_path / f"source-{reuse}"
+    source.write_bytes(PAYLOAD)
+    if reuse == "put_file":
+        assert store.put_file(source, operation_id=uuid4()) == digest
+    else:
+        assert store.put_copy_of(source, operation_id=uuid4()) == digest
+
+    assert store.path_for(digest).stat().st_mtime > aged
+
+
+def test_content_collected_between_the_check_and_the_reference_is_written_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the freshen: it *reports* the blob's absence instead of assuming it.
+
+    Returning the digest anyway would hand back an address for bytes that are not in the store —
+    the committed-row-pointing-at-nothing this whole mechanism exists to prevent — so a blob the
+    janitor unlinked between the existence check and the reference is simply written again.
+    """
+    store = BlobStore(tmp_path / "versions")
+    digest = store.put_bytes(PAYLOAD, operation_id=uuid4())
+
+    written: list[Path] = []
+    real_write_atomically = filestore.write_atomically
+
+    def recording(destination: Path, data: bytes, *, staging: Path) -> None:
+        written.append(destination)
+        real_write_atomically(destination, data, staging=staging)
+
+    def collected(path: Path) -> bool:
+        """What a blob the janitor unlinked in that window looks like from here."""
+        return False
+
+    monkeypatch.setattr(filestore, "freshen", collected)
+    monkeypatch.setattr(filestore, "write_atomically", recording)
+
+    assert store.put_bytes(PAYLOAD, operation_id=uuid4()) == digest
+
+    assert written == [store.path_for(digest)], "the fast path trusted a stale check"
+    assert store.open(digest).read_bytes() == PAYLOAD

@@ -106,6 +106,11 @@ def test_every_v1_route_carries_the_auth_dependency() -> None:
     for route in probe:
         assert _uses_dependency(route.dependant, require_auth)
         assert _uses_dependency(route.dependant, enforce_request_ceiling)
+        # Order is part of the guarantee, not a detail: dependencies resolve in sequence, so
+        # `require_auth` first means a bad credential is refused before it is ever counted —
+        # an unlimited supply of unauthenticated work (A12).
+        calls = [sub.call for sub in route.dependant.dependencies]
+        assert calls.index(enforce_request_ceiling) < calls.index(require_auth)
 
 
 def _operations(app: FastAPI) -> list[tuple[str, str]]:

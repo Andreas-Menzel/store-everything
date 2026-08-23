@@ -28,6 +28,11 @@ from store_everything.events import Actor
 from store_everything.problems import ProblemException
 from store_everything.tables import event
 
+#: Marks a security event whose recorded address is a proxy's rather than a caller's. The
+#: address is still recorded — an audit trail that omits what it saw is worse than a thin one
+#: — but it is not something a per-address ceiling may count.
+PROXIED_DETAIL = "proxied"
+
 #: Beyond this many distinct keys the window map is swept for idle entries. A limiter must
 #: not become a memory leak an attacker can grow by rotating addresses.
 _SWEEP_THRESHOLD = 4096
@@ -54,7 +59,15 @@ class RequestLimiter:
         self._window = 60.0
         self._hits: dict[str, deque[float]] = {}
 
-    def allow(self, key: str) -> bool:
+    def allow(self, key: str, *, limit: int | None = None) -> bool:
+        """Spend one request against `key`. `limit` overrides this limiter's own ceiling.
+
+        The override exists so one limiter can hold buckets that mean different things: an
+        ordinary request and a credential that did not authenticate are both counted here, but
+        an instance that tolerates hundreds of the first per minute should not tolerate
+        hundreds of the second.
+        """
+        ceiling = self._per_minute if limit is None else limit
         now = time.monotonic()
         if len(self._hits) > _SWEEP_THRESHOLD:
             self._sweep(now)
@@ -64,7 +77,7 @@ class RequestLimiter:
         while hits and hits[0] < cutoff:
             hits.popleft()
 
-        if len(hits) >= self._per_minute:
+        if len(hits) >= ceiling:
             return False
 
         hits.append(now)
@@ -125,13 +138,25 @@ async def login_attempts_exhausted(
 
     Counted over a sliding window, so it heals by itself: after a quiet window the ceiling
     is lifted without an operator unlocking anything.
+
+    A `client_ip` of `None` means the caller's address is not knowable — behind a proxy whose
+    headers this instance does not trust, every caller arrives as the proxy — and then only
+    the per-identity count applies. Failures *recorded* from such an address carry
+    `details.proxied`, and this excludes them: an address that identified nobody when it was
+    written identifies nobody when it is counted, and leaving them in would let ten junk
+    attempts lock out an entire instance
+    ([07 § abuse protection](../../../specs/07-identity-permissions-sharing.md#abuse-protection)).
     """
     cutoff = datetime.now(UTC) - window
 
     by_email = func.count().filter(event.c.details["email"].astext == email)
     columns = [by_email.label("by_email")]
     if client_ip is not None:
-        columns.append(func.count().filter(event.c.client_ip == client_ip).label("by_ip"))
+        columns.append(
+            func.count()
+            .filter(event.c.client_ip == client_ip, ~event.c.details.has_key(PROXIED_DETAIL))
+            .label("by_ip")
+        )
 
     result = await connection.execute(
         select(*columns).where(

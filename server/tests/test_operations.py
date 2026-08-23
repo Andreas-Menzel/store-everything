@@ -210,6 +210,95 @@ async def test_the_key_is_free_again_once_the_work_is_done(engine: AsyncEngine) 
         assert second.id != first.id
 
 
+class _ClaimInTheGap:
+    """A connection that lets a worker claim the queued row in the one gap that matters.
+
+    `enqueue`'s convergent path is two statements — insert-or-nothing, then look up the row the
+    insert conflicted with — and `ON CONFLICT DO NOTHING` locks nothing, so between them a worker
+    can take the row. That gap is a millisecond wide on a real instance and cannot be hit by
+    timing from a test, so it is opened deliberately: everything else is forwarded untouched.
+    """
+
+    def __init__(self, inner: AsyncConnection, database_url: str) -> None:
+        self._inner = inner
+        self._database_url = database_url
+        self.claimed = False
+
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        result = await self._inner.execute(statement, *args, **kwargs)
+        if not self.claimed and str(statement).lstrip().upper().startswith("INSERT"):
+            self.claimed = True
+            worker = create_async_engine(self._database_url)
+            try:
+                async with worker.connect() as connection:
+                    await operations.claim(
+                        connection, worker="thief/1", lease=LEASE, kinds=("test.work",)
+                    )
+                    await connection.commit()
+            finally:
+                await worker.dispose()
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def test_a_claim_taken_between_the_insert_and_the_look_up_is_converged_with(
+    engine: AsyncEngine, identity_database: str
+) -> None:
+    """The caller's transaction is somebody's upload, and it must not die for this.
+
+    Re-enqueuing work that is already queued converges on it. If a worker claims that row in the
+    gap between the conflicting insert and the look-up, the look-up — which asks for a *queued*
+    row — finds nothing; it used to answer that with `NoResultFound`, which aborted whatever
+    transaction had called `aggregates.schedule`. The running row is the same work, so it is what
+    convergence should return.
+    """
+    async with engine.connect() as connection:
+        first = await enqueue(connection, idempotency_key="scan:workspace-1")
+
+        watched = _ClaimInTheGap(connection, identity_database)
+        second = await operations.enqueue(
+            watched,  # type: ignore[arg-type] - a forwarding proxy, see the class docstring
+            kind="test.work",
+            max_attempts=4,
+            idempotency_key="scan:workspace-1",
+        )
+        await connection.commit()
+
+        assert watched.claimed, "the gap was never opened, so this proves nothing"
+        assert second.id == first.id, "converged on the work that is already happening"
+        assert await operations.count_by_state(connection) == {"running": 1}
+
+
+async def test_a_recurring_operation_queues_its_successor_even_after_the_claim(
+    engine: AsyncEngine, identity_database: str
+) -> None:
+    """The same gap, for the caller that must *not* converge with a running row.
+
+    A recurring operation queueing its own successor is the running row, so treating it as a
+    conflict would break the chain it is extending. When the queued row it conflicted with is
+    claimed in the gap, the key is free again — and the retry takes it rather than converging on
+    something this caller is not allowed to converge with.
+    """
+    async with engine.connect() as connection:
+        first = await enqueue(connection, idempotency_key="rollup:workspace-1")
+
+        watched = _ClaimInTheGap(connection, identity_database)
+        second = await operations.enqueue(
+            watched,  # type: ignore[arg-type] - a forwarding proxy, see the class docstring
+            kind="test.work",
+            max_attempts=4,
+            idempotency_key="rollup:workspace-1",
+            converge_with_running=False,
+        )
+        await connection.commit()
+
+        assert watched.claimed
+        assert second.id != first.id
+        assert await operations.count_by_state(connection) == {"queued": 1, "running": 1}
+
+
 async def test_a_running_operation_still_holds_its_key(engine: AsyncEngine) -> None:
     async with engine.connect() as connection:
         first = await enqueue(connection, idempotency_key="scan:workspace-1")

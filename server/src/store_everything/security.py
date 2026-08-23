@@ -101,6 +101,49 @@ def client_ip(request: Request) -> str | None:
     return request.client.host if request.client is not None else None
 
 
+#: Headers that say "somebody forwarded this to me". Any of them, present while the app is
+#: configured to trust none, means the peer address is a proxy's rather than a caller's.
+_FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
+
+
+def client_ip_identifies_caller(request: Request) -> bool:
+    """Whether the address in `client_ip` belongs to the caller — or to everybody at once.
+
+    Three deployments, and only the middle one makes the address a lie:
+
+    - **proxy headers trusted** — the ASGI server has already replaced the peer address with
+      the forwarded one, so it *is* the caller's;
+    - **a proxy in front whose headers are not trusted** — every caller arrives as the proxy,
+      so one address covers the whole instance and counting per address is counting everybody.
+      This is the shipped default behind Traefik, which is what made a per-address login
+      lockout an instance-wide login denial: ten junk attempts locked every user out;
+    - **no proxy at all** — the peer address is the caller's, and `SE_FORWARDED_ALLOW_IPS`
+      being empty is the correct configuration rather than a mistake.
+
+    A forwarding header is the caller's to set, so somebody who adds one exempts themselves
+    from per-address counting. That is the accepted cost of the alternative — locking every
+    user out of an instance configured exactly as the install docs describe. The per-identity
+    lockout is unaffected, and volumetric abuse belongs at the edge (ADR-0009).
+
+    Only *counting* consults this. What an event records is what the app actually observed,
+    proxy address included: an audit trail that omits what it saw is worse than a thin one.
+    """
+    if settings_of(request).trust_proxy_headers:
+        return True
+    return not any(header in request.headers for header in _FORWARDING_HEADERS)
+
+
+def counting_key(request: Request) -> str:
+    """Where to charge behaviour that has no credential to charge it to.
+
+    The address when it identifies somebody, and the instance itself when it does not — a
+    shared bucket rather than a per-address one that is secretly the same bucket anyway.
+    """
+    if client_ip_identifies_caller(request):
+        return f"ip:{client_ip(request) or 'unknown'}"
+    return "instance:behind-an-untrusted-proxy"
+
+
 def _expected_origin(request: Request) -> str | None:
     host = request.headers.get("host")
     return f"{request.url.scheme}://{host}".lower() if host else None
@@ -183,6 +226,55 @@ def _presented_credential(request: Request) -> str | None:
     return request.headers.get("authorization") or request.cookies.get(settings.session_cookie_name)
 
 
+def failed_auth_ceiling(settings: Settings) -> int:
+    """How many credentials may fail to authenticate, per minute, per counting key.
+
+    Derived rather than configured: it is a tenth of the request ceiling, because a client
+    presenting invalid credentials is doing something a working client almost never does, and
+    the number that matters is "much smaller than ordinary traffic" rather than any particular
+    value. The floor keeps it usable on an instance with a tiny request ceiling.
+    """
+    return max(10, settings.rate_limit_per_minute // 10)
+
+
+async def _note_failed_auth(request: Request) -> None:
+    """Charge one failed authentication, and refuse outright once the ceiling is reached.
+
+    The hole this closes: the request ceiling is keyed on a digest of the presented
+    credential, so rotating garbage got a fresh bucket every request — unlimited invalid
+    credentials, each one opening a pooled connection for the lookup and leaving no trace.
+    A failure is therefore charged to something the caller does not choose.
+
+    The counter is in-process, and the database is touched only when it refuses: recording
+    every failure would let an attacker make us write rows in the one table nothing deletes.
+    What the log gets is the *trip* — which is what spec 07 asks for — at most once per
+    window.
+    """
+    if limiter_of(request).allow(
+        f"auth-failed:{counting_key(request)}", limit=failed_auth_ceiling(settings_of(request))
+    ):
+        return
+
+    engine: AsyncEngine = request.app.state.engine
+    try:
+        async with engine.connect() as connection:
+            await note_refusal(
+                connection,
+                scope="auth",
+                key=counting_key(request),
+                window=_RATE_LIMIT_WINDOW,
+                client_ip=client_ip(request),
+            )
+            await connection.commit()
+    except SQLAlchemyError:
+        _logger.warning("could not record an authentication-failure refusal", exc_info=True)
+
+    raise TooManyRequests(
+        detail="Too many credentials failed to authenticate from here in one minute.",
+        retry_after_seconds=60,
+    )
+
+
 async def require_auth(request: Request) -> Credential:
     """Authenticate the caller, or refuse the request.
 
@@ -192,6 +284,11 @@ async def require_auth(request: Request) -> Credential:
     `500` on an instance whose database is down. Credential verification then runs on its
     own short-lived connection: stamping `last_used_at` is a diagnostic that should persist
     even when the handler's own transaction rolls back.
+
+    A credential that is *presented and invalid* is counted (`_note_failed_auth`). A request
+    carrying none is not: it is an unauthenticated request rather than a failed
+    authentication, and keeping that path free of both counting and I/O is what makes the
+    cheap refusal above cheap.
 
     Also enforces token scope: a `read` token is refused on any state-changing method, so
     least privilege is a property of the boundary rather than of each handler.
@@ -204,6 +301,9 @@ async def require_auth(request: Request) -> Credential:
         async with engine.connect() as connection:
             credential = await _authenticate(request, connection)
             await connection.commit()
+    except AuthenticationRequired:
+        await _note_failed_auth(request)
+        raise
     except AccountDisabledError as disabled:
         raise AccountDisabledProblem() from disabled
 
@@ -279,9 +379,7 @@ async def enforce_request_ceiling(request: Request) -> None:
 
     presented = _presented_credential(request)
     key = (
-        f"credential:{tokens.digest(presented)}"
-        if presented is not None
-        else f"ip:{client_ip(request) or 'unknown'}"
+        f"credential:{tokens.digest(presented)}" if presented is not None else counting_key(request)
     )
 
     if limiter_of(request).allow(key):
@@ -316,6 +414,8 @@ __all__ = [
     "CurrentCredential",
     "Forbidden",
     "client_ip",
+    "client_ip_identifies_caller",
+    "counting_key",
     "enforce_request_ceiling",
     "enforce_same_origin",
     "require_admin",

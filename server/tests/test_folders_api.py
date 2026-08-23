@@ -199,6 +199,115 @@ async def test_a_name_the_policy_refuses_is_refused(
     assert response.status_code == 422, response.text
 
 
+@pytest.mark.fr("F-001/FR-13")
+@pytest.mark.parametrize("name", [names.CONTROL_DIRECTORY, ".WORKSPACE", ".Workspace"])
+async def test_the_control_directory_cannot_be_created_at_a_workspace_root(
+    identity_settings: Settings, identity_database: str, name: str
+) -> None:
+    """A11: `validate_name` carried the check and no API call site ever asked for it.
+
+    The exact name adopted the app's own control directory as a user folder — and then the
+    scanner, which skips that key at the root before recording what it saw, concluded the row
+    was absent from a directory it had read successfully. The next scheduled scan trashed the
+    folder and everything under it while the files sat intact on disk. Case variants matter for
+    the same reason: the reservation is on the comparison key, which is what the scanner skips.
+    """
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, root):
+        response = await make_folder(client, workspace, name)
+
+        assert response.status_code == 422, response.text
+        assert "reserved" in response.text
+        # And the app's own control directory is still the app's.
+        assert (root / names.CONTROL_DIRECTORY / "marker").is_file()
+
+
+@pytest.mark.fr("F-001/FR-13")
+async def test_a_folder_cannot_be_renamed_onto_the_control_directorys_name(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """The same reservation, reached through the other door — and only at the root.
+
+    Below the root the name is ordinary, because nothing of the app's lives there, so the same
+    rename one level down has to succeed: this is a rule about a place, not about a string.
+    """
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, _):
+        at_root = await make_folder(client, workspace, "Album")
+        assert at_root.status_code == 201, at_root.text
+        parent = UUID(at_root.json()["id"])
+        nested = await make_folder(client, workspace, "Nested", parent=parent)
+        assert nested.status_code == 201, nested.text
+
+        refused = await move(client, UUID(at_root.json()["id"]), name=names.CONTROL_DIRECTORY)
+        allowed = await move(client, UUID(nested.json()["id"]), name=names.CONTROL_DIRECTORY)
+
+    assert refused.status_code == 422, refused.text
+    assert "reserved" in refused.text
+    assert allowed.status_code == 200, allowed.text
+
+
+@pytest.mark.fr("F-001/FR-13")
+async def test_a_folder_moved_to_the_root_cannot_take_the_control_directorys_name(
+    identity_settings: Settings, identity_database: str
+) -> None:
+    """Moving *and* renaming in one request is one operation, so one check covers both."""
+    async with workspace_ready(identity_settings, identity_database) as (client, workspace, _):
+        holder = await make_folder(client, workspace, "Album")
+        assert holder.status_code == 201, holder.text
+        nested = await make_folder(
+            client, workspace, names.CONTROL_DIRECTORY, parent=UUID(holder.json()["id"])
+        )
+        assert nested.status_code == 201, "the name is ordinary below the root"
+
+        root = await folder_at(identity_database, workspace, "")
+        refused = await move(client, UUID(nested.json()["id"]), parent=root.id)
+
+    assert refused.status_code == 422, refused.text
+    assert "reserved" in refused.text
+
+
+@pytest.mark.fr("F-001/FR-13")
+async def test_a_file_cannot_take_the_control_directorys_name_at_the_root(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The third door: a *file* renamed or moved onto the reserved name at a workspace root.
+
+    Both shapes, because a move with no new name still carries its old one somewhere new — and
+    below the root the same name is ordinary, which is what the successful half asserts.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"Album/notes.txt": b"a plain file"})
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        identifiers = await file_ids(identity_database)
+        root = await folder_at(identity_database, workspace, "")
+
+        renamed = await client.post(
+            f"{API_V1_PREFIX}/files/{identifiers['Album/notes.txt']}/move",
+            json={"folder": str(root.id), "name": names.CONTROL_DIRECTORY},
+            headers=SAME_ORIGIN,
+        )
+        # Allowed where nothing of the app's lives, then refused for the move alone.
+        allowed = await client.post(
+            f"{API_V1_PREFIX}/files/{identifiers['Album/notes.txt']}/move",
+            json={"name": names.CONTROL_DIRECTORY},
+            headers=SAME_ORIGIN,
+        )
+        moved = await client.post(
+            f"{API_V1_PREFIX}/files/{identifiers['Album/notes.txt']}/move",
+            json={"folder": str(root.id)},
+            headers=SAME_ORIGIN,
+        )
+
+    assert renamed.status_code == 422, renamed.text
+    assert allowed.status_code == 200, allowed.text
+    assert moved.status_code == 422, moved.text
+    assert "reserved" in moved.text
+    # The app's own control directory is untouched, and the file is still where it was.
+    assert (tree / names.CONTROL_DIRECTORY / "marker").is_file()
+    assert (tree / "Album" / names.CONTROL_DIRECTORY).is_file()
+
+
 async def test_creating_a_folder_whose_directory_exists_adopts_it_untouched(
     identity_settings: Settings, identity_database: str, tmp_path: Path
 ) -> None:
@@ -265,6 +374,48 @@ async def test_a_page_is_filled_across_the_seam(
 
     assert [item["name"] for item in page["data"]] == ["A", "B", "f00.txt", "f01.txt"]
     assert page["next_cursor"] is not None
+
+
+@pytest.mark.fr("F-015/FR-5")
+async def test_no_child_is_lost_at_any_page_size(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """Walked at every page size around the seam, because one of them used to lose a row.
+
+    When the subfolders end *exactly* on a page boundary the page has no room for a file — and
+    the cursor was still anchored on the first file the query had fetched to look ahead with, a
+    file no page had returned. Deterministic: five subfolders at `limit=5` skipped the first
+    file, every time, and no test hit it because none of them chose a size that divided the
+    folder count.
+
+    So the assertion is the invariant rather than one arrangement: at every page size from one
+    to more than the whole listing, the pages concatenate to the same complete ordering.
+    """
+    tree = tmp_path / "nas"
+    contents: dict[str, bytes] = {f"file-{index}.txt": b"x" for index in range(5)}
+    contents.update({f"dir-{index}/x.txt": b"x" for index in range(5)})
+    build(tree, contents)
+    expected = [f"folder:dir-{index}" for index in range(5)] + [
+        f"file:file-{index}.txt" for index in range(5)
+    ]
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        root = await folder_at(identity_database, workspace, "")
+
+        for limit in range(1, 13):
+            seen: list[str] = []
+            cursor: str | None = None
+            for _ in range(len(expected) + 2):
+                page = await children(
+                    client, root.id, limit=limit, **({"cursor": cursor} if cursor else {})
+                )
+                seen.extend(f"{item['kind']}:{item['name']}" for item in page["data"])
+                cursor = page["next_cursor"]
+                if cursor is None:
+                    break
+            assert cursor is None, f"the listing did not finish at limit={limit}"
+            assert seen == expected, f"limit={limit} returned {seen}"
 
 
 @pytest.mark.fr("F-015/FR-5")

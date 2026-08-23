@@ -79,14 +79,18 @@ async def migrations_are_current(engine: AsyncEngine) -> bool:
 async def request_connection(request: Request) -> AsyncIterator[AsyncConnection]:
     """One connection — and therefore one transaction — per request.
 
-    Everything a request touches shares it, which is what makes the event log a
+    Everything a *handler* touches shares it, which is what makes the event log a
     transactional outbox rather than a second write that can disagree (ADR-0007): the
-    change and its event commit together or not at all.
+    change and its event commit together or not at all. Authentication is the deliberate
+    exception and runs on its own connection (`security.require_auth`).
 
     SQLAlchemy begins the transaction implicitly on the first statement, so the commit
     here is what makes it durable. A handler that must persist something *and then* fail
     the request — recording a failed login before answering `401` — commits explicitly
     before raising; see `api/v1/auth.py`.
+
+    **When** that commit runs is part of the guarantee, not an implementation detail: see
+    `DatabaseConnection`.
     """
     engine: AsyncEngine = request.app.state.engine
     async with engine.connect() as connection:
@@ -98,5 +102,20 @@ async def request_connection(request: Request) -> AsyncIterator[AsyncConnection]
         await connection.commit()
 
 
-DatabaseConnection = Annotated[AsyncConnection, Depends(request_connection)]
-"""The dependency every handler and every auth check shares within one request."""
+DatabaseConnection = Annotated[AsyncConnection, Depends(request_connection, scope="function")]
+"""The connection a handler and everything it calls share within one request.
+
+`scope="function"` is load-bearing. A request-scoped dependency with `yield` is torn down
+*after* the response has been sent, so a commit that failed there could no longer change the
+`2xx` the client was already holding: a false success over rolled-back rows — sharpest where
+the transaction defers a constraint to `COMMIT` (the cross-workspace move in
+`api/v1/folders.py`), and where the bytes already moved on disk. Function scope ends the
+dependency when the handler returns and *before* the response starts, so a failed commit is
+answered as `500` — "never `200` with an error body"
+(08-api-principles.md § errors, 12-reliability.md § the request transaction).
+
+It also stops a streamed download from holding a pooled connection for the whole transfer.
+
+Needs FastAPI >= 0.121, where `scope` was introduced; `tests/test_request_lifecycle.py`
+asserts the ordering rather than trusting the version pin to keep it.
+"""

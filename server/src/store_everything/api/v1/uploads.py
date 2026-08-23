@@ -25,6 +25,7 @@ the upload resource from the `201 Created` instead; see `resumable` and Q58.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
@@ -53,6 +54,8 @@ from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
 from store_everything.security import CurrentCredential, settings_of
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["uploads"])
 
@@ -128,6 +131,26 @@ def _vanished() -> ProblemException:
         detail=(
             "The content of this file is no longer on the storage, so it cannot be kept as a "
             "version. A re-scan will record that it is gone."
+        ),
+    )
+
+
+def _unregistered(path: str) -> ProblemException:
+    """Something is at the destination that the app has never seen.
+
+    A file hand-copied onto the storage since the last scan, or one a scan *refused* — an
+    unusable name, the loser of a case collision, a symlink. The collision checks consult
+    registered rows, so this is the one writer that could otherwise destroy content the app
+    never recorded, with no version and no trash entry to recover it from. `move_entry` and
+    `folders.create` both refuse exactly this state; ADR-0019's rule is report, never repair.
+    """
+    return ProblemException(
+        status=409,
+        slug="conflict",
+        title="Conflict",
+        detail=(
+            f"Something is already on the storage at {path!r} that the app has not registered. "
+            "A re-scan has to record it before it can be replaced."
         ),
     )
 
@@ -235,6 +258,12 @@ async def _finalize(
     segments = names.split_path(session.target_path)
     *parents, name = segments
 
+    # Everything below is a check-then-act over two systems — look, snapshot, rename, write rows
+    # — so it runs one publisher at a time per destination. Without it two finalizes racing on
+    # one free path both find it free, and the loser's rename destroys the winner's bytes before
+    # any row guard can fire (F-001/FR-20).
+    await uploads.lock_target(connection, workspace_id=workspace.id, path=session.target_path)
+
     replacing = await _existing_target(connection, workspace, segments, if_exists=session.if_exists)
     try:
         folder = await folders.ensure_path(
@@ -259,6 +288,14 @@ async def _finalize(
     destination = await asyncio.to_thread(
         filestore.resolve_within, workspace.root_path, Path(*segments)
     )
+    if replacing is None and await asyncio.to_thread(_occupied_on_disk, destination):
+        # Nothing registered here, but something *is* here. Publishing over it would destroy
+        # content the app never recorded — no snapshot, no version, no trash entry — which is
+        # the one thing this path is not allowed to do (F-001/FR-20). Best-effort by the same
+        # standard as `move_entry`: a file arriving in the instant after this check is a race
+        # the filesystem cannot close, and a scan reconciles it.
+        raise _unregistered(session.target_path)
+
     # Before a byte of the destination is overwritten: the content it holds now becomes a
     # version, or this upload is refused (F-007/FR-9, F-001/FR-20).
     snapshot = (
@@ -338,6 +375,15 @@ async def _finalize(
     )
     await uploads.complete(connection, session=session, file_id=found.id)
     return FileSummary.of(found, version, await files.path_of(connection, found))
+
+
+def _occupied_on_disk(destination: Path) -> bool:
+    """Whether anything at all is at this path. **Blocking.**
+
+    Symlinks included, without following them: a link is something, and one pointing out of the
+    workspace is the shape this refusal exists for.
+    """
+    return destination.exists(follow_symlinks=False)
 
 
 async def _snapshot(
@@ -426,6 +472,26 @@ def _protocol_headers(
     if session.declared_length is not None:
         headers[resumable.LENGTH_HEADER] = str(session.declared_length)
     return headers
+
+
+def _upload_location(request: Request, session_id: UUID) -> str:
+    """Where the upload resource lives, asked of the routing table rather than assembled here.
+
+    `Location` is the *only* thing a client that did not build its own URLs has to go on —
+    curl, tus tooling, and the iOS background uploader this protocol exists for (ADR-0017)
+    all resolve it and send the next request there. Written by hand it read `/uploads/{id}`,
+    which omits the router's own `/api/v1` prefix and therefore resolves onto the SPA
+    fallback: HTML, or a `405`, where the upload should have been. Our own web client only
+    survived because it rebuilds the URL from the id in the body.
+
+    Asking the app means the header cannot drift from where the route actually is.
+    """
+    return str(request.app.url_path_for("upload_offset", upload_id=str(session_id)))
+
+
+def _file_location(request: Request, file_id: UUID) -> str:
+    """Where the file this upload produced lives — same reason, same source of truth."""
+    return str(request.app.url_path_for("read_file", file_id=str(file_id)))
 
 
 async def _session_for(
@@ -576,7 +642,7 @@ async def create_upload(
             UploadState.of(session).model_dump(mode="json"),
             status_code=201,
             headers={
-                "Location": f"{UPLOADS_PATH}/{session.id}",
+                "Location": _upload_location(request, session.id),
                 **_protocol_headers(session, limits, complete=False),
             },
         )
@@ -597,7 +663,7 @@ async def create_upload(
         summary.model_dump(mode="json"),
         status_code=201,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
@@ -652,7 +718,9 @@ async def upload_offset(
         400: {"description": "Upload-Offset is missing or unintelligible"},
         404: {"description": "No such upload, or not yours"},
         409: {"description": "The offset does not match; Upload-Offset carries the real one"},
-        410: {"description": "The upload expired"},
+        410: {
+            "description": "The upload expired, or its staged content no longer covers its offset"
+        },
         413: {"description": "The body exceeds Upload-Limit: max-append-size"},
         415: {"description": "An append must be application/partial-upload"},
     },
@@ -671,7 +739,7 @@ async def append_to_upload(
     if session.is_complete:
         # A retry whose predecessor's response was lost: replay the recorded outcome rather
         # than re-executing it (08 § idempotency).
-        return await _replay(connection, session, limits)
+        return await _replay(request, connection, session, limits)
 
     media_type = mediatypes.normalize(request.headers.get("content-type"))
     if media_type != resumable.MEDIA_TYPE:
@@ -693,9 +761,12 @@ async def append_to_upload(
 
     workspace = await _writable_workspace(connection, session.workspace_id, credential)
     staging = uploads.staging_path(workspace.root_path, session.id)
-    # Bytes past the committed offset were never acknowledged — a crash between the fsync and
-    # the offset's commit — so they go before anything new is written.
-    await asyncio.to_thread(uploads.discard_unacknowledged, staging, session.committed_offset)
+    # Staging is made to match the committed offset before anything new is written: bytes past
+    # it were never acknowledged (a crash between the fsync and the offset's commit) and go.
+    try:
+        await asyncio.to_thread(uploads.align_staging, staging, session.committed_offset)
+    except uploads.StagingLostError as lost:
+        raise await _staging_lost(connection, session, lost) from lost
 
     size = await _receive(request, staging, limit=limits.max_append_size)
     if limits.max_size is not None and size > limits.max_size:
@@ -727,7 +798,7 @@ async def append_to_upload(
         summary.model_dump(mode="json"),
         status_code=200,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
@@ -755,6 +826,10 @@ async def cancel_upload(
         raise _not_found("This upload already completed; the file it produced is not affected.")
     if session.is_open:
         await uploads.close(connection, session_id=session.id, state="cancelled")
+        # Rows before bytes (12 § ordering rule), and committed here rather than on the way out:
+        # a cancellation whose commit fails after the unlink would leave an `open` session the
+        # client may still legitimately resume, with nothing behind its acknowledged offset.
+        await connection.commit()
         workspace = await workspaces.get(connection, session.workspace_id)
         if workspace is not None:
             # Best effort, because the janitor is the guarantee: a terminal session's staging
@@ -766,7 +841,10 @@ async def cancel_upload(
 
 
 async def _replay(
-    connection: DatabaseConnection, session: uploads.Session, limits: resumable.Limits
+    request: Request,
+    connection: DatabaseConnection,
+    session: uploads.Session,
+    limits: resumable.Limits,
 ) -> Response:
     """The outcome a completed session recorded, for a client whose response was lost."""
     if session.file_id is None:  # pragma: no cover - completion always records its file
@@ -782,10 +860,45 @@ async def _replay(
         summary.model_dump(mode="json"),
         status_code=200,
         headers={
-            "Location": f"/files/{summary.id}",
+            "Location": _file_location(request, summary.id),
             resumable.COMPLETE_HEADER: resumable.boolean(True),
             resumable.LIMIT_HEADER: limits.render(),
         },
+    )
+
+
+async def _staging_lost(
+    connection: DatabaseConnection, session: uploads.Session, lost: uploads.StagingLostError
+) -> ProblemException:
+    """End a session whose staged bytes no longer back the offset it promised.
+
+    Fewer staged bytes than the committed offset means the file was truncated or deleted
+    underneath the session — reachable, because staging lives in the user-visible
+    `.workspace/staging/`. Appending would put the next chunk at the wrong position and publish
+    a file nobody sent, and no offset the client could resume from exists any more, so the
+    session is failed and the answer is `410`: start a new upload (F-001/FR-15).
+
+    Committed here rather than left to the request's own commit, because the request ends in a
+    refusal — and a session that stays `open` would invite the same broken resume again.
+    """
+    await uploads.close(connection, session_id=session.id, state="failed")
+    await connection.commit()
+    _logger.warning(
+        "upload session failed: staged content no longer covers the acknowledged offset",
+        extra={
+            "upload": str(session.id),
+            "staged": lost.staged,
+            "acknowledged": lost.committed,
+        },
+    )
+    return ProblemException(
+        status=410,
+        slug="gone",
+        title="Gone",
+        detail=(
+            "The staged content of this upload no longer covers the offset it was acknowledged "
+            "at, so it cannot be resumed. Start a new upload."
+        ),
     )
 
 
