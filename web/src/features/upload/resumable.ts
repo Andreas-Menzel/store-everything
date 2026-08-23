@@ -21,8 +21,9 @@ import { toFailure, type Failure } from '@/shared';
 /** The draft revision this client is written against — ADR-0017 pins it deliberately. */
 export const INTEROP_VERSION = 9;
 
-/** Bytes per append. Well inside the server's default ceiling, and small enough that a dropped
- * connection costs little. The server's own limit is authoritative and is read before starting. */
+/** Bytes per append. Well inside the server's default ceiling (`max-append-size`, 64 MiB), and
+ * small enough that a dropped connection costs little. Fixed, not negotiated: the server
+ * publishes its own limits through `OPTIONS`, and reading them before starting is still to do. */
 export const CHUNK_BYTES = 8 * 1024 * 1024;
 
 /** Anything smaller goes in the creating request: a second round trip buys nothing. */
@@ -50,11 +51,20 @@ function boolean(value: boolean): string {
   return value ? '?1' : '?0';
 }
 
+/**
+ * The protocol headers this client adds — and deliberately **not** `content-type`.
+ *
+ * The generated SDK carries the right one per operation: `application/octet-stream` when
+ * creating an upload, `application/partial-upload` on an append, which the server requires and
+ * answers `415` without. Setting one here overrode both, because these headers are spread over
+ * the operation's defaults and header names are case-insensitive — so every upload larger than
+ * one chunk failed, while every upload smaller than one chunk (the only size any test used)
+ * went through the creating request and passed.
+ */
 function protocolHeaders(complete: boolean, offset?: number): Record<string, string> {
   const headers: Record<string, string> = {
     'upload-draft-interop-version': String(INTEROP_VERSION),
     'upload-complete': boolean(complete),
-    'content-type': 'application/octet-stream',
   };
   if (offset !== undefined) headers['upload-offset'] = String(offset);
   return headers;
