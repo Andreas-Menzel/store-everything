@@ -33,7 +33,8 @@ const cache = useQueryClient();
 const workspaces = useQuery({
   queryKey: ['workspaces'],
   queryFn: async (): Promise<WorkspaceSummary[]> => {
-    const { data } = await listWorkspaces();
+    const { data, error, response } = await listWorkspaces();
+    if (error !== undefined) throw toFailure(error, response?.status);
     return data?.data ?? [];
   },
   // A workspace is built by a background operation, so the list is worth re-reading while one
