@@ -101,6 +101,29 @@ EXTRACTOR_DISABLED = "extractor.disabled"
 EXTRACTOR_TOKEN_CREATED = "extractor.token_created"  # noqa: S105 - an action name, not a secret
 EXTRACTOR_TOKEN_REVOKED = "extractor.token_revoked"  # noqa: S105 - an action name, not a secret
 
+#: Taxonomy administration (F-003/FR-10). Five actions rather than one `tag.updated`, because
+#: the audit question is "who moved `receipts` under `finance`" and "who made `bill` mean
+#: `invoice`" — a reader should not have to open the details to tell a rename from a re-parent.
+TAG_CREATED = "tag.created"
+TAG_RENAMED = "tag.renamed"
+TAG_ALIAS_ADDED = "tag.alias_added"
+TAG_ALIAS_REMOVED = "tag.alias_removed"
+TAG_PARENT_ADDED = "tag.parent_added"
+TAG_PARENT_REMOVED = "tag.parent_removed"
+TAG_MERGED = "tag.merged"
+#: The typo-grade erasure ADR-0006 reserves for a tag nothing carries. A tag the vocabulary
+#: refuses is `rejected` instead — soft-removed, its name kept as a suppression record.
+TAG_DELETED = "tag.deleted"
+
+#: Tag edits on a file. Per edit, not per generation: an extractor's own output is recorded by
+#: its run (`extraction_run`), while these are what a *person* did — the shared-state changes
+#: F-003/FR-9 promises the audit trail carries, on a resource other people can also edit.
+FILE_TAGGED = "file.tagged"
+FILE_UNTAGGED = "file.untagged"
+
+FOLDER_TAGGED = "folder.tagged"
+FOLDER_UNTAGGED = "folder.untagged"
+
 RESOURCE_USER = "user"
 RESOURCE_SESSION = "session"
 RESOURCE_OPERATION = "operation"
@@ -112,6 +135,9 @@ RESOURCE_FILE = "file"
 #: events carry the id in `details` and set `resource_id` only where there is a UUID to set (a
 #: token's). Details are the audit trail's self-contained record anyway (F-011/FR-9).
 RESOURCE_EXTRACTOR = "extractor"
+#: The vocabulary itself, as opposed to a tag *on* something: a taxonomy edit is an event about
+#: the tag, while tagging a file is an event about the file.
+RESOURCE_TAG = "tag"
 
 #: Detail keys that would put a credential into the permanent record. The log is the one
 #: table nothing ever deletes, so a secret written here is a secret kept forever.

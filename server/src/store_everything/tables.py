@@ -1390,3 +1390,197 @@ derived_asset = Table(
 """A generated artifact in the derived store — thumbnail, page render, keyframe, transcript,
 rendition. Fully regenerable (02 § invariants #5), which is why every column here can be
 recomputed from the source plane and why deleting one is never data loss."""
+
+
+# ------------------------------------------------------ the tag vocabulary, and what carries one
+#
+# ADR-0006 and [F-003](../../../features/F-003-tagging.md). One global, admin-governed DAG; a
+# file or folder carries a flat list of the **most specific** tags it earns; a broad search
+# expands downward over the closure at query time. No ancestor is ever written onto a file, and
+# that is the whole point — restructuring the taxonomy touches zero file rows, and a forest photo
+# tagged `tree` never acquires `garden` because some path led there.
+
+#: Where a tag stands in the vocabulary (ADR-0006). Only `active` tags are vocabulary —
+#: appliable, searchable, completable. `suggested` is the auto-tagger's quarantine, and
+#: `rejected` is a soft removal that keeps the name: a suppression record, so a later
+#: extraction run cannot re-create a suggestion an admin already turned down.
+TAG_STATUSES = ("active", "suggested", "rejected")
+
+#: What a *user* said about one tag on one file (ADR-0004). `auto` is deliberately absent: a
+#: machine's claim is derived data stamped with the run that produced it and belongs with the
+#: other derived rows, while this table is curation and outlives every generation. Keeping the
+#: two apart is what makes [02 § invariants](../../../specs/02-domain-model.md#invariants) #4
+#: structural instead of merely tested — the path that replaces a generation's output has no
+#: reason to name this table, and does not.
+TAG_CURATION_STATES = ("manual", "confirmed", "rejected")
+
+#: A tag name, in characters. Unlike a filename it is a label a person types: spaces are
+#: allowed (and collapsed), case is preserved for display and folded for identity.
+MAX_TAG_NAME_LENGTH = 100
+
+
+tag = Table(
+    "tag",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("status", Text, nullable=False, server_default=text("'active'")),
+    # The admin who put it in the vocabulary — NULL for one a machine suggested, because an
+    # extractor is not a user (ADR-0007) and an approved suggestion has no author to name.
+    Column(
+        "created_by",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    _created_at(),
+    CheckConstraint(one_of("status", TAG_STATUSES), name="status_known"),
+    # The review queue's read: every tag awaiting a decision (F-003/FR-12).
+    Index("ix_tag_status", "status"),
+)
+"""A node in the one global tag vocabulary. Deliberately nameless: a tag's names live in
+`tag_name`, because a tag has one canonical name *and* any number of synonyms, and "which
+spellings mean this tag" is one question with one answer table."""
+
+
+tag_name = Table(
+    "tag_name",
+    metadata,
+    # The folded key **is** the primary key, and that is the point: a synonym and a canonical
+    # name cannot both claim `car`, because they are rows in the same table. Two tables would
+    # need a cross-table check no constraint can express, and the failure it would let through
+    # is the worst kind — `car` meaning two things, resolved by whichever query ran first.
+    Column("name_key", Text, primary_key=True),
+    # As typed, for display. Case and spelling are the author's; identity is the key's.
+    Column("name", Text, nullable=False),
+    Column("tag_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), nullable=False),
+    Column("is_alias", Boolean, nullable=False, server_default=text("false")),
+    _created_at(),
+    CheckConstraint(f"length(name) BETWEEN 1 AND {MAX_TAG_NAME_LENGTH}", name="name_length"),
+    CheckConstraint("length(name_key) >= 1", name="key_present"),
+    # Exactly one canonical name per tag; every other spelling of it is an alias.
+    Index("uq_tag_name_canonical", "tag_id", unique=True, postgresql_where=text("NOT is_alias")),
+    # Prefix completion (F-003/FR-8). A btree can serve `LIKE 'inv%'` only under an operator
+    # class that ignores collation, so the index says which one — otherwise every keystroke
+    # would be a sequential scan over the whole vocabulary.
+    Index("ix_tag_name_prefix", "name_key", postgresql_ops={"name_key": "text_pattern_ops"}),
+    # Every spelling of one tag: the alias list an admin edits, which the partial unique index
+    # above cannot serve because it holds only the canonical rows.
+    Index("ix_tag_name_tag_id", "tag_id"),
+)
+"""Every spelling that resolves to a tag — its canonical name and its aliases, in one table.
+
+Aliases are what absorbs model-label drift (ADR-0006): an auto-tagger emitting `automobile`
+lands on `car` without a new tag, and the taxonomy stays curated. They are also why completion
+and resolution are the same lookup — typing `automobile` can offer `car`, because the name that
+matched and the tag it means are one row apart."""
+
+
+tag_edge = Table(
+    "tag_edge",
+    metadata,
+    Column(
+        "parent_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "child_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True
+    ),
+    _created_at(),
+    CheckConstraint("parent_id <> child_id", name="no_self_parent"),
+    # "What is directly under this tag" — the tree an admin UI renders one level at a time.
+    Index("ix_tag_edge_child_id", "child_id"),
+)
+"""One *is-a* edge of the vocabulary DAG. **Multi-parent by design** (ADR-0006): `tree` sits
+under `plant` and under `landscaping`, and neither placement is wrong. Cycles are refused when
+an edge is added, which is what keeps the closure rebuild finite."""
+
+
+tag_closure = Table(
+    "tag_closure",
+    metadata,
+    Column(
+        "ancestor_id",
+        UUID(as_uuid=True),
+        ForeignKey("tag.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "descendant_id",
+        UUID(as_uuid=True),
+        ForeignKey("tag.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("depth", Integer, nullable=False),
+    CheckConstraint("depth >= 0", name="depth_not_negative"),
+    CheckConstraint("(ancestor_id = descendant_id) = (depth = 0)", name="self_row_at_depth_zero"),
+    # The other direction: every ancestor of one tag, which is what renders the breadcrumb
+    # `nature / plant / tree` and what cycle detection asks before an edge is allowed.
+    Index("ix_tag_closure_descendant_id", "descendant_id"),
+)
+"""Precomputed reachability, so `tag:nature` expands to every descendant in one indexed lookup
+instead of a recursive query per search (ADR-0006).
+
+Unlike the folder closure this graph is a DAG, so two tags can be connected by paths of
+different lengths. `depth` is therefore the **shortest** one and the pair is the key: expansion
+asks whether the row exists, and the number only renders a breadcrumb. One row per path would
+answer neither question better and would grow combinatorially with every diamond."""
+
+
+file_tag = Table(
+    "file_tag",
+    metadata,
+    Column(
+        "file_id", UUID(as_uuid=True), ForeignKey("file.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "tag_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("provenance", Text, nullable=False),
+    # Who said it. Required: curation without an author would be indistinguishable from a
+    # machine's claim, and "stamped with Bob's user id" is what F-003 promises Alice sees.
+    Column(
+        "user_id",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(one_of("provenance", TAG_CURATION_STATES), name="provenance_known"),
+    # Usage counts and, later, the tag filter's file set (F-003/FR-8, F-002).
+    Index("ix_file_tag_tag_id", "tag_id"),
+)
+"""**A user's word on one tag for one file**: applied by hand, an auto tag confirmed, or an auto
+tag rejected. One row per pair, because a person's position on a tag is one position.
+
+On the *file*, not on a version: a tag describes the thing, so it survives a new upload of the
+same document (02 § file — tags attach to the UUID). Machine claims go the other way, per
+version, because they describe bytes that a new version replaces."""
+
+
+folder_tag = Table(
+    "folder_tag",
+    metadata,
+    Column(
+        "folder_id",
+        UUID(as_uuid=True),
+        ForeignKey("folder.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tag_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "user_id",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    _created_at(),
+    Index("ix_folder_tag_tag_id", "tag_id"),
+)
+"""A tag on a directory ([F-015/FR-9](../../../features/F-015-folders.md)) — manual and
+self-only. No provenance column and no confidence: extractors never run on folders, so there is
+no machine claim to curate and nothing for the ADR-0004 state machine to do here.
+
+A folder tag describes the folder. It does **not** match the files inside it; query-time
+inheritance is deferred with its precedence rules unanswered (Q23)."""

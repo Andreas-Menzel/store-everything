@@ -99,7 +99,11 @@ Every error is `application/problem+json` — one shape everywhere, so clients h
 /api/v1/views                        saved views & library pages (F-017): system + personal,
                                      per-user nav state; executed via POST /search — no own results endpoint
 /api/v1/archives                     archive a selection (F-016); {id}/content = Range download
-/api/v1/tags/…                       taxonomy (DAG), aliases, autocomplete; admin approve/reject suggestions
+/api/v1/tags                         GET = autocomplete with `prefix` (ranked, one page), the
+                                     taxonomy listing without it; POST ⚙ creates
+                                     {id} ⚙: PATCH (rename, parents, aliases — declarative),
+                                     /merge, DELETE (only a tag nothing carries);
+                                     approve/reject suggestions ⚙ (F-003/FR-12)
 /api/v1/shared-with-me               received grant roots: topmost visible folders/files granted by
                                      others, with owner + role (F-008, 07 § visibility roots)
 /api/v1/shares/…                     share links
@@ -174,8 +178,8 @@ flowchart LR
         VIEWS["GET·POST /views · GET·PATCH·DELETE /views/{id}<br/>(saved views & library pages;<br/>members set hidden·position,<br/>system-view definitions ⚙)"]
         DUPS["GET /duplicates<br/>(groups, bulk resolve)"]
         PEOPLE["GET /people · GET·PATCH·DELETE /people/{id}<br/>POST /people/{id}/merge · GET …/thumbnail<br/>(persons — F-018, deferred)"]
-        TAGS["GET /tags?prefix=…<br/>(autocomplete: prefix + similarity)"]
-        TAX["GET·POST·PATCH /tags ⚙<br/>(taxonomy DAG, aliases,<br/>suggestions approve·reject)"]
+        TAGS["GET /tags?prefix=… · GET /tags/{id}<br/>(autocomplete: prefix + similarity)"]
+        TAX["POST /tags ⚙ · PATCH·DELETE /tags/{id} ⚙<br/>POST /tags/{id}/merge ⚙<br/>(taxonomy DAG, aliases,<br/>suggestions approve·reject)"]
     end
 
     subgraph SHG["Permissions & Sharing"]

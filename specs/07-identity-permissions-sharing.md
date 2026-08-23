@@ -55,6 +55,7 @@ flowchart LR
 | `manage` | `write` + grant permissions, delete (to trash), restore, purge ([F-014](../features/F-014-deletion-and-trash.md)) |
 
 - **Shared truth:** tags/metadata belong to the file — when Bob (with `write`) edits tags on Alice's file, Alice sees Bob's changes ([02-domain-model.md](02-domain-model.md#file)). Provenance records *who*: manual tags carry the user id.
+- **The tag vocabulary is instance-wide and the exception that proves the rule.** Any authenticated caller may read and complete it — a shared vocabulary nobody can browse is not usable — while *curating* it (create, rename, re-parent, alias, merge, delete, approve suggestions) is admin-only ([F-003/FR-10](../features/F-003-tagging.md)). That is instance administration, not data access: the words are global, but every count, listing and search built on them stays scoped to what the caller can see, admins included ([02 § Tag/FileTag](02-domain-model.md#tag--filetag)). Applying a tag to a file or folder needs `write` on that file or folder like any other edit.
 - Effective permission = union of grants (most permissive wins along the path). Fine-grained deny rules are out of scope for v1.
 
 ### Visibility roots (what a grantee sees)

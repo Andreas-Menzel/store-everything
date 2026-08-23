@@ -4,6 +4,47 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+/**
+ * AppliedTag
+ *
+ * One tag as it sits on a file or a folder.
+ *
+ * Shared by both surfaces on purpose: a tag on a folder is the same word from the same
+ * vocabulary, and a client that can render one can render the other. `provenance` is what
+ * tells them apart in the other direction — a folder tag is always `manual`, because
+ * extractors never run on folders ([F-015/FR-9](../../../../features/F-015-folders.md)).
+ */
+export type AppliedTag = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Status
+     */
+    status: 'active' | 'suggested' | 'rejected';
+    /**
+     * Provenance
+     */
+    provenance: 'manual' | 'confirmed' | 'auto';
+    /**
+     * User
+     */
+    user: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
 export type Child = ChildFolder | ChildFile;
 
 /**
@@ -373,6 +414,10 @@ export type FileSummary = {
      */
     modified_at: string | null;
     trash?: TrashInfo | null;
+    /**
+     * Tags
+     */
+    tags?: Array<AppliedTag>;
 };
 
 /**
@@ -637,6 +682,20 @@ export type PageSegmentInfo = {
 };
 
 /**
+ * Page[TagSummary]
+ */
+export type PageTagSummary = {
+    /**
+     * Data
+     */
+    data: Array<TagSummary>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
+};
+
+/**
  * Page[UserSummary]
  */
 export type PageUserSummary = {
@@ -879,6 +938,201 @@ export type SessionSummary = {
 };
 
 export type Status = 'none' | 'pending' | 'indexed' | 'partial' | 'failed';
+
+/**
+ * TagApplyRequest
+ *
+ * Which tag to apply — by id, or by any spelling of its name.
+ *
+ * Two ways because there are two callers. A picker has the id from a completion and should not
+ * re-resolve a word that may have been renamed since; a person typing has only the word, and
+ * resolving it through the alias table is how `automobile` lands on `car`.
+ */
+export type TagApplyRequest = {
+    /**
+     * Tag
+     */
+    tag?: string | null;
+    /**
+     * Name
+     */
+    name?: string | null;
+};
+
+/**
+ * TagCreateRequest
+ */
+export type TagCreateRequest = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Parents
+     */
+    parents?: Array<string>;
+    /**
+     * Aliases
+     */
+    aliases?: Array<string>;
+};
+
+/**
+ * TagDetail
+ */
+export type TagDetail = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Status
+     */
+    status: 'active' | 'suggested' | 'rejected';
+    /**
+     * Aliases
+     */
+    aliases: Array<string>;
+    /**
+     * Parents
+     */
+    parents: Array<TagReference>;
+    /**
+     * Children
+     */
+    children: Array<TagReference>;
+    /**
+     * Ancestors
+     */
+    ancestors: Array<TagReference>;
+    usage: TagUsage;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Created By
+     */
+    created_by: string | null;
+};
+
+/**
+ * TagMergeRequest
+ */
+export type TagMergeRequest = {
+    /**
+     * Into
+     */
+    into: string;
+};
+
+/**
+ * TagMergeResult
+ */
+export type TagMergeResult = {
+    tag: TagDetail;
+    /**
+     * Moved Files
+     */
+    moved_files: number;
+    /**
+     * Moved Folders
+     */
+    moved_folders: number;
+};
+
+/**
+ * TagReference
+ */
+export type TagReference = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+};
+
+/**
+ * TagSummary
+ */
+export type TagSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Status
+     */
+    status: 'active' | 'suggested' | 'rejected';
+    usage: TagUsage;
+    /**
+     * Parents
+     */
+    parents: Array<string>;
+    /**
+     * Matched
+     */
+    matched?: string | null;
+    /**
+     * Matched Alias
+     */
+    matched_alias?: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * TagUpdateRequest
+ *
+ * Every field optional; absent means unchanged, and a present list is the whole set.
+ */
+export type TagUpdateRequest = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Parents
+     */
+    parents?: Array<string> | null;
+    /**
+     * Aliases
+     */
+    aliases?: Array<string> | null;
+};
+
+/**
+ * TagUsage
+ *
+ * How much of **the caller's own** library carries the tag.
+ *
+ * Caller-scoped, not instance-wide: a member should not learn from an autocomplete how many
+ * files somebody else has tagged `divorce`, and instance admin is not data access
+ * ([07](../../../../specs/07-identity-permissions-sharing.md)).
+ */
+export type TagUsage = {
+    /**
+     * Files
+     */
+    files: number;
+    /**
+     * Folders
+     */
+    folders: number;
+};
 
 /**
  * TokenCreateRequest
@@ -2318,6 +2572,116 @@ export type MoveFolderResponses = {
 
 export type MoveFolderResponse = MoveFolderResponses[keyof MoveFolderResponses];
 
+export type ReadFolderTagsData = {
+    body?: never;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+    };
+    query?: never;
+    url: '/api/v1/folders/{folder_id}/tags';
+};
+
+export type ReadFolderTagsErrors = {
+    /**
+     * No such folder, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFolderTagsError = ReadFolderTagsErrors[keyof ReadFolderTagsErrors];
+
+export type ReadFolderTagsResponses = {
+    /**
+     * Response Read Folder Tags
+     *
+     * Successful Response
+     */
+    200: Array<AppliedTag>;
+};
+
+export type ReadFolderTagsResponse = ReadFolderTagsResponses[keyof ReadFolderTagsResponses];
+
+export type TagFolderData = {
+    body: TagApplyRequest;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+    };
+    query?: never;
+    url: '/api/v1/folders/{folder_id}/tags';
+};
+
+export type TagFolderErrors = {
+    /**
+     * No such folder, or not yours
+     */
+    404: unknown;
+    /**
+     * That tag is not part of the vocabulary
+     */
+    409: unknown;
+    /**
+     * No tag goes by that name
+     */
+    422: unknown;
+};
+
+export type TagFolderResponses = {
+    /**
+     * Successful Response
+     */
+    201: AppliedTag;
+};
+
+export type TagFolderResponse = TagFolderResponses[keyof TagFolderResponses];
+
+export type UntagFolderData = {
+    body?: never;
+    path: {
+        /**
+         * Folder Id
+         */
+        folder_id: string;
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/folders/{folder_id}/tags/{tag_id}';
+};
+
+export type UntagFolderErrors = {
+    /**
+     * No such folder, or it does not carry that tag
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UntagFolderError = UntagFolderErrors[keyof UntagFolderErrors];
+
+export type UntagFolderResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type UntagFolderResponse = UntagFolderResponses[keyof UntagFolderResponses];
+
 export type ReadFileData = {
     body?: never;
     path: {
@@ -2465,6 +2829,116 @@ export type ReadFileMetadataResponses = {
 
 export type ReadFileMetadataResponse = ReadFileMetadataResponses[keyof ReadFileMetadataResponses];
 
+export type ReadFileTagsData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/tags';
+};
+
+export type ReadFileTagsErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileTagsError = ReadFileTagsErrors[keyof ReadFileTagsErrors];
+
+export type ReadFileTagsResponses = {
+    /**
+     * Response Read File Tags
+     *
+     * Successful Response
+     */
+    200: Array<AppliedTag>;
+};
+
+export type ReadFileTagsResponse = ReadFileTagsResponses[keyof ReadFileTagsResponses];
+
+export type TagFileData = {
+    body: TagApplyRequest;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/tags';
+};
+
+export type TagFileErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * That tag is not part of the vocabulary
+     */
+    409: unknown;
+    /**
+     * No tag goes by that name
+     */
+    422: unknown;
+};
+
+export type TagFileResponses = {
+    /**
+     * Successful Response
+     */
+    201: AppliedTag;
+};
+
+export type TagFileResponse = TagFileResponses[keyof TagFileResponses];
+
+export type UntagFileData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/tags/{tag_id}';
+};
+
+export type UntagFileErrors = {
+    /**
+     * No such file, or it does not carry that tag
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UntagFileError = UntagFileErrors[keyof UntagFileErrors];
+
+export type UntagFileResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type UntagFileResponse = UntagFileResponses[keyof UntagFileResponses];
+
 export type ReadFileContentData = {
     body?: never;
     path: {
@@ -2544,3 +3018,226 @@ export type MoveFileResponses = {
 };
 
 export type MoveFileResponse = MoveFileResponses[keyof MoveFileResponses];
+
+export type ListTagsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Prefix
+         */
+        prefix?: string | null;
+        /**
+         * Status
+         */
+        status?: 'active' | 'suggested' | 'rejected' | 'all';
+        /**
+         * Limit
+         */
+        limit?: number | null;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/tags';
+};
+
+export type ListTagsErrors = {
+    /**
+     * The status filter is not the caller's to ask for
+     */
+    422: unknown;
+};
+
+export type ListTagsResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageTagSummary;
+};
+
+export type ListTagsResponse = ListTagsResponses[keyof ListTagsResponses];
+
+export type CreateTagData = {
+    body: TagCreateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tags';
+};
+
+export type CreateTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * That name already resolves to a tag
+     */
+    409: unknown;
+    /**
+     * The name, a parent or an alias was refused
+     */
+    422: unknown;
+};
+
+export type CreateTagResponses = {
+    /**
+     * Successful Response
+     */
+    201: TagDetail;
+};
+
+export type CreateTagResponse = CreateTagResponses[keyof CreateTagResponses];
+
+export type DeleteTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}';
+};
+
+export type DeleteTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * Something still carries it
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteTagError = DeleteTagErrors[keyof DeleteTagErrors];
+
+export type DeleteTagResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteTagResponse = DeleteTagResponses[keyof DeleteTagResponses];
+
+export type ReadTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}';
+};
+
+export type ReadTagErrors = {
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadTagError = ReadTagErrors[keyof ReadTagErrors];
+
+export type ReadTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type ReadTagResponse = ReadTagResponses[keyof ReadTagResponses];
+
+export type UpdateTagData = {
+    body: TagUpdateRequest;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}';
+};
+
+export type UpdateTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * The name is taken, or the edge would close a cycle
+     */
+    409: unknown;
+    /**
+     * A name, parent or alias was refused
+     */
+    422: unknown;
+};
+
+export type UpdateTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type UpdateTagResponse = UpdateTagResponses[keyof UpdateTagResponses];
+
+export type MergeTagData = {
+    body: TagMergeRequest;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}/merge';
+};
+
+export type MergeTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * A tag cannot be merged into itself
+     */
+    422: unknown;
+};
+
+export type MergeTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagMergeResult;
+};
+
+export type MergeTagResponse = MergeTagResponses[keyof MergeTagResponses];

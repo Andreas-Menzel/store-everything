@@ -34,7 +34,7 @@ Every file can carry multiple tags. Users tag manually; extractors tag automatic
 
 ## API surface
 
-`GET/POST/DELETE /files/{id}/tags` · `POST /files/{id}/tags/{tag}/confirm` · `POST /files/{id}/tags/{tag}/reject` · `GET /tags?prefix=…` · `GET/POST/PATCH /tags` (taxonomy admin) · `POST /tags/{tag}/approve|reject` (suggestions, admin)
+`GET·POST /files/{id}/tags` · `DELETE /files/{id}/tags/{tag}` · `POST /files/{id}/tags/{tag}/confirm` · `POST /files/{id}/tags/{tag}/reject` · `GET /tags?prefix=…` (autocomplete; the taxonomy listing without a prefix) · `GET /tags/{tag}` · `POST /tags` · `PATCH /tags/{tag}` (rename, parents, aliases — declarative) · `POST /tags/{tag}/merge` · `DELETE /tags/{tag}` (only a tag nothing carries) · `POST /tags/{tag}/approve|reject` (suggestions) — everything from `POST /tags` on is admin-only. Tags are addressed by **id** in paths; a tag is *applied* by id or by any spelling of its name, resolved through the alias table.
 
 ## Out of scope
 
