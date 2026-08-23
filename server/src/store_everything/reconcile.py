@@ -611,8 +611,10 @@ async def _transfer(
     Three things about the rollup queue, and each of them is a way this could go quietly wrong
     ([F-015/FR-8](../../../features/F-015-folders.md)):
 
-    - the stand-in's queued changes are handed over before it is deleted, or they would cascade
-      away with it and leave a total permanently short;
+    - the stand-in's queued changes are handed over before it is deleted, **and so are its
+      applied ones** — `folder_aggregate` cascades on deletion just as `folder_delta` does, so
+      whichever side of the drain the stand-in's numbers are on, they are read before the row
+      goes;
     - the survivor's own queued changes were written while it was somewhere else, and after the
       move they will expand over the chain it has *now* — so the amount is measured first and the
       two chains are compensated, which is the same `+n`/`-n` pair a deliberate move writes;
@@ -633,6 +635,12 @@ async def _transfer(
         connection, from_folder=claim.destination.id, to_folder=claim.source.id
     )
 
+    # Before the row goes: `folder_aggregate` cascades on folder deletion, so a stand-in whose
+    # queued changes a rollup already drained holds them here and nowhere else. Reading it after
+    # `discard` found nothing and added nothing — the survivor then reported an empty directory
+    # until the drift sweep happened past it, which is hours on a large tree.
+    await aggregates.inherit(connection, heir=claim.source.id, from_folder=claim.destination.id)
+
     await folders.absorb(connection, into=claim.source, discarded=claim.destination)
     await folders.discard(connection, claim.destination.id)
     moved = await folders.reposition(
@@ -644,7 +652,6 @@ async def _transfer(
         detected="external",
     )
     await folders.stamp_seen(connection, folder_ids=[moved.id], seen_at=run.started_at)
-    await aggregates.inherit(connection, heir=moved.id, from_folder=claim.destination.id)
     if claim.source.parent_id != parent.id and (files or size_bytes):
         # The old chain keeps what it was owed and the new one gives back what it was not: above
         # the two parents' common ancestor the pair cancels, exactly as for a deliberate move.

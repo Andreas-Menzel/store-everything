@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from store_everything import folders, names
+from store_everything import folders, names, reconcile
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.config import Settings
 from store_everything.tables import folder as folder_table
@@ -449,6 +449,68 @@ async def test_a_transfer_with_changes_still_queued_ends_at_ground_truth(
         assert box is not None
         # Two from the moved subtree plus the file `Box` already held.
         assert (await summary(client, box.id))["aggregates"]["total_files"] == 3
+
+    await every_folder_matches_ground_truth(identity_database)
+
+
+@pytest.mark.fr("F-015/FR-7", "F-015/FR-8")
+async def test_a_transfer_inherits_totals_a_rollup_drained_while_it_was_scanning(
+    identity_settings: Settings,
+    identity_database: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of the queue, and the one a single-threaded test never reaches.
+
+    A scan schedules a rollup after every batch that changed a total, so on a real instance the
+    drain routinely runs *while the traversal is still going*. When it does, the stand-in's
+    numbers are no longer queued against it — they are in its `folder_aggregate` row, which
+    cascades away with the row itself. Reading them after the delete found nothing, silently, and
+    the survivor of a renamed directory then reported an empty folder until the drift sweep
+    happened past it. The sweep would eventually correct it; the point is that it was never
+    supposed to be wrong.
+
+    The drain is forced into that window rather than raced into it, because a test that depends
+    on two workers interleaving is a test that passes for the wrong reason four times in five.
+    """
+    tree = tmp_path / "nas"
+    build(tree, TREE)
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        await rollup_pending(identity_database, identity_settings)
+        album = await folder_at(identity_database, workspace, "Album")
+        year = await folder_at(identity_database, workspace, "Album/2026")
+        assert album is not None and year is not None
+        before = (await summary(client, album.id))["aggregates"]
+        assert (before["total_files"], before["pending"]) == (3, False)
+
+        (tree / "Album").rename(tree / "Photos")
+
+        identify = reconcile.identities
+        drained = False
+
+        async def drain_then_identify(*args: Any, **kwargs: Any) -> Any:
+            # Exactly where a claimed rollup would land: after the traversal and the sweep have
+            # committed their deltas, before the identity pass reads the stand-in's totals.
+            nonlocal drained
+            if not drained:
+                drained = True
+                await rollup_pending(identity_database, identity_settings)
+            return await identify(*args, **kwargs)
+
+        monkeypatch.setattr(reconcile, "identities", drain_then_identify)
+        await rescan(client, workspace, identity_database, identity_settings)
+        assert drained, "the drain never ran, so this proves nothing"
+
+        # Asserted before any further rollup: after one, the drift sweep could paper over the
+        # loss, and what is under test is that nothing was lost in the first place.
+        after = (await summary(client, album.id))["aggregates"]
+        assert after["total_files"] == 3, "the survivor inherited nothing"
+        assert after["total_bytes"] == before["total_bytes"]
+        assert (await summary(client, year.id))["aggregates"]["total_files"] == 1
+
+        await rollup_pending(identity_database, identity_settings)
 
     await every_folder_matches_ground_truth(identity_database)
 
