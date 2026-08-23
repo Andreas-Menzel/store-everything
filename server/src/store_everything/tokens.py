@@ -20,13 +20,23 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 
 #: Recognizable to secret scanners. `se` for the product, then the credential kind.
 ACCESS_TOKEN_PREFIX = "sepat_"  # noqa: S105 - a prefix, not a secret
 SESSION_TOKEN_PREFIX = "sesess_"  # noqa: S105 - a prefix, not a secret
+#: An extractor container's credential (ADR-0020). A separate kind, not a scope of the
+#: others: it authenticates a *component* rather than a person, and it is refused everywhere
+#: a user credential is expected — and vice versa.
+EXTRACTOR_TOKEN_PREFIX = "seext_"  # noqa: S105 - a prefix, not a secret
 
 #: 32 bytes = 256 bit, per the spec's floor.
 _TOKEN_BYTES = 32
+
+#: `last_used_at` is a diagnostic, not an audit record, so it is written at most this often per
+#: credential. Stamping it on every request would turn every read into a write. One policy for
+#: every credential kind — sessions, personal access tokens, extractor tokens.
+LAST_USED_RESOLUTION = timedelta(minutes=1)
 
 
 @dataclass(frozen=True, slots=True)

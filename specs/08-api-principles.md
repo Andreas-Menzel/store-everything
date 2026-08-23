@@ -8,7 +8,7 @@ The HTTP API is the product's only interface. Rules:
 
 1. **No capability exists outside the API.** The web UI, CLI, future mobile apps, sync clients, and local AI agents are all ordinary API consumers with no privileged side channels.
 2. **The API ships before/with the UI** for every feature. A feature spec is not "done" until its API surface is defined.
-3. **Machine-readable spec.** OpenAPI document maintained as part of the codebase; generated clients must be feasible.
+3. **Machine-readable spec.** OpenAPI documents maintained as part of the codebase; generated clients must be feasible. **Two documents, two audiences** ([ADR-0020](../decisions/ADR-0020-extractor-dispatch-and-wire-protocol.md)): `openapi.json` is what a consumer of this product calls, and `openapi-extractor.json` is the contract an extractor image implements ([05](05-extractor-contract.md#dispatch--wire-protocol-extractor-apiv1)). They are disjoint and separately versioned, so an extractor author generates against the plugin boundary rather than against endpoints expecting a user credential.
 4. **Stable versioning.** Path-versioned (`/api/v1/…`). Additive changes are free; breaking changes require `/v2` **plus a documented deprecation window** — `/v1` is never broken in place. Same philosophy as the extractor contract. API majors are deliberately **independent** of the app's SemVer and of the extractor-contract version: which app releases serve which majors is recorded in the support matrix ([11](11-engineering-standards.md#versioning--releases)).
 
 ## Conventions (proposed)

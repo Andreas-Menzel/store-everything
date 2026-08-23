@@ -531,6 +531,338 @@
         }
       }
     },
+    "/api/v1/extractors": {
+      "get": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "List extractors",
+        "description": "Every provisioned extractor.\n\nUnpaginated: one row per installed container, so the set is bounded by the compose file.",
+        "operationId": "list_extractors",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExtractorSummary"
+                  },
+                  "type": "array",
+                  "title": "Response List Extractors"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "Provision an extractor",
+        "description": "Allow an extractor id to exist, and mint its first credential.\n\nProvisioning comes first on purpose: an extractor cannot register itself into existence, so\na credential is always bound to an id an administrator chose (ADR-0020).",
+        "operationId": "provision_extractor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractorProvisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractorProvisioned"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That extractor id is already provisioned"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractors/{extractor_id}": {
+      "get": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "Read one extractor",
+        "operationId": "read_extractor",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Extractor Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractorSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such extractor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "Enable or disable an extractor",
+        "description": "Disabling stops jobs being routed here. It does not stop the container registering:\na disabled extractor keeps its manifest current so that re-enabling needs no restart.",
+        "operationId": "update_extractor",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Extractor Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractorUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractorSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such extractor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractors/{extractor_id}/tokens": {
+      "get": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "List an extractor's credentials",
+        "operationId": "list_extractor_tokens",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Extractor Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExtractorTokenSummary"
+                  },
+                  "title": "Response List Extractor Tokens"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such extractor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "Mint another credential for an extractor",
+        "description": "Rotation: mint the replacement, restart the container with it, then revoke the old one.",
+        "operationId": "create_extractor_token",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Extractor Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractorTokenCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractorTokenCreated"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such extractor"
+          },
+          "409": {
+            "description": "That credential name has been used before"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractors/{extractor_id}/tokens/{token_id}": {
+      "delete": {
+        "tags": [
+          "extractors"
+        ],
+        "summary": "Revoke an extractor's credential",
+        "operationId": "revoke_extractor_token",
+        "parameters": [
+          {
+            "name": "extractor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Extractor Id"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Token Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such credential for this extractor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "post": {
         "tags": [
@@ -1608,6 +1940,14 @@
         ],
         "title": "ChildFolder"
       },
+      "CostClass": {
+        "type": "string",
+        "enum": [
+          "light",
+          "medium",
+          "heavy"
+        ]
+      },
       "CurrentIdentity": {
         "properties": {
           "user": {
@@ -1645,6 +1985,293 @@
         ],
         "title": "CurrentIdentity",
         "description": "Who the caller is, and how they proved it."
+      },
+      "ExtractorProvisionRequest": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Id"
+          },
+          "token_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Token Name",
+            "default": "initial"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "ExtractorProvisionRequest"
+      },
+      "ExtractorProvisioned": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "extractor": {
+            "$ref": "#/components/schemas/ExtractorSummary"
+          },
+          "extractor_token": {
+            "$ref": "#/components/schemas/ExtractorTokenSummary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token",
+          "extractor",
+          "extractor_token"
+        ],
+        "title": "ExtractorProvisioned"
+      },
+      "ExtractorSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "registered": {
+            "type": "boolean",
+            "title": "Registered"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "cost_class": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gpu": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GpuMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "registered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "enabled",
+          "registered",
+          "version",
+          "api_version",
+          "model_name",
+          "model_version",
+          "cost_class",
+          "gpu",
+          "network",
+          "manifest",
+          "created_at",
+          "registered_at",
+          "last_seen_at"
+        ],
+        "title": "ExtractorSummary"
+      },
+      "ExtractorTokenCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ExtractorTokenCreateRequest"
+      },
+      "ExtractorTokenCreated": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "extractor_token": {
+            "$ref": "#/components/schemas/ExtractorTokenSummary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token",
+          "extractor_token"
+        ],
+        "title": "ExtractorTokenCreated"
+      },
+      "ExtractorTokenSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "extractor_id": {
+            "type": "string",
+            "title": "Extractor Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "extractor_id",
+          "name",
+          "created_at",
+          "last_used_at"
+        ],
+        "title": "ExtractorTokenSummary"
+      },
+      "ExtractorUpdateRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ExtractorUpdateRequest"
       },
       "FileMoveRequest": {
         "properties": {
@@ -1968,6 +2595,14 @@
         ],
         "title": "FolderSummary"
       },
+      "GpuMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "optional",
+          "required"
+        ]
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2066,6 +2701,13 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "NetworkMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "outbound"
+        ]
       },
       "Ordering": {
         "type": "string",

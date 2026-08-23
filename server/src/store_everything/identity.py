@@ -37,9 +37,9 @@ class AccountDisabledError(Exception):
     """
 
 
-#: `last_used_at` is a diagnostic, not an audit record, so it is written at most this often
-#: per credential. Stamping it on every request would turn every read into a write.
-LAST_USED_RESOLUTION = timedelta(minutes=1)
+#: Re-exported from the module that mints the credentials this stamps, so sessions, personal
+#: access tokens and extractor tokens share one policy rather than three copies of a number.
+LAST_USED_RESOLUTION = tokens.LAST_USED_RESOLUTION
 
 
 def normalize_email(email: str) -> str:

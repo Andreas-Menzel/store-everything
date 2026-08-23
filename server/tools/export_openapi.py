@@ -1,11 +1,15 @@
-"""Write the OpenAPI document that every generated client is built from.
+"""Write the OpenAPI documents that every generated client is built from.
 
-The document is committed so that an API change is visible in the diff of the change
-that causes it, and so client generation never depends on a running server
-(08-api-principles.md § API-first).
+Committed so that an API change is visible in the diff of the change that causes it, and so
+client generation never depends on a running server (08-api-principles.md § API-first).
 
-    python -m tools.export_openapi            # rewrite openapi.json
-    python -m tools.export_openapi --check    # fail if it is out of date
+**Two documents, two audiences** (ADR-0020): `openapi.json` is what a client of this product
+calls, and `openapi-extractor.json` is the contract an extractor image implements — separately
+versioned, and the artefact a third-party author reads instead of pointing a generator at
+somebody's instance.
+
+    python -m tools.export_openapi            # rewrite both documents
+    python -m tools.export_openapi --check    # fail if either is out of date
 """
 
 from __future__ import annotations
@@ -18,15 +22,17 @@ from typing import Any
 
 from pydantic import SecretStr
 
+from store_everything.api.extractor_api.router import extractor_api_document
 from store_everything.app import create_app
 from store_everything.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_PATH = REPO_ROOT / "openapi.json"
+EXTRACTOR_OPENAPI_PATH = REPO_ROOT / "openapi-extractor.json"
 
 
 def build_document() -> dict[str, Any]:
-    """Build the document from fixed settings.
+    """Build the user-facing document from fixed settings.
 
     The result depends only on the code, never on the environment of whoever exports it.
     No database is contacted while a schema is built.
@@ -37,6 +43,11 @@ def build_document() -> dict[str, Any]:
         log_level="CRITICAL",
     )
     return create_app(settings).openapi()
+
+
+def build_extractor_document() -> dict[str, Any]:
+    """Build the extractor contract. Independent of settings — it has no optional routes."""
+    return extractor_api_document()
 
 
 def render(document: dict[str, Any]) -> str:
@@ -52,20 +63,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    expected = render(build_document())
+    documents = (
+        (OPENAPI_PATH, render(build_document())),
+        (EXTRACTOR_OPENAPI_PATH, render(build_extractor_document())),
+    )
 
     if args.check:
-        current = OPENAPI_PATH.read_text(encoding="utf-8") if OPENAPI_PATH.exists() else ""
-        if current != expected:
-            print(
-                f"{OPENAPI_PATH} is out of date with the code. Run: make openapi",
-                file=sys.stderr,
-            )
-            return 1
-        return 0
+        stale = [
+            path
+            for path, expected in documents
+            if (path.read_text(encoding="utf-8") if path.exists() else "") != expected
+        ]
+        for path in stale:
+            print(f"{path} is out of date with the code. Run: make openapi", file=sys.stderr)
+        return 1 if stale else 0
 
-    OPENAPI_PATH.write_text(expected, encoding="utf-8")
-    print(f"wrote {OPENAPI_PATH}")
+    for path, expected in documents:
+        path.write_text(expected, encoding="utf-8")
+        print(f"wrote {path}")
     return 0
 
 

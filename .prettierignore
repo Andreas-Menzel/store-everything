@@ -1,6 +1,8 @@
 # Generated: rewritten by `make openapi` / `make corpus`, never edited by hand.
-# Reformatting a fixture would break the hash recorded for it in the manifest.
+# Reformatting a fixture would break the hash recorded for it in the manifest, and
+# reformatting an exported contract would make its drift check fail on every run.
 openapi.json
+openapi-extractor.json
 corpus/fixtures/
 packages/api-client/src/generated/
 

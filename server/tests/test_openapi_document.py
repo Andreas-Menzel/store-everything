@@ -1,4 +1,4 @@
-"""The committed contract must match the code that serves it."""
+"""The committed contracts must match the code that serves them."""
 
 from __future__ import annotations
 
@@ -6,9 +6,17 @@ import re
 from typing import Any, cast
 
 import pytest
-from tools.export_openapi import OPENAPI_PATH, build_document, render
+from tools.export_openapi import (
+    EXTRACTOR_OPENAPI_PATH,
+    OPENAPI_PATH,
+    build_document,
+    build_extractor_document,
+    render,
+)
 
+from store_everything.api.extractor_api.router import EXTRACTOR_API_PREFIX
 from store_everything.app import API_VERSION
+from store_everything.tables import EXTRACTOR_API_VERSION
 
 
 def test_committed_document_is_current() -> None:
@@ -18,6 +26,40 @@ def test_committed_document_is_current() -> None:
     assert OPENAPI_PATH.read_text(encoding="utf-8") == render(build_document()), (
         "openapi.json is out of date with the code — run `make openapi`"
     )
+
+
+def test_committed_extractor_contract_is_current() -> None:
+    """The artefact a third-party extractor author generates from (ADR-0020)."""
+    assert EXTRACTOR_OPENAPI_PATH.exists(), "openapi-extractor.json is missing — run `make openapi`"
+
+    assert EXTRACTOR_OPENAPI_PATH.read_text(encoding="utf-8") == render(
+        build_extractor_document()
+    ), "openapi-extractor.json is out of date with the code — run `make openapi`"
+
+
+def test_the_two_contracts_are_disjoint() -> None:
+    """One document per audience, and neither leaks into the other.
+
+    The user-facing document is what a client of this product calls, and an extractor is not
+    one: its routes are mounted `include_in_schema=False`, so this asserts the consequence
+    rather than the mechanism. The reverse direction matters just as much — an extractor image
+    must not be generated against endpoints that expect a user credential.
+    """
+    user_facing = set(cast(dict[str, object], build_document()["paths"]))
+    extractor_facing = set(cast(dict[str, object], build_extractor_document()["paths"]))
+
+    assert extractor_facing, "the extractor contract describes no endpoints"
+    assert user_facing & extractor_facing == set()
+    assert not any(path.startswith(EXTRACTOR_API_PREFIX) for path in user_facing)
+    assert all(path.startswith(EXTRACTOR_API_PREFIX) for path in extractor_facing)
+
+
+def test_the_extractor_contract_carries_its_own_version() -> None:
+    """Versioned independently of `/api/v1` and of the app's SemVer (05 § principles)."""
+    document = build_extractor_document()
+
+    assert document["info"]["version"] == EXTRACTOR_API_VERSION
+    assert document["info"]["version"] != API_VERSION
 
 
 def test_export_is_deterministic() -> None:
