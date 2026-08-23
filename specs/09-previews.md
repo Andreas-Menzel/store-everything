@@ -1,7 +1,7 @@
 # 09 — Previews & Thumbnails
 
 **Status:** Draft
-**Related:** [ADR-0008 (renditions)](../decisions/ADR-0008-renditions.md), [05-extractor-contract](05-extractor-contract.md), [04-ingestion-pipeline — Prioritization & scheduling](04-ingestion-pipeline.md#prioritization--scheduling)
+**Related:** [ADR-0008 (renditions)](../decisions/ADR-0008-renditions.md), [F-028](../features/F-028-thumbnails-and-previews.md), [05-extractor-contract](05-extractor-contract.md), [04-ingestion-pipeline — Prioritization & scheduling](04-ingestion-pipeline.md#prioritization--scheduling)
 
 ## Three tiers
 
@@ -15,13 +15,13 @@ Formats are fixed **per tier and per preview kind** (never one global format): e
 
 ## Thumbnails
 
-- **Format:** WebP, aspect-preserved, longest edge in a fixed size set: **256 px** (grids) and **1024 px** (large tiles / lightbox warm-up).
-- **API:** `GET /files/{id}/thumbnail?size=N` — the server *snaps* N up to the nearest generated size (ask 300, get 1024). Not free-form resizing: fixed sizes bound storage and keep URLs immutable/cacheable (keyed by file version + size). A request may **pin the version**: `?v={version}` returns that version's thumbnail (any existing version of a readable file — [F-007](../features/F-007-versioning.md)) with `Cache-Control: private, max-age=31536000, immutable`; without `v` the current version is served without the immutable marker ([F-026/FR-26](../features/F-026-offline-cache-and-prefetch.md)). Listing rows carry the current version id ([F-002/FR-20](../features/F-002-hybrid-search.md)) so clients construct pinned URLs without extra requests.
+- **Format:** WebP, aspect-preserved, longest edge in a fixed size set: **256 px** (grids), **512 px** (high-density grids — 2×/3× displays), and **1024 px** (large tiles / lightbox warm-up). The 512 tier joined at phase-2 entry (Q42): a ~130 pt mobile grid cell at 3× wants ~390 px, and comparable apps bracket it (PhotoPrism tile_500, Synology 640); it adds roughly a quarter to thumbnail bytes, riding the normal regeneration mechanism.
+- **API:** `GET /files/{id}/thumbnail?size=N` — the server *snaps* N up to the nearest generated size (ask 300, get 512). Not free-form resizing: fixed sizes bound storage and keep URLs immutable/cacheable (keyed by file version + size). A request may **pin the version**: `?v={version}` returns that version's thumbnail (any existing version of a readable file — [F-007](../features/F-007-versioning.md)) with `Cache-Control: private, max-age=31536000, immutable`; without `v` the current version is served without the immutable marker ([F-026/FR-26](../features/F-026-offline-cache-and-prefetch.md)). Listing rows carry the current version id ([F-002/FR-20](../features/F-002-hybrid-search.md)) so clients construct pinned URLs without extra requests.
 - **Aspect ratios are a client concern.** The server never produces per-layout variants; grids crop via `object-fit: cover`, masonry uses the intrinsic dimensions from file metadata. (Attention/face-aware smart cropping: possible later, server-side, not v1 — [F-018](../features/F-018-people.md) face boxes would supply the regions.)
 - **Source per type:** image → downscale · video → representative keyframe (non-black/blurry heuristic over already-extracted keyframes) · PDF/document → rendered page 1 · audio → embedded cover art, else waveform image · otherwise → **no thumbnail**: the endpoint returns a clear "none" and clients fall back to a type icon.
 - **Generated eagerly at ingest** for every file (priority class P1 — a file browser with holes feels broken).
 - **Placeholder hash:** alongside each thumbnail, `preview-gen` emits a compact placeholder (thumbhash-class, tens of bytes) stored as the well-known metadata key `placeholder_hash` ([02](02-domain-model.md#metadataentry)) and returned inline in listings via the compact projection ([F-002/FR-20](../features/F-002-hybrid-search.md)) — grids render aspect-correct blurred cells with zero extra requests while thumbnails load. Same eagerness (P1), same regeneration mechanics as thumbnails.
-- **Client caching:** because URLs are immutable per (file version, size), clients cache thumbnails indefinitely without revalidation ([13-mobile-clients](13-mobile-clients.md#caching-downloads-integrity)); a changed file is a new version and therefore a new URL. The cross-client cache, offline, and invalidation contract is [14-client-sync-and-caching](14-client-sync-and-caching.md). Whether a 512 px tier joins the fixed size set for high-density mobile grids is [Q42](../OPEN-QUESTIONS.md).
+- **Client caching:** because URLs are immutable per (file version, size), clients cache thumbnails indefinitely without revalidation ([13-mobile-clients](13-mobile-clients.md#caching-downloads-integrity)); a changed file is a new version and therefore a new URL. The cross-client cache, offline, and invalidation contract is [14-client-sync-and-caching](14-client-sync-and-caching.md).
 - A thumbnail is always **one static image**. Hover-scrub in grids is the client layering the *scrub sheet* (below) over the thumbnail element — never the original file (range-fetching video in grid cells is out of the question).
 
 ## Previews
@@ -65,6 +65,7 @@ All assets live in the app-owned **derived store** (never the source tree — po
 
 ```
 derived/{hh}/{content-hash}/thumb-256.webp
+derived/{hh}/{content-hash}/thumb-512.webp
 derived/{hh}/{content-hash}/thumb-1024.webp
 derived/{hh}/{content-hash}/preview.mp4
 derived/{hh}/{content-hash}/scrub.webp + scrub.vtt

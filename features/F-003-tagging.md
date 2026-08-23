@@ -1,6 +1,6 @@
 # F-003 — Tagging (Manual + Auto, Provenance)
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P0
 **Clients:** all
 **Depends on:** —
@@ -29,7 +29,7 @@ Every file can carry multiple tags. Users tag manually; extractors tag automatic
 - **FR-8** Tag autocomplete supports prefix search with usage counts, plus optional embedding-similarity suggestions (typing `car` also surfaces `vehicle`) — computed over `active` tags only.
 - **FR-9** Tags/metadata are per-file shared state: concurrent edits resolve last-write-wins with the full change recorded in the audit trail ([F-011](F-011-audit-trail.md)).
 - **FR-10** Taxonomy management (create/rename/move/alias/merge tags, DAG edges with cycle rejection) is admin-only; regular users apply existing `active` tags.
-- **FR-11** The auto-tagger maps model labels into existing `active` tags first (aliases + embedding similarity); only when nothing fits does it create a tag with status `suggested`.
+- **FR-11** The auto-tagger maps model labels into existing `active` tags first (aliases; plus embedding similarity once the phase-3 embedding infrastructure exists — [F-002](F-002-hybrid-search.md)); only when nothing fits does it create a tag with status `suggested`.
 - **FR-12** `suggested` tags are quarantined: visible on the file detail clearly marked as suggestions, excluded from search and autocomplete. An admin approves (→ `active`) or rejects; rejected tags are kept as soft-removed records so the same suggestion is not re-created by later runs.
 
 ## API surface

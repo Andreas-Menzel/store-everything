@@ -25,6 +25,8 @@ Significant decisions, one file each, numbered and immutable once accepted. To c
 | [ADR-0017](ADR-0017-resumable-upload-protocol.md) | Uploads speak the IETF resumable-upload protocol, implemented in-app | Accepted |
 | [ADR-0018](ADR-0018-workspace-layout-and-adoption.md) | Workspace layout: managed and adopted roots, one control directory | Accepted |
 | [ADR-0019](ADR-0019-source-tree-semantics.md) | Source-tree semantics: names, symlinks, change detection, filesystem requirements | Accepted |
+| [ADR-0020](ADR-0020-extractor-dispatch-and-wire-protocol.md) | Extractor dispatch: poll-based workers over an extractor-facing HTTP API | Accepted |
+| [ADR-0021](ADR-0021-extractor-sandbox-enforcement.md) | Extractor sandbox: egress-less compose services, per-job HTTP file access | Accepted |
 
 ## Template
 

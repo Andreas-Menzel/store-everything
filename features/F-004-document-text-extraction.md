@@ -1,6 +1,6 @@
 # F-004 — Document Text Extraction & OCR
 
-**Status:** Draft
+**Status:** Approved
 **Priority:** P0
 **Clients:** all
 **Depends on:** F-001
@@ -36,7 +36,7 @@ Layout/table structure understanding, handwriting recognition, form-field extrac
 
 ## Open questions
 
-Per-page vs. per-document OCR routing threshold — implementation detail, decide with data. [Q9](../OPEN-QUESTIONS.md) covers model choices.
+Routing is per page ([ADR-0020](../decisions/ADR-0020-extractor-dispatch-and-wire-protocol.md): `pdf-text` writes `needs_ocr`/`ocr_pages`, the OCR manifest predicate binds to them); the exact garbled-text thresholds inside `pdf-text`'s decision tree are implementation detail, tuned against corpus fixtures. [Q9](../OPEN-QUESTIONS.md)'s documents part is resolved ([05 § built-in extractors](../specs/05-extractor-contract.md#built-in-extractors-default-installation-all-local)); its embedding/vision/speech part remains for phase 3.
 
 ## Acceptance criteria
 
