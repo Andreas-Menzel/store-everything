@@ -22,6 +22,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
@@ -1128,14 +1129,50 @@ extraction_run = Table(
     # that produced the rows (02 § invariants #3).
     Column("extractor_version", Text, nullable=True),
     Column("model_version", Text, nullable=True),
+    # Which derived asset this run is *about*, for a chained job — a keyframe, a converted PDF.
+    # NULL means the file's own bytes. It is part of the identity of the work, which is why the
+    # uniqueness below counts it: one video's fifty keyframes are fifty jobs for one extractor,
+    # not one (12 § job atomicity — large work is made resumable by decomposition).
+    Column("input_asset_id", UUID(as_uuid=True), nullable=True),
+    # Set when this run's rows were copied from an earlier run over byte-identical content
+    # rather than computed ([F-009/FR-8](../../../features/F-009-reprocessing.md)). Provenance
+    # has to say so: the rows are this version's, and the analysis happened once.
+    Column(
+        "reused_from",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("finished_at", DateTime(timezone=True), nullable=True),
     Column("error", Text, nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    # One run per (version, extractor, generation) — the structural half of "routing is
+    # One run per (version, extractor, generation, input) — the structural half of "routing is
     # idempotent", so a re-detected file cannot grow a second run of the same work.
-    UniqueConstraint("file_version_id", "extractor_id", "generation"),
+    # `NULLS NOT DISTINCT` is what makes that true for the common case: two runs over a file's
+    # own bytes both carry a NULL input, and PostgreSQL would otherwise consider them different.
+    UniqueConstraint(
+        "file_version_id",
+        "extractor_id",
+        "generation",
+        "input_asset_id",
+        # Named explicitly: the convention's generated name would be 71 characters, and
+        # PostgreSQL truncates at 63 — which is a silent rename rather than an error.
+        name="uq_extraction_run_one_per_input",
+        postgresql_nulls_not_distinct=True,
+    ),
+    # `use_alter` because these two tables point at each other: a run names the derived asset it
+    # is *about* (a keyframe, a converted PDF), and every asset names the run that produced it.
+    # Both are wanted, so the cycle is real — and one of the constraints has to be added after
+    # both tables exist rather than inside a `CREATE TABLE`.
+    ForeignKeyConstraint(
+        ["input_asset_id"],
+        ["derived_asset.id"],
+        name="fk_extraction_run_input_asset_id_derived_asset",
+        ondelete="CASCADE",
+        use_alter=True,
+    ),
     CheckConstraint(one_of("state", EXTRACTION_RUN_STATES), name="state_known"),
     CheckConstraint("generation >= 1", name="generation_positive"),
     # The per-file status query (04 § status & observability): every run of one version.
@@ -1152,3 +1189,204 @@ It is also why extraction needs no event per run. A successful run *is* this row
 stamped, and joined to its outputs — so duplicating it into the log would add millions of rows
 saying what a table already says. Failures still reach the log, through the operation layer's
 own `operation.dead_lettered`."""
+
+
+# ------------------------------------------------------------------- what extraction produces
+#
+# Three tables, one shape: a row of derived data, the version it describes, and the run that
+# produced it. That last column is [02 § invariants](../../../specs/02-domain-model.md#invariants)
+# #3 made structural — every derived row can name the extractor, version, model and generation
+# behind it, because it points at the run that carries them.
+
+#: How a metadata value is stored, which is also what can be asked of it
+#: ([02 § MetadataEntry](../../../specs/02-domain-model.md#metadataentry)).
+METADATA_VALUE_TYPES = (
+    "string",
+    "text",
+    "integer",
+    "float",
+    "boolean",
+    "datetime",
+    "date",
+    "duration",
+    "geo",
+    "json",
+)
+
+#: Who put a value there (ADR-0004). `confirmed`/`rejected` are the tag state machine's, and
+#: appear on `file_tag` rather than here: there is nothing to confirm about a page count.
+METADATA_PROVENANCE = ("auto", "manual")
+
+#: What an anchor points at ([02 § Segment](../../../specs/02-domain-model.md#segment)). The
+#: payload shape per kind lives in `results.py`; the vocabulary is fixed here because a listing
+#: that does not know how to render an anchor cannot show a search hit's position.
+SEGMENT_ANCHOR_KINDS = ("page", "time", "line", "sheet", "region", "whole")
+
+
+metadata_entry = Table(
+    "metadata_entry",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "file_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("file_version.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # CASCADE, unlike the run's own reference to its extractor: derived data is regenerable by
+    # definition (02 § invariants #5), so a run and its outputs go together or not at all.
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="CASCADE"),
+        nullable=True,
+    ),
+    Column("key", Text, nullable=False),
+    Column("value_type", Text, nullable=False),
+    Column("provenance", Text, nullable=False, server_default=text("'auto'")),
+    Column("confidence", Float, nullable=True),
+    Column("generation", Integer, nullable=False, server_default=text(str(FIRST_GENERATION))),
+    # One column per storage class rather than one JSON blob, because the type is what decides
+    # what can be *asked*: a range over `taken_at`, a facet over `camera`, a radius around `gps`
+    # (02 § MetadataEntry). A blob would make every one of those a cast at query time.
+    Column("value_text", Text, nullable=True),
+    Column("value_number", Float, nullable=True),
+    Column("value_boolean", Boolean, nullable=True),
+    Column("value_time", DateTime(timezone=True), nullable=True),
+    # Two columns rather than a `point` or PostGIS: a bounding box over two indexed floats is
+    # what the map view asks of `gps` (F-002/FR-17), and it needs no extension, no custom type
+    # and no argument about whether x is latitude (ADR-0001 keeps the datastore plain).
+    Column("value_latitude", Float, nullable=True),
+    Column("value_longitude", Float, nullable=True),
+    Column("value_json", JSONB, nullable=True),
+    _created_at(),
+    CheckConstraint(one_of("value_type", METADATA_VALUE_TYPES), name="value_type_known"),
+    CheckConstraint(one_of("provenance", METADATA_PROVENANCE), name="provenance_known"),
+    CheckConstraint("length(key) BETWEEN 1 AND 100", name="key_length"),
+    CheckConstraint(
+        "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="confidence_is_a_ratio"
+    ),
+    # A run is required for `auto` and absent for `manual`: a machine-derived fact that cannot
+    # name what derived it is not traceable, and a user's edit has a user, not a run.
+    CheckConstraint(
+        "(provenance = 'auto') = (run_id IS NOT NULL)", name="auto_values_name_their_run"
+    ),
+    # The per-file read: every fact about one version, in one indexed lookup.
+    Index("ix_metadata_entry_file_version_id_key", "file_version_id", "key"),
+    # And the per-key reads search will want: a facet over one key, a range over another.
+    Index("ix_metadata_entry_key_value_text", "key", "value_text"),
+    Index("ix_metadata_entry_key_value_number", "key", "value_number"),
+    Index("ix_metadata_entry_key_value_time", "key", "value_time"),
+    Index("ix_metadata_entry_run_id", "run_id"),
+    # The map view's read: everything with a position, bounded by a box.
+    Index("ix_metadata_entry_value_latitude_value_longitude", "value_latitude", "value_longitude"),
+)
+"""A typed fact about one file version — EXIF, page count, detected language, a bounding box.
+
+Unknown keys are stored, typed and queryable like any other; the well-known registry
+([02 § MetadataEntry](../../../specs/02-domain-model.md#metadataentry)) only says which keys
+built-in features bind to."""
+
+
+segment = Table(
+    "segment",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "file_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("file_version.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("generation", Integer, nullable=False, server_default=text(str(FIRST_GENERATION))),
+    # Position within the run's output, so "the third segment of page 2" has a stable identity
+    # across reads without depending on the anchor being orderable.
+    Column("ordinal", Integer, nullable=False),
+    Column("text", Text, nullable=False),
+    Column("anchor_kind", Text, nullable=False),
+    # The anchor's payload — page number, time range, line range, sheet and rows, image region.
+    # JSONB rather than a column per kind: an anchor is *returned* with a hit rather than
+    # queried across kinds, and a plugin with a new kind of position should not need a migration
+    # (05 § result envelope). What is fixed is the vocabulary of kinds and each one's shape.
+    Column("anchor", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    # OCR confidence, where the extractor reports one (F-004/FR-2).
+    Column("confidence", Float, nullable=True),
+    Column("language", Text, nullable=True),
+    _created_at(),
+    CheckConstraint(one_of("anchor_kind", SEGMENT_ANCHOR_KINDS), name="anchor_kind_known"),
+    CheckConstraint("ordinal >= 0", name="ordinal_not_negative"),
+    CheckConstraint(
+        "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="confidence_is_a_ratio"
+    ),
+    UniqueConstraint("run_id", "ordinal"),
+    # The per-file read, in the order a document is read in.
+    Index("ix_segment_file_version_id_ordinal", "file_version_id", "ordinal"),
+)
+"""The positional unit of search ([06](../../../specs/06-search.md)): a span of text and where it
+is. This is what lets a hit say *pages 1, 3 and 7* or *at 04:12* rather than only *this file*.
+
+The full-text index over `text` arrives with search in phase 3, together with the language
+question it depends on (Q14) — a `tsvector` needs an analyser, and picking one before the query
+exists would be guessing."""
+
+
+derived_asset = Table(
+    "derived_asset",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "file_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("file_version.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("generation", Integer, nullable=False, server_default=text(str(FIRST_GENERATION))),
+    # An open vocabulary on purpose (ADR-0008): `thumb`, `page`, `keyframe`, `waveform`, and
+    # whatever a plugin invents. What is *not* open is who may produce each one — the registry
+    # enforces one provider per derived-asset kind (ADR-0020).
+    Column("kind", Text, nullable=False),
+    # The filename inside the source hash's directory, chosen by the extractor and validated by
+    # the core (`derived.py`): the core owns the location, the extractor owns the name.
+    Column("name", Text, nullable=False),
+    Column("media_type", Text, nullable=False),
+    Column("size_bytes", BigInteger, nullable=False),
+    # The asset's *own* digest, which is how it was staged and how its integrity is checked.
+    # Its *location* comes from the source version's hash instead (09 § storage), which is what
+    # gives duplicate files one set of assets.
+    Column("content_hash", Text, nullable=False),
+    Column("digest_algorithm", Text, nullable=False, server_default=text("'sha256'")),
+    # Whatever distinguishes this asset from its siblings of the same kind: `{"size": 256}`,
+    # `{"page": 3}`, `{"at_ms": 4200}`. Returned with the asset so a client can ask for the
+    # right one without knowing the naming convention.
+    Column("params", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    # Set when this asset is a downloadable alternative form of the whole file rather than a
+    # fragment of it: a searchable PDF, an `.srt` (ADR-0008). The kind vocabulary is the
+    # manifest's; one producer per kind, enforced at registration.
+    Column("rendition_kind", Text, nullable=True),
+    _created_at(),
+    CheckConstraint("size_bytes >= 0", name="size_not_negative"),
+    CheckConstraint("length(name) BETWEEN 1 AND 64", name="name_length"),
+    CheckConstraint(one_of("digest_algorithm", DIGEST_ALGORITHMS), name="digest_algorithm_known"),
+    # One asset per name per version and generation. The name is what addresses it on disk, so
+    # two rows claiming the same one would be two rows describing the same bytes.
+    UniqueConstraint("file_version_id", "name", "generation"),
+    Index("ix_derived_asset_file_version_id_kind", "file_version_id", "kind"),
+    Index("ix_derived_asset_run_id", "run_id"),
+    # The reverse lookup the janitor needs: is anything still referencing these bytes?
+    Index("ix_derived_asset_content_hash", "content_hash"),
+)
+"""A generated artifact in the derived store — thumbnail, page render, keyframe, transcript,
+rendition. Fully regenerable (02 § invariants #5), which is why every column here can be
+recomputed from the source plane and why deleting one is never data loss."""

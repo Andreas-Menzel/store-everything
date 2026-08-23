@@ -22,10 +22,10 @@ import asyncio
 import errno
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import FileResponse
 
 from store_everything import (
@@ -36,8 +36,17 @@ from store_everything import (
     folders,
     mediatypes,
     names,
+    results,
     trash,
     workspaces,
+)
+from store_everything.api.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    InvalidCursor,
+    Page,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
 )
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
@@ -129,6 +138,50 @@ class FileSummary(BaseSchema):
             modified_at=version.modified_at,
             trash=trash,
         )
+
+
+class SegmentInfo(BaseSchema):
+    """One span of a file's content, and where it is."""
+
+    id: UUID
+    ordinal: int
+    text: str
+    anchor_kind: Literal["page", "time", "line", "sheet", "region", "whole"]
+    anchor: dict[str, Any]
+    """The position, shaped by its kind: a page and character offsets, a millisecond range, a
+    line range, a sheet and rows, a normalised rectangle. Empty for `whole`."""
+
+    confidence: float | None
+    """How sure the extractor was — OCR reports this; a text layer does not (F-004/FR-2)."""
+
+    language: str | None
+    extractor: str | None
+    generation: int
+
+
+class MetadataInfo(BaseSchema):
+    """One typed fact about a file, with the provenance every derived row carries."""
+
+    key: str
+    type: Literal[
+        "string",
+        "text",
+        "integer",
+        "float",
+        "boolean",
+        "datetime",
+        "date",
+        "duration",
+        "geo",
+        "json",
+    ]
+    value: Any
+    provenance: Literal["auto", "manual"]
+    confidence: float | None
+    extractor: str | None
+    """Which extractor produced it. Absent for a value a person entered."""
+
+    generation: int
 
 
 class ExtractionRunInfo(BaseSchema):
@@ -263,6 +316,100 @@ async def read_file_extraction(
             for run in runs
         ],
     )
+
+
+def _encode_ordinal(ordinal: int) -> str:
+    """A segment cursor is just its position: the order is the reading order, and it is stable."""
+    return encode_keyset_cursor(["segment", str(ordinal)])
+
+
+def _ordinal_cursor(cursor: str | None) -> int | None:
+    if cursor is None:
+        return None
+    segment, ordinal = decode_keyset_cursor(cursor, parts=2)
+    if segment != "segment" or not ordinal.isdigit():
+        raise InvalidCursor()
+    return int(ordinal)
+
+
+@router.get(
+    "/{file_id}/segments",
+    summary="The searchable content of one file, with positions",
+    response_model=Page[SegmentInfo],
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_segments(
+    file_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    limit: Annotated[int, Query(gt=0, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> Page[SegmentInfo]:
+    """Every segment of the current version, in reading order.
+
+    This is [F-004](../../../../features/F-004-document-text-extraction.md)'s answer to *where*:
+    the same rows a search hit will point into, readable directly so that "did the OCR work" has
+    an answer that does not depend on search existing yet.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await files.current_version(connection, found.id)
+    if version is None:  # pragma: no cover - see `summarize`
+        raise RuntimeError(f"file {found.id} has no current version")
+
+    after = _ordinal_cursor(cursor)
+    # One row beyond the page: the cheapest honest way to know whether a next page exists.
+    stored = await results.segments_of(connection, version.id, limit=limit + 1, after=after)
+    page = stored[:limit]
+    return Page(
+        data=[
+            SegmentInfo(
+                id=span.id,
+                ordinal=span.ordinal,
+                text=span.text,
+                anchor_kind=span.anchor_kind,  # pyright: ignore[reportArgumentType]
+                anchor=span.anchor,
+                confidence=span.confidence,
+                language=span.language,
+                extractor=span.extractor_id,
+                generation=span.generation,
+            )
+            for span in page
+        ],
+        next_cursor=(_encode_ordinal(page[-1].ordinal) if len(stored) > limit and page else None),
+    )
+
+
+@router.get(
+    "/{file_id}/metadata",
+    summary="What is known about one file",
+    response_model=list[MetadataInfo],
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_metadata(
+    file_id: UUID, credential: CurrentCredential, connection: DatabaseConnection
+) -> list[MetadataInfo]:
+    """Every typed fact about the current version — EXIF, page count, detected language, position.
+
+    Unpaginated: a file has tens of these, not thousands, and the ones a client renders are all
+    of them.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await files.current_version(connection, found.id)
+    if version is None:  # pragma: no cover - see `summarize`
+        raise RuntimeError(f"file {found.id} has no current version")
+
+    return [
+        MetadataInfo(
+            key=entry.key,
+            type=entry.value_type,  # pyright: ignore[reportArgumentType]
+            value=entry.value,
+            provenance=entry.provenance,  # pyright: ignore[reportArgumentType]
+            confidence=entry.confidence,
+            extractor=entry.extractor_id,
+            generation=entry.generation,
+        )
+        for entry in await results.metadata_of(connection, version.id)
+    ]
 
 
 @router.get(

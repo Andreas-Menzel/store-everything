@@ -7,6 +7,7 @@ rather than in each test.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -113,10 +114,39 @@ async def claim_one(extractor: httpx.AsyncClient) -> dict[str, Any] | None:
     return response.json()
 
 
-async def finish(extractor: httpx.AsyncClient, job: dict[str, Any]) -> httpx.Response:
+async def finish(
+    extractor: httpx.AsyncClient, job: dict[str, Any], **outputs: Any
+) -> httpx.Response:
+    """Submit a result. Extra keyword arguments are the envelope's outputs."""
     return await extractor.post(
-        f"{EXTRACTOR_API_PREFIX}/jobs/{job['id']}/result", json={"attempt": job["attempt"]}
+        f"{EXTRACTOR_API_PREFIX}/jobs/{job['id']}/result",
+        json={"attempt": job["attempt"], **outputs},
     )
+
+
+async def stage(
+    extractor: httpx.AsyncClient, job: dict[str, Any], data: bytes
+) -> tuple[str, httpx.Response]:
+    """Stage one derived asset, the way the two-phase result works. Returns its digest."""
+    digest = hashlib.sha256(data).hexdigest()
+    response = await extractor.put(
+        f"{EXTRACTOR_API_PREFIX}/jobs/{job['id']}/assets/{digest}",
+        content=data,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    return digest, response
+
+
+async def rows_in(database_url: str, table: Any, *columns: str) -> list[dict[str, Any]]:
+    """Whatever one of the result tables holds, as a test would read it."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            selected = [table.c[name] for name in columns] if columns else list(table.c)
+            rows = (await connection.execute(select(*selected))).mappings()
+            return [dict(row) for row in rows]
+    finally:
+        await engine.dispose()
 
 
 async def report_error(

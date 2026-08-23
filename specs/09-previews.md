@@ -61,7 +61,7 @@ Accepted cost (explicit decision): thumbnails and previews consume additional di
 
 ## Storage
 
-All assets live in the app-owned **derived store** (never the source tree — portability; never the DB — only `DerivedAsset` pointer rows there), addressed by **content hash** + kind + parameters in sharded directories:
+All assets live in the app-owned **derived store** (never the source tree — portability; never the DB — only `DerivedAsset` pointer rows there), in one directory per **source content hash**, sharded. The names below are the ones the official extractors choose: the core owns the directory, the extractor names its own file (validated, never rewritten), so a plugin's new preview kind needs no core change to be stored:
 
 ```
 derived/{hh}/{content-hash}/thumb-256.webp

@@ -120,6 +120,17 @@ def build_extractor_api_router(*, api_docs_enabled: bool) -> APIRouter:
         },
     )
     router.add_api_route(
+        "/jobs/{job_id}/assets/{content_hash}",
+        jobs.stage_asset,
+        methods=["PUT"],
+        summary="Stage one derived asset",
+        response_model=jobs.StagedAsset,
+        responses={
+            404: {"description": "No such job for this extractor"},
+            422: {"description": "The bytes do not hash to the declared digest"},
+        },
+    )
+    router.add_api_route(
         "/jobs/{job_id}/result",
         jobs.submit_result,
         methods=["POST"],
@@ -127,7 +138,8 @@ def build_extractor_api_router(*, api_docs_enabled: bool) -> APIRouter:
         response_model=jobs.JobOutcome,
         responses={
             404: {"description": "No such job for this extractor"},
-            409: {"description": "The lease is no longer this caller's"},
+            409: {"description": "A lost lease, or an asset that was never staged"},
+            422: {"description": "The envelope declared something it could not store"},
         },
     )
     router.add_api_route(

@@ -32,16 +32,21 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import operations
+from store_everything import operations, results
+from store_everything.derived import DerivedStore
 from store_everything.extractors import Manifest
+from store_everything.ids import new_id
 from store_everything.operations import PRIORITY_PRESENCE, PRIORITY_SEARCHABILITY, Operation
 from store_everything.tables import (
     FIRST_GENERATION,
     TERMINAL_OPERATION_STATES,
+    derived_asset,
     extraction_run,
     extractor,
     file_version,
+    metadata_entry,
     operation,
+    segment,
 )
 
 _logger = logging.getLogger(__name__)
@@ -83,6 +88,12 @@ class Run:
     state: str
     extractor_version: str | None
     model_version: str | None
+    input_asset_id: UUID | None
+    """The derived asset this run is about, or `None` for the file's own bytes."""
+
+    reused_from: UUID | None
+    """Set when these rows were copied from a run over byte-identical content (F-009/FR-8)."""
+
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None
@@ -107,13 +118,29 @@ class VersionFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class AssetFacts:
+    """A derived asset an extractor has been given as its input."""
+
+    id: UUID
+    kind: str
+    name: str
+    media_type: str
+    size_bytes: int
+    content_hash: str
+    source_hash: str
+    """The content hash of the *version* it was derived from — which is where it lives on disk."""
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimedJob:
-    """A claim: the job, its fencing token, and the version it is about."""
+    """A claim: the job, its fencing token, and what it is about."""
 
     operation: Operation
     run: Run
     version: VersionFacts
     lease_expires_at: datetime
+    input: AssetFacts | None = None
+    """The derived asset to analyse, for a chained job. `None` means the file's own bytes."""
 
 
 _RUN_COLUMNS = (
@@ -124,6 +151,8 @@ _RUN_COLUMNS = (
     extraction_run.c.state,
     extraction_run.c.extractor_version,
     extraction_run.c.model_version,
+    extraction_run.c.input_asset_id,
+    extraction_run.c.reused_from,
     extraction_run.c.started_at,
     extraction_run.c.finished_at,
     extraction_run.c.error,
@@ -153,31 +182,128 @@ async def route(
     *,
     file_version_id: UUID,
     media_type: str,
+    content_hash: str | None = None,
     generation: int = FIRST_GENERATION,
 ) -> list[Run]:
     """Create the jobs this version needs. Returns the runs, whether new or already there.
 
-    Idempotent per *(version, extractor, generation)*: an extractor that already has a run for
-    this version is skipped, so a second call cannot double the work — which is what makes it
-    safe to call from every path that creates a version rather than from one careful caller.
+    Called from three moments, and it has to be right in all of them: when a version is created,
+    when a result lands (a new fact may satisfy a predicate, a new asset may need chaining), and
+    when reprocessing asks for a generation. So it is **idempotent per *(version, extractor,
+    generation, input)***: work that already has a run is skipped, whatever brought us here.
+
+    Three ways a job comes to exist, in order of how much they cost:
+
+    1. **Reuse** — someone already ran this extractor, at this version, over byte-identical
+       content. The rows are copied and no job is created at all (F-009/FR-8).
+    2. **The file's own bytes** — the manifest accepts this media type, and its `when` predicate
+       (if any) is satisfied by what is already known about the version.
+    3. **A derived input** — one job per matching asset, because a video's fifty keyframes are
+       fifty pieces of work (12 § job atomicity).
     """
-    existing = {run.extractor_id: run for run in await runs_for(connection, file_version_id)}
+    existing = {
+        (run.extractor_id, run.input_asset_id): run
+        for run in await runs_for(connection, file_version_id)
+    }
+    assets = await _assets_of(connection, file_version_id)
     created: list[Run] = []
 
     for extractor_id, manifest in await _candidates(connection):
-        if extractor_id in existing or not _accepts(manifest, media_type):
-            continue
-        created.append(
-            await _create_job(
-                connection,
-                extractor_id=extractor_id,
-                manifest=manifest,
-                file_version_id=file_version_id,
-                generation=generation,
+        wants_original = (extractor_id, None) not in existing and _accepts(manifest, media_type)
+        if wants_original and await _predicate_holds(connection, manifest, file_version_id):
+            reused = (
+                None
+                if content_hash is None
+                else await _reuse(
+                    connection,
+                    extractor_id=extractor_id,
+                    manifest=manifest,
+                    file_version_id=file_version_id,
+                    content_hash=content_hash,
+                    generation=generation,
+                )
             )
-        )
+            created.append(
+                reused
+                or await _create_job(
+                    connection,
+                    extractor_id=extractor_id,
+                    manifest=manifest,
+                    file_version_id=file_version_id,
+                    generation=generation,
+                    params=await _params_from(connection, manifest, file_version_id),
+                )
+            )
+
+        for asset_id, kind in assets:
+            if kind in manifest.accepts.derived_kinds and (extractor_id, asset_id) not in existing:
+                created.append(
+                    await _create_job(
+                        connection,
+                        extractor_id=extractor_id,
+                        manifest=manifest,
+                        file_version_id=file_version_id,
+                        generation=generation,
+                        input_asset_id=asset_id,
+                    )
+                )
 
     return [*existing.values(), *created]
+
+
+async def _assets_of(connection: AsyncConnection, file_version_id: UUID) -> list[tuple[UUID, str]]:
+    """The derived assets of one version, as (id, kind) — the inputs chaining can offer."""
+    rows = await connection.execute(
+        select(derived_asset.c.id, derived_asset.c.kind)
+        .where(derived_asset.c.file_version_id == file_version_id)
+        .order_by(derived_asset.c.created_at, derived_asset.c.name)
+    )
+    return [(row[0], row[1]) for row in rows.all()]
+
+
+async def _predicate_holds(
+    connection: AsyncConnection, manifest: Manifest, file_version_id: UUID
+) -> bool:
+    """Whether `accepts.when` is satisfied by what is already known about this version.
+
+    This is the whole of how `tesseract-ocr` learns that a PDF needs it: `pdf-text` writes
+    `needs_ocr`, and the next routing pass — the one that runs when that result lands — finds the
+    predicate satisfied. Neither extractor knows the other exists (04 § routing).
+    """
+    when = manifest.accepts.when
+    if when is None:
+        return True
+    actual = await results.value_of(connection, file_version_id=file_version_id, key=when.key)
+    return _equivalent(actual, when.equals)
+
+
+def _equivalent(actual: Any, expected: bool | int | float | str) -> bool:
+    """Comparison that refuses Python's `True == 1`, because a flag is not a count."""
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        return isinstance(actual, bool) and isinstance(expected, bool) and actual is expected
+    if isinstance(expected, int | float) and isinstance(actual, int | float):
+        return float(actual) == float(expected)
+    return actual == expected
+
+
+async def _params_from(
+    connection: AsyncConnection, manifest: Manifest, file_version_id: UUID
+) -> dict[str, Any]:
+    """The job parameters a manifest asks to be filled from well-known metadata.
+
+    How `tesseract-ocr` is told *which* pages to read rather than re-deciding it: the extractor
+    that found them wrote `ocr_pages`, and the manifest asks for it under the name its own code
+    uses.
+    """
+    wanted = manifest.accepts.params_from
+    if not wanted:
+        return {}
+    params: dict[str, Any] = {}
+    for key, parameter in wanted.items():
+        value = await results.value_of(connection, file_version_id=file_version_id, key=key)
+        if value is not None:
+            params[parameter] = value
+    return params
 
 
 async def _candidates(connection: AsyncConnection) -> list[tuple[str, Manifest]]:
@@ -213,14 +339,10 @@ async def _candidates(connection: AsyncConnection) -> list[tuple[str, Manifest]]
 def _accepts(manifest: Manifest, media_type: str) -> bool:
     """Whether this extractor takes an original of this media type.
 
-    Two things it deliberately does not do yet, both because they need results that do not
-    exist until derived data does: match `accepts.derived_kinds` (chaining), and evaluate
-    `accepts.when` (a predicate over metadata another extractor writes). An extractor carrying
-    a predicate is therefore not routed at all rather than routed as if the predicate held —
-    "not yet" is the honest answer for `tesseract-ocr` waiting on `needs_ocr`.
+    Only the media type is asked here; whether the extractor's precondition holds is a separate
+    question with a separate answer (`_predicate_holds`), because one is about the file and the
+    other about what has been learned of it so far.
     """
-    if manifest.accepts.when is not None:
-        return False
     return any(_matches(pattern, media_type) for pattern in manifest.accepts.mime_types)
 
 
@@ -246,8 +368,12 @@ def idempotency_key(
     extractor_version: str,
     model_version: str | None,
     generation: int,
+    input_asset_id: UUID | None = None,
 ) -> str:
     """Deterministic, so re-detecting the same work converges instead of duplicating it (05).
+
+    The input is part of it, because a job over a keyframe is not the same work as a job over the
+    file: without it, chaining would converge fifty keyframes onto one job.
 
     Readable rather than hashed: this string turns up in the operation table when somebody is
     working out why a job exists, and a digest would answer that question with nothing.
@@ -260,6 +386,7 @@ def idempotency_key(
             extractor_version,
             model_version or "-",
             str(generation),
+            str(input_asset_id) if input_asset_id is not None else "-",
         )
     )
 
@@ -271,6 +398,8 @@ async def _create_job(
     manifest: Manifest,
     file_version_id: UUID,
     generation: int,
+    input_asset_id: UUID | None = None,
+    params: dict[str, Any] | None = None,
 ) -> Run:
     model = manifest.declared_model
     key = idempotency_key(
@@ -279,6 +408,7 @@ async def _create_job(
         extractor_version=manifest.version,
         model_version=model.version if model is not None else None,
         generation=generation,
+        input_asset_id=input_asset_id,
     )
     queued = await operations.enqueue(
         connection,
@@ -292,7 +422,8 @@ async def _create_job(
             # Handed back on claim so an extractor can deduplicate its own side of an
             # at-least-once delivery without recomputing what the core keyed the job on.
             "idempotency_key": key,
-            "params": {},
+            "params": dict(params or {}),
+            "input_asset": str(input_asset_id) if input_asset_id is not None else None,
         },
         subject_type="file_version",
         subject_id=file_version_id,
@@ -308,12 +439,134 @@ async def _create_job(
             extractor_id=extractor_id,
             file_version_id=file_version_id,
             generation=generation,
+            input_asset_id=input_asset_id,
         )
         .on_conflict_do_nothing(index_elements=["id"])
     )
     found = await get_run(connection, queued.id)
     if found is None:  # pragma: no cover - just inserted, in this transaction
         raise RuntimeError(f"extraction run {queued.id} vanished as it was created")
+    return found
+
+
+async def _reuse(
+    connection: AsyncConnection,
+    *,
+    extractor_id: str,
+    manifest: Manifest,
+    file_version_id: UUID,
+    content_hash: str,
+    generation: int,
+) -> Run | None:
+    """Copy an earlier run's outputs instead of computing them again (F-009/FR-8).
+
+    The condition is exact: the same extractor, the same implementation and model version, the
+    same generation, over *byte-identical content*. Anything looser would be a different answer
+    wearing this one's provenance.
+
+    Nothing is copied on disk. A derived asset lives under the source content hash
+    ([09 § storage](../../../specs/09-previews.md#storage)), and the hash is identical by
+    definition here — so the bytes are already exactly where this version's assets belong. That
+    is the layout paying for itself.
+    """
+    model = manifest.declared_model
+    model_version = model.version if model is not None else None
+
+    donor_row = (
+        await connection.execute(
+            select(extraction_run.c.id)
+            .join(file_version, file_version.c.id == extraction_run.c.file_version_id)
+            .where(
+                extraction_run.c.extractor_id == extractor_id,
+                extraction_run.c.state == "succeeded",
+                extraction_run.c.generation == generation,
+                extraction_run.c.extractor_version == manifest.version,
+                extraction_run.c.model_version.is_not_distinct_from(model_version),
+                extraction_run.c.input_asset_id.is_(None),
+                extraction_run.c.file_version_id != file_version_id,
+                file_version.c.content_hash == content_hash,
+            )
+            # The oldest: it is the one whose outputs have been available longest, and choosing
+            # deterministically keeps two concurrent uploads of the same bytes from disagreeing.
+            .order_by(extraction_run.c.created_at)
+            .limit(1)
+        )
+    ).first()
+    if donor_row is None:
+        return None
+    donor = donor_row[0]
+
+    run_id = new_id()
+    await connection.execute(
+        insert(extraction_run).values(
+            id=run_id,
+            extractor_id=extractor_id,
+            file_version_id=file_version_id,
+            generation=generation,
+            state="succeeded",
+            extractor_version=manifest.version,
+            model_version=model_version,
+            reused_from=donor,
+            started_at=func.now(),
+            finished_at=func.now(),
+        )
+    )
+    for table, columns in (
+        (
+            metadata_entry,
+            (
+                "key",
+                "value_type",
+                "provenance",
+                "confidence",
+                "value_text",
+                "value_number",
+                "value_boolean",
+                "value_time",
+                "value_latitude",
+                "value_longitude",
+                "value_json",
+            ),
+        ),
+        (segment, ("ordinal", "text", "anchor_kind", "anchor", "confidence", "language")),
+        (
+            derived_asset,
+            (
+                "kind",
+                "name",
+                "media_type",
+                "size_bytes",
+                "content_hash",
+                "digest_algorithm",
+                "params",
+                "rendition_kind",
+            ),
+        ),
+    ):
+        copied = (
+            await connection.execute(
+                select(*(table.c[name] for name in columns)).where(table.c.run_id == donor)
+            )
+        ).mappings()
+        rows = [
+            {
+                **dict(row),
+                "id": new_id(),
+                "file_version_id": file_version_id,
+                "run_id": run_id,
+                "generation": generation,
+            }
+            for row in copied
+        ]
+        if rows:
+            # One statement per table rather than per row: a long document is thousands of
+            # segments, and reuse exists to be cheaper than the work it replaces.
+            await connection.execute(insert(table), rows)
+
+    _logger.info("reused run %s for version %s (%s)", donor, file_version_id, extractor_id)
+    found = await get_run(connection, run_id)
+    if found is None:  # pragma: no cover - inserted in this transaction
+        raise RuntimeError(f"reused run {run_id} vanished as it was created")
     return found
 
 
@@ -488,8 +741,34 @@ async def claim(
 
     lease_expires_at = await _lease_expiry(connection, claimed.id)
     return ClaimedJob(
-        operation=claimed, run=started, version=version, lease_expires_at=lease_expires_at
+        operation=claimed,
+        run=started,
+        version=version,
+        lease_expires_at=lease_expires_at,
+        input=await asset_facts(connection, started.input_asset_id),
     )
+
+
+async def asset_facts(connection: AsyncConnection, asset_id: UUID | None) -> AssetFacts | None:
+    """One derived asset, with the version hash that says where its bytes are."""
+    if asset_id is None:
+        return None
+    row = (
+        await connection.execute(
+            select(
+                derived_asset.c.id,
+                derived_asset.c.kind,
+                derived_asset.c.name,
+                derived_asset.c.media_type,
+                derived_asset.c.size_bytes,
+                derived_asset.c.content_hash,
+                file_version.c.content_hash.label("source_hash"),
+            )
+            .join(file_version, file_version.c.id == derived_asset.c.file_version_id)
+            .where(derived_asset.c.id == asset_id)
+        )
+    ).first()
+    return None if row is None else AssetFacts(*tuple(row))  # pyright: ignore[reportArgumentType]
 
 
 async def _version_facts(
@@ -561,6 +840,51 @@ async def finish(connection: AsyncConnection, *, claimed: Operation) -> bool:
         .values(state="succeeded", finished_at=func.now(), updated_at=func.now(), error=None)
     )
     return True
+
+
+async def complete(
+    connection: AsyncConnection,
+    *,
+    claimed: Operation,
+    envelope: results.Envelope,
+    store: DerivedStore,
+) -> results.Applied | None:
+    """Apply one result and finish its job — the guarded transaction of 05 § dispatch.
+
+    Fencing first, deliberately: a worker whose lease has gone should not have its outputs
+    written and then discarded, and the answer it gets is the same either way. Then the rows,
+    then routing again — because a result is how the *next* extractor's precondition becomes
+    true, and doing it here means chaining needs no separate pass and cannot be forgotten.
+
+    `None` means the claim was not current. Everything else raises, and the caller's transaction
+    takes the whole envelope with it.
+    """
+    run = await get_run(connection, claimed.id)
+    version = await _version_facts(connection, run.file_version_id if run else None)
+    if run is None or version is None:  # pragma: no cover - both exist by construction
+        raise RuntimeError(f"job {claimed.id} has no run or no file version")
+
+    if not await finish(connection, claimed=claimed):
+        return None
+
+    applied = await results.apply(
+        connection,
+        run_id=run.id,
+        file_version_id=run.file_version_id,
+        source_hash=version.content_hash,
+        generation=run.generation,
+        envelope=envelope,
+        store=store,
+        operation_id=claimed.id,
+    )
+    await route(
+        connection,
+        file_version_id=run.file_version_id,
+        media_type=version.media_type,
+        content_hash=version.content_hash,
+        generation=run.generation,
+    )
+    return applied
 
 
 async def abandon(
@@ -654,6 +978,7 @@ async def reconcile_runs(connection: AsyncConnection) -> int:
 __all__ = [
     "KIND_PREFIX",
     "MAX_ATTEMPTS",
+    "AssetFacts",
     "ClaimedJob",
     "Lease",
     "Run",
@@ -661,6 +986,7 @@ __all__ = [
     "VersionFacts",
     "abandon",
     "claim",
+    "complete",
     "counts_by_state",
     "extractor_of",
     "finish",

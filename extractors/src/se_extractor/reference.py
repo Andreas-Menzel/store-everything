@@ -35,6 +35,12 @@ _logger = logging.getLogger("se_extractor.reference")
 EXTRACTOR_ID = "reference"
 VERSION = "1.0.0"
 
+#: The one asset kind this extractor produces — an excerpt of what it read, which is enough to
+#: exercise two-phase staging and, for a test, to chain another extractor onto.
+ASSET_KIND = "text-excerpt"
+ASSET_NAME = "excerpt.txt"
+EXCERPT_BYTES = 64
+
 #: What this extractor tells the core it can do. `*/*` because a double has to be routed
 #: whatever a test uploads; a real extractor names the types it can actually read.
 MANIFEST: dict[str, Any] = {
@@ -42,9 +48,8 @@ MANIFEST: dict[str, Any] = {
     "version": VERSION,
     "api_version": "v1",
     "accepts": {"mime_types": ["*/*"]},
-    # Declared, not yet stored: this core version accepts an envelope with no outputs, and the
-    # committed contract says so (05 § result envelope).
-    "produces": ["metadata"],
+    "produces": ["metadata", "text_segments", "derived_assets"],
+    "derived_asset_kinds": [ASSET_KIND],
     "cost_class": "light",
     "gpu": "none",
     "network": "none",
@@ -85,34 +90,83 @@ def handle(job: Job, context: JobContext, *, mode: str, delay: float) -> dict[st
             time.sleep(min(0.2, max(deadline - time.monotonic(), 0)))
 
     if mode == "verify":
-        _verify(job, context)
+        return _analyse(job, context)
     return None
 
 
-def _verify(job: Job, context: JobContext) -> None:
-    """Read the input and check it against the hash the core declared.
+def _analyse(job: Job, context: JobContext) -> dict[str, Any] | None:
+    """Read the input, check it, and describe it — the shape of every real extractor.
 
-    A mismatch is permanent: the same bytes will not hash differently on a retry, and a job that
-    keeps retrying hides the fact that something is wrong with the storage.
+    The check first: the job declares the content hash of what it handed over, and verifying it
+    is one line. Getting that wrong is how an extractor silently analyses the wrong file, and a
+    mismatch is *permanent* — the same bytes will not hash differently on a retry.
+
+    Then the description, which is deliberately a sample of every output shape rather than
+    anything clever: typed facts of each storage class, one segment per line with a line anchor,
+    and one staged asset. A test can therefore assert on all three from one job.
     """
     original = job.original
-    if original is None or job.file_version is None:
-        _logger.info("job %s has no original to read", job.id)
-        return
+    if original is None:
+        _logger.info("job %s has no input to read", job.id)
+        return None
 
-    digest = hashlib.sha256()
-    read = 0
-    with context.client.stream_input(job) as chunks:
-        for chunk in chunks:
-            context.raise_if_cancelled()
-            digest.update(chunk)
-            read += len(chunk)
-
-    if read != original.size:
-        raise PermanentFailure(f"read {read} bytes where the core declared {original.size}")
-    if digest.hexdigest() != original.content_hash:
+    data = _read(job, context)
+    if len(data) != original.size:
+        raise PermanentFailure(f"read {len(data)} bytes where the core declared {original.size}")
+    if hashlib.sha256(data).hexdigest() != original.content_hash:
         raise PermanentFailure("the bytes read do not match the declared content hash")
-    _logger.info("job %s verified %d bytes", job.id, read)
+    _logger.info("job %s verified %d bytes", job.id, len(data))
+
+    # A chained job analyses somebody else's output; it has nothing new to add about the file.
+    if original.kind != "original":
+        return None
+
+    text = data.decode("utf-8", errors="replace")
+    lines = [line for line in text.splitlines() if line.strip()]
+    excerpt = data[:EXCERPT_BYTES]
+
+    return {
+        "metadata": [
+            {"key": "byte_count", "type": "integer", "value": len(data)},
+            {"key": "line_count", "type": "integer", "value": len(lines)},
+            {"key": "language", "type": "string", "value": "und", "confidence": 0.5},
+            {"key": "is_probably_text", "type": "boolean", "value": _looks_like_text(data)},
+            {"key": "checked_at", "type": "datetime", "value": "2026-08-23T00:00:00+00:00"},
+            {"key": "sample_geo", "type": "geo", "value": {"lat": 48.137, "lon": 11.575}},
+            {"key": "reference_report", "type": "json", "value": {"lines": len(lines)}},
+        ],
+        "text_segments": [
+            {
+                "text": line,
+                "anchor": {"kind": "line", "start_line": number, "end_line": number},
+                "language": "und",
+            }
+            for number, line in enumerate(lines, start=1)
+        ],
+        "derived_assets": [
+            {
+                "kind": ASSET_KIND,
+                "name": ASSET_NAME,
+                "content_hash": context.client.stage_asset(job, excerpt),
+                "media_type": "text/plain",
+                "params": {"bytes": len(excerpt)},
+            }
+        ],
+    }
+
+
+def _read(job: Job, context: JobContext) -> bytes:
+    """The whole input, in chunks — a real extractor streams for the same reason."""
+    chunks: list[bytes] = []
+    with context.client.stream_input(job) as stream:
+        for chunk in stream:
+            context.raise_if_cancelled()
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _looks_like_text(data: bytes) -> bool:
+    return b"\x00" not in data
 
 
 def _environment() -> tuple[str, str, str, float, int]:
