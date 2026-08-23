@@ -1,0 +1,74 @@
+# A working extractor service — the template every official image follows, and the one to copy
+# when installing a third-party one (05 § container requirements, ADR-0021).
+#
+# The example is the *reference extractor*: it reads each file it is given and checks the bytes
+# against the hash the core declared. That is not a capability anybody needs in production, which
+# is exactly why it is here rather than in `compose.yaml` — it proves the template runs, and it is
+# what the sandbox check exercises.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml -f compose.extractor-example.yaml up -d
+#
+# Two things have to happen before it can do anything, both documented in docs/install.md:
+#
+#   1. an administrator provisions the extractor id and mints its credential:
+#        POST /api/v1/extractors  {"id": "reference"}
+#   2. the credential goes into `.env` as SE_REFERENCE_TOKEN.
+#
+# Nothing about that is specific to this image. Every extractor is an id, a token, and a service
+# block that looks like the one below.
+
+name: store-everything
+
+services:
+  reference-extractor:
+    image: ${REFERENCE_EXTRACTOR_IMAGE:-store-everything-reference-extractor:local}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Reachable *only* because the API is the one service that also joins this network.
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_REFERENCE_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_REFERENCE_MODE: ${SE_REFERENCE_MODE:-verify}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      # One long poll rather than sixty short ones: an idle extractor should be quiet.
+      SE_CLAIM_WAIT_SECONDS: '30'
+
+    # ------------------------------------------------------------------ the hardening template
+    #
+    # Everything below is the baseline, and none of it is specific to this extractor. Copy it.
+
+    # No egress, no database, no proxy: this network has no gateway, and PostgreSQL is not on it.
+    # An extractor's whole world is the extractor API (ADR-0021).
+    networks: [extractors]
+
+    # Nothing listens. Dispatch is poll-based (ADR-0020), so an extractor needs no port, no
+    # published address and no inbound route at all — which is what makes an egress-less network
+    # a complete answer rather than half of one.
+
+    # The filesystem an extractor may write is a tmpfs it gets fresh on every start. Its inputs
+    # arrive over HTTP, per job: there is no bind mount of the library, and therefore no way for
+    # a compromised image to read a file it was not handed.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-256m}
+
+    # Privileges: none. A model does not need capabilities, and an extractor that parses hostile
+    # content is the last place to leave them lying around.
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+    # Bounded, so one runaway extractor cannot take the instance down with it. Heavy extractors
+    # (OCR, transcription) will want more than this; the numbers are per image, not per product.
+    pids_limit: 256
+    mem_limit: ${EXTRACTOR_MEMORY:-1g}
+    cpus: ${EXTRACTOR_CPUS:-2}
+
+    # Seconds, not job duration: a stopped extractor leaves its lease to expire, and the job is
+    # re-claimed by whoever starts next (ADR-0010). There is nothing to wait for.
+    stop_grace_period: 10s

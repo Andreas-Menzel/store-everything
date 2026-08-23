@@ -11,7 +11,9 @@ proxy you already run ([ADR-0005](../decisions/ADR-0005-single-server-docker-net
 
 ## Requirements
 
-- Docker with Compose v2
+- Docker with Compose v2. **Engine 25.0.5 or newer** if you will install extractors — older
+  engines leak DNS out of isolated networks (CVE-2024-29018), which is the one thing their
+  sandbox cannot survive. 28.x recommended.
 - A running Traefik with a shared Docker network, terminating TLS
 - A DNS name pointing at that proxy
 
@@ -322,6 +324,72 @@ if scans start failing with a marker complaint, check the mount, not the app. De
 `.workspace/` from a root has the same effect, which is why it is the one directory in your tree
 that belongs to the app.
 
+## Installing an extractor
+
+An **extractor** is a container that analyses files: document text, OCR, thumbnails,
+transcription. The app ships none yet — the analysis capabilities arrive through phase 2 — but the
+mechanism is here, and installing one is always the same three steps.
+
+**1. Provision its id and mint its credential.** As an administrator:
+
+```bash
+curl -X POST https://YOUR-HOST/api/v1/extractors \
+  -H 'Content-Type: application/json' -b cookies.txt \
+  -d '{"id":"pdf-text"}'
+```
+
+The response carries the credential **once**. Nothing else will ever show it again, which is the
+same rule personal access tokens follow. An extractor cannot register itself into existence: the
+credential is bound to the id you chose here, so a leaked one cannot invent a second extractor or
+stamp another's provenance.
+
+**2. Put the credential in `.env`** and add the service. `compose.extractor-example.yaml` is a
+working one to copy — it runs the reference extractor, which reads each file it is given and
+checks the bytes against the hash the API declared:
+
+```bash
+docker compose -f compose.yaml -f compose.extractor-example.yaml up -d
+```
+
+**3. Check it registered.** `GET /api/v1/extractors` shows what each one declared, when it was
+last seen, and whether it is enabled. An extractor that never appears has not reached the API;
+its logs will say why.
+
+### What the sandbox guarantees, and what it does not
+
+Extractors live on the `extractors` network, which is declared `internal: true` — **no gateway**.
+A container there can reach the one other member, the API, and nothing else: not PostgreSQL, not
+Traefik, not the internet. That is enforced by the network's topology rather than by anything
+inside the container, which is the only way it could be enforced at all
+([ADR-0021](../decisions/ADR-0021-extractor-sandbox-enforcement.md)).
+
+The rest of the baseline, all in the example file: a read-only root filesystem, a `tmpfs` for
+scratch, no capabilities, no new privileges, an unprivileged user, and bounded memory, CPU and
+process count. An extractor also **has no mount of your files**. Its inputs arrive over HTTP, one
+job at a time, so a compromised image can read the bytes of the work it was given and nothing
+else.
+
+Two things are worth being plain about:
+
+- **Docker Engine >= 25.0.5 is a requirement, not a suggestion.** Before that release the
+  embedded DNS resolver forwarded lookups out of internal networks (CVE-2024-29018) — a
+  data-exfiltration channel that no amount of network isolation closes. 28.x is recommended; it
+  also stops unsolicited LAN traffic reaching unpublished container ports.
+- **A network-enabled extractor is a deliberate exception.** One whose manifest declares
+  `network: outbound` — a remote-AI backend — needs an extra network in its service block, and
+  the admin extractor list shows the flag. The registry surfaces the intent; the compose file is
+  what grants it. Review them together.
+
+You can prove all of this on your own machine, from inside a real container:
+
+```bash
+make sandbox
+```
+
+It brings up a throwaway stack, asks the extractor what it can reach, and tears the stack down.
+The first thing it checks is that the extractor *can* reach the API — a container isolated from
+everything would otherwise pass a test for isolation while being useless.
+
 ## Upgrading
 
 ```bash
@@ -356,6 +424,7 @@ simply inert.
 | `postgres` | Internal only, no published port. Data lives in the `postgres-data` volume. |
 | `orchestrator` | Runs background work (`store-everything worker`). No ingress, no proxy label — nothing routes to a worker. |
 | `migrations` | Runs on request (`docker compose run --rm migrations`) and exits. |
+| extractors | One service per installed analysis capability, on a network with **no gateway**: it can reach the API and nothing else. None ship yet — see [Installing an extractor](#installing-an-extractor). |
 
 Three volumes hold state, and they are **not** equally replaceable:
 
@@ -376,8 +445,6 @@ Stopping the orchestrator at any moment is safe, including `kill -9`: work is cl
 under a lease, and an expired lease is picked up by whichever worker starts next
 ([ADR-0010](../decisions/ADR-0010-crash-only-execution-model.md)). It is also fine to run
 none — the API keeps serving and queued work simply waits.
-
-The extractor containers join this file in phase 2, when there is something to run them on.
 
 ## Checking an instance
 
