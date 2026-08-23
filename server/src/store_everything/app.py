@@ -8,11 +8,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from store_everything import bootstrap, web
-from store_everything.api import health
+from store_everything.api import health, operation_id
+from store_everything.api.extractor_api.router import build_extractor_api_router
 from store_everything.api.v1.router import build_public_v1_router, build_v1_router
 from store_everything.config import Settings, load_settings
 from store_everything.db import create_engine
@@ -30,16 +30,6 @@ _SUMMARY = "Self-hosted personal cloud where search is the product."
 #: path-versioned, so this changes only when a /v2 appears — never on a release, which
 #: would otherwise churn openapi.json and every generated client on every bump.
 API_VERSION = "1"
-
-
-def _operation_id(route: APIRoute) -> str:
-    """Name operations after their handler.
-
-    FastAPI's default (`healthz_healthz_get`) becomes the function name in every
-    generated client, so the contract fixes readable ids instead. Uniqueness is asserted
-    by the test suite, because a collision would produce an invalid document.
-    """
-    return route.name
 
 
 @asynccontextmanager
@@ -66,7 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         summary=_SUMMARY,
         version=API_VERSION,
         lifespan=_lifespan,
-        generate_unique_id_function=_operation_id,
+        generate_unique_id_function=operation_id,
         # The built-in docs routes are public; ours are mounted under /api/v1 behind
         # authentication instead (08-api-principles.md).
         docs_url=None,
@@ -85,6 +75,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(build_public_v1_router())
     app.include_router(build_v1_router(api_docs_enabled=resolved.api_docs_enabled))
+    # A second contract with its own document and its own credential space (ADR-0020), hidden
+    # from the user-facing schema rather than absent from it: `openapi.json` describes what a
+    # client of this product calls, and an extractor is not one.
+    app.include_router(
+        build_extractor_api_router(api_docs_enabled=resolved.api_docs_enabled),
+        include_in_schema=False,
+    )
     # Last, so its fallback route is reached only after every API route has declined
     # (F-027/FR-1).
     app.state.serves_web = web.install(app, resolved.web_root)

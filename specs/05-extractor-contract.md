@@ -15,8 +15,10 @@ An **extractor** is a separate Docker container that adds one analysis capabilit
 
 ## Registration & authentication
 
-- Every extractor authenticates with a **per-extractor bearer token**, minted by an admin (shown once, like a personal access token) and bound to the extractor id; the token is delivery configuration (env), never manifest content. A token can register, claim, and write **only its own extractor id** — provenance cannot be impersonated. Tokens are listable and revocable.
-- On startup the extractor performs an idempotent **manifest upsert** (`PUT /extractor-api/v1/registration`). A changed `version` or `model.version` is recorded — that is what makes files eligible for reprocessing by this extractor ([F-009/FR-2](../features/F-009-reprocessing.md)).
+- **An admin provisions the extractor id first**, and minting its credential is part of that act (`POST /api/v1/extractors`, admin-only). Nothing registers itself into existence: a token is bound to one id at mint time, so a leaked credential can neither invent a second extractor nor stamp another's provenance.
+- Every extractor authenticates with a **per-extractor bearer token**, shown once like a personal access token; the token is delivery configuration (env), never manifest content. A token can register, claim, and write **only its own extractor id**. Tokens are listable, rotatable (mint the replacement, restart the container, revoke the old one) and revocable: `GET·POST /api/v1/extractors/{id}/tokens`, `DELETE /api/v1/extractors/{id}/tokens/{token}`.
+- On startup the extractor performs an idempotent **manifest upsert** (`PUT /extractor-api/v1/registration`). A changed `version` or `model.version` is recorded — that is what makes files eligible for reprocessing by this extractor ([F-009/FR-2](../features/F-009-reprocessing.md)). A re-declaration of an identical manifest is *silent*: containers restart, and the event log is the one table nothing deletes.
+- **`enabled` means exactly one thing** — whether the core routes work to this extractor (`PATCH /api/v1/extractors/{id}`). A disabled extractor still authenticates and still registers, so its manifest stays current and re-enabling needs no restart; this is how `face-detect` ships installed but inactive ([ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)). There is no delete: an extractor id is stamped into the provenance of every row it produced ([02 § invariants](02-domain-model.md#invariants) #3).
 - **Single-provider kinds:** rendition kinds, derived-asset kinds, and embedding spaces have exactly one registered producer. A manifest claiming a kind already claimed by a *different* extractor id is refused with a conflict error naming the current claimant; the admin resolves by revoking or re-scoping one of the two. (Segments, metadata, and tags are deliberately multi-producer — every row is stamped with its run.)
 - The admin extractor list (`GET /api/v1/extractors`) surfaces each registered manifest — including the `network` flag — plus token binding, last-seen, and queue/failure counts ([04 § status](04-ingestion-pipeline.md#status--observability-api-visible)).
 
@@ -40,6 +42,7 @@ accepts:
   # params_from: {pages: ocr_pages}   # copies a well-known key into job params
 produces: [metadata, tags, embeddings]   # of: metadata | text_segments | tags | embeddings | derived_assets | renditions | faces
 renditions: []                # if producing renditions: [{kind, format, label}] (ADR-0008)
+derived_asset_kinds: []       # if producing derived assets: the kinds, e.g. ["keyframe"]
 embedding_spaces: ["clip-v1"] # if producing embeddings
 cost_class: heavy             # light | medium | heavy — scheduler hint
 gpu: optional                 # none | optional | required
@@ -47,6 +50,8 @@ network: none                 # none | outbound (explicit opt-in, visible to adm
 ```
 
 Changing `version` or `model.version` is what makes files eligible for reprocessing by this extractor.
+
+An output kind and the names it produces under arrive **together**: declaring `renditions`, `derived_assets` or `embeddings` in `produces` requires the matching list, and a list without its output kind is refused — otherwise a manifest could claim a namespace it never writes to, or declare an output nothing could ever be routed for. `derived_asset_kinds` is the output side of `accepts.derived_kinds`, which is what makes chaining a match between two manifests (keyframes → image analysis) rather than knowledge in the core.
 
 ## Container requirements (hardening)
 

@@ -1,0 +1,440 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Store Everything — extractor contract",
+    "summary": "The fixed API between the core and an extractor container.",
+    "description": "Every call is authenticated with the extractor's own bearer credential (`Authorization: Bearer seext_…`), minted by an administrator and bound to one extractor id. Dispatch is poll-based: the extractor claims work, heartbeats it, and submits one result envelope per job. See specs/05-extractor-contract.md.",
+    "version": "v1"
+  },
+  "paths": {
+    "/extractor-api/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "The extractor contract",
+        "description": "The extractor contract, for the containers that speak it.\n\nBehind the same credential as the rest of this API, for the same reason the user-facing\nschema is authenticated (08): a self-hosted instance publishes nothing it need not. Extractor\nauthors read the copy committed in the repository rather than one served by somebody's box.",
+        "operationId": "extractor_openapi_schema",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extractor-api/v1/registration": {
+      "put": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Declare what this extractor can do",
+        "operationId": "register_extractor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Manifest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationAccepted"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The manifest declares a different extractor id"
+          },
+          "409": {
+            "description": "Unsupported contract version, or a kind another produces"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CostClass": {
+        "type": "string",
+        "enum": [
+          "light",
+          "medium",
+          "heavy"
+        ]
+      },
+      "GpuMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "optional",
+          "required"
+        ]
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Manifest": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Id"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "api_version": {
+            "type": "string",
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Api Version"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestModelInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accepts": {
+            "$ref": "#/components/schemas/ManifestAccepts"
+          },
+          "produces": {
+            "items": {
+              "$ref": "#/components/schemas/OutputKind"
+            },
+            "type": "array",
+            "maxItems": 7,
+            "minItems": 1,
+            "title": "Produces"
+          },
+          "renditions": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestRendition"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Renditions",
+            "default": []
+          },
+          "derived_asset_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Derived Asset Kinds",
+            "default": []
+          },
+          "embedding_spaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Embedding Spaces",
+            "default": []
+          },
+          "cost_class": {
+            "$ref": "#/components/schemas/CostClass",
+            "default": "medium"
+          },
+          "gpu": {
+            "$ref": "#/components/schemas/GpuMode",
+            "default": "none"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkMode",
+            "default": "none"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "api_version",
+          "produces"
+        ],
+        "title": "Manifest",
+        "description": "What an extractor declares about itself (05 § manifest)."
+      },
+      "ManifestAccepts": {
+        "properties": {
+          "mime_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Mime Types",
+            "default": []
+          },
+          "derived_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Derived Kinds",
+            "default": []
+          },
+          "when": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestPredicate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "params_from": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 20,
+            "title": "Params From"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ManifestAccepts",
+        "description": "What a job for this extractor may be about."
+      },
+      "ManifestModelInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "ManifestModelInfo",
+        "description": "The model an extractor runs, when it runs one.\n\nVersioned because the version is provenance: every row an extractor writes is stamped with\nit, and a bump is what makes files eligible for reprocessing (ADR-0004)."
+      },
+      "ManifestPredicate": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Key"
+          },
+          "equals": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Equals"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "key",
+          "equals"
+        ],
+        "title": "ManifestPredicate",
+        "description": "`accepts.when` — route here only once a well-known metadata key says so.\n\nHow `pdf-text` hands scanned pages to OCR without either extractor knowing the other\nexists: one writes `needs_ocr`, the other declares it accepts PDFs when that key is true\n(04 § routing). Bound to keys, never to extractor ids."
+      },
+      "ManifestRendition": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Kind"
+          },
+          "format": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Format"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "kind",
+          "format",
+          "label"
+        ],
+        "title": "ManifestRendition",
+        "description": "One downloadable alternative form of a whole file (ADR-0008)."
+      },
+      "NetworkMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "outbound"
+        ]
+      },
+      "OutputKind": {
+        "type": "string",
+        "enum": [
+          "metadata",
+          "text_segments",
+          "tags",
+          "embeddings",
+          "derived_assets",
+          "renditions",
+          "faces"
+        ]
+      },
+      "RegistrationAccepted": {
+        "properties": {
+          "extractor_id": {
+            "type": "string",
+            "title": "Extractor Id"
+          },
+          "registered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered At"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Manifest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "extractor_id",
+          "registered_at",
+          "changed",
+          "enabled",
+          "manifest"
+        ],
+        "title": "RegistrationAccepted"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

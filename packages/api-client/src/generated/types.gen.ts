@@ -78,6 +78,8 @@ export type ChildFolder = {
     created_at: string;
 };
 
+export type CostClass = 'light' | 'medium' | 'heavy';
+
 /**
  * CurrentIdentity
  *
@@ -97,6 +99,144 @@ export type CurrentIdentity = {
      * Scope
      */
     scope: 'read' | 'full';
+};
+
+/**
+ * ExtractorProvisionRequest
+ */
+export type ExtractorProvisionRequest = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Token Name
+     */
+    token_name?: string;
+};
+
+/**
+ * ExtractorProvisioned
+ */
+export type ExtractorProvisioned = {
+    /**
+     * Token
+     */
+    token: string;
+    extractor: ExtractorSummary;
+    extractor_token: ExtractorTokenSummary;
+};
+
+/**
+ * ExtractorSummary
+ */
+export type ExtractorSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Enabled
+     */
+    enabled: boolean;
+    /**
+     * Registered
+     */
+    registered: boolean;
+    /**
+     * Version
+     */
+    version: string | null;
+    /**
+     * Api Version
+     */
+    api_version: string | null;
+    /**
+     * Model Name
+     */
+    model_name: string | null;
+    /**
+     * Model Version
+     */
+    model_version: string | null;
+    cost_class: CostClass | null;
+    gpu: GpuMode | null;
+    network: NetworkMode | null;
+    /**
+     * Manifest
+     */
+    manifest: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Registered At
+     */
+    registered_at: string | null;
+    /**
+     * Last Seen At
+     */
+    last_seen_at: string | null;
+};
+
+/**
+ * ExtractorTokenCreateRequest
+ */
+export type ExtractorTokenCreateRequest = {
+    /**
+     * Name
+     */
+    name: string;
+};
+
+/**
+ * ExtractorTokenCreated
+ */
+export type ExtractorTokenCreated = {
+    /**
+     * Token
+     */
+    token: string;
+    extractor_token: ExtractorTokenSummary;
+};
+
+/**
+ * ExtractorTokenSummary
+ */
+export type ExtractorTokenSummary = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Extractor Id
+     */
+    extractor_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Last Used At
+     */
+    last_used_at: string | null;
+};
+
+/**
+ * ExtractorUpdateRequest
+ */
+export type ExtractorUpdateRequest = {
+    /**
+     * Enabled
+     */
+    enabled: boolean;
 };
 
 /**
@@ -290,6 +430,8 @@ export type FolderSummary = {
     aggregates: FolderAggregates;
 };
 
+export type GpuMode = 'none' | 'optional' | 'required';
+
 /**
  * HTTPValidationError
  */
@@ -344,6 +486,8 @@ export type LoginRequest = {
      */
     password: string;
 };
+
+export type NetworkMode = 'none' | 'outbound';
 
 export type Ordering = 'name' | 'size' | 'modified';
 
@@ -1229,6 +1373,233 @@ export type UpdateUserResponses = {
 };
 
 export type UpdateUserResponse = UpdateUserResponses[keyof UpdateUserResponses];
+
+export type ListExtractorsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/extractors';
+};
+
+export type ListExtractorsResponses = {
+    /**
+     * Response List Extractors
+     *
+     * Successful Response
+     */
+    200: Array<ExtractorSummary>;
+};
+
+export type ListExtractorsResponse = ListExtractorsResponses[keyof ListExtractorsResponses];
+
+export type ProvisionExtractorData = {
+    body: ExtractorProvisionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/extractors';
+};
+
+export type ProvisionExtractorErrors = {
+    /**
+     * That extractor id is already provisioned
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ProvisionExtractorError = ProvisionExtractorErrors[keyof ProvisionExtractorErrors];
+
+export type ProvisionExtractorResponses = {
+    /**
+     * Successful Response
+     */
+    201: ExtractorProvisioned;
+};
+
+export type ProvisionExtractorResponse = ProvisionExtractorResponses[keyof ProvisionExtractorResponses];
+
+export type ReadExtractorData = {
+    body?: never;
+    path: {
+        /**
+         * Extractor Id
+         */
+        extractor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/extractors/{extractor_id}';
+};
+
+export type ReadExtractorErrors = {
+    /**
+     * No such extractor
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadExtractorError = ReadExtractorErrors[keyof ReadExtractorErrors];
+
+export type ReadExtractorResponses = {
+    /**
+     * Successful Response
+     */
+    200: ExtractorSummary;
+};
+
+export type ReadExtractorResponse = ReadExtractorResponses[keyof ReadExtractorResponses];
+
+export type UpdateExtractorData = {
+    body: ExtractorUpdateRequest;
+    path: {
+        /**
+         * Extractor Id
+         */
+        extractor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/extractors/{extractor_id}';
+};
+
+export type UpdateExtractorErrors = {
+    /**
+     * No such extractor
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateExtractorError = UpdateExtractorErrors[keyof UpdateExtractorErrors];
+
+export type UpdateExtractorResponses = {
+    /**
+     * Successful Response
+     */
+    200: ExtractorSummary;
+};
+
+export type UpdateExtractorResponse = UpdateExtractorResponses[keyof UpdateExtractorResponses];
+
+export type ListExtractorTokensData = {
+    body?: never;
+    path: {
+        /**
+         * Extractor Id
+         */
+        extractor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/extractors/{extractor_id}/tokens';
+};
+
+export type ListExtractorTokensErrors = {
+    /**
+     * No such extractor
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListExtractorTokensError = ListExtractorTokensErrors[keyof ListExtractorTokensErrors];
+
+export type ListExtractorTokensResponses = {
+    /**
+     * Response List Extractor Tokens
+     *
+     * Successful Response
+     */
+    200: Array<ExtractorTokenSummary>;
+};
+
+export type ListExtractorTokensResponse = ListExtractorTokensResponses[keyof ListExtractorTokensResponses];
+
+export type CreateExtractorTokenData = {
+    body: ExtractorTokenCreateRequest;
+    path: {
+        /**
+         * Extractor Id
+         */
+        extractor_id: string;
+    };
+    query?: never;
+    url: '/api/v1/extractors/{extractor_id}/tokens';
+};
+
+export type CreateExtractorTokenErrors = {
+    /**
+     * No such extractor
+     */
+    404: unknown;
+    /**
+     * That credential name has been used before
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateExtractorTokenError = CreateExtractorTokenErrors[keyof CreateExtractorTokenErrors];
+
+export type CreateExtractorTokenResponses = {
+    /**
+     * Successful Response
+     */
+    201: ExtractorTokenCreated;
+};
+
+export type CreateExtractorTokenResponse = CreateExtractorTokenResponses[keyof CreateExtractorTokenResponses];
+
+export type RevokeExtractorTokenData = {
+    body?: never;
+    path: {
+        /**
+         * Extractor Id
+         */
+        extractor_id: string;
+        /**
+         * Token Id
+         */
+        token_id: string;
+    };
+    query?: never;
+    url: '/api/v1/extractors/{extractor_id}/tokens/{token_id}';
+};
+
+export type RevokeExtractorTokenErrors = {
+    /**
+     * No such credential for this extractor
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RevokeExtractorTokenError = RevokeExtractorTokenErrors[keyof RevokeExtractorTokenErrors];
+
+export type RevokeExtractorTokenResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RevokeExtractorTokenResponse = RevokeExtractorTokenResponses[keyof RevokeExtractorTokenResponses];
 
 export type ListWorkspacesData = {
     body?: never;

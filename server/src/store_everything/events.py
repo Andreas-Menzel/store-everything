@@ -87,6 +87,20 @@ FILE_RESTORED = "file.restored"
 #: hourly pass run?" are both answerable from the log alone.
 WORKSPACE_SCANNED = "workspace.scanned"
 
+#: An admin allowed an extractor id to exist and minted its first credential (ADR-0020).
+EXTRACTOR_PROVISIONED = "extractor.provisioned"
+#: A manifest arrived and **changed something**. Deliberately not written when a restarting
+#: container re-declares what it already declared: containers restart, and the one table
+#: nothing deletes must not fill up with "still the same". Carries the previous version and
+#: model version, which is the eligibility data reprocessing needs (F-009/FR-2).
+EXTRACTOR_REGISTERED = "extractor.registered"
+#: Two actions rather than one `extractor.updated`, because the audit question is "who turned
+#: OCR off, and when" — a reader should not have to open the details to see which way it went.
+EXTRACTOR_ENABLED = "extractor.enabled"
+EXTRACTOR_DISABLED = "extractor.disabled"
+EXTRACTOR_TOKEN_CREATED = "extractor.token_created"  # noqa: S105 - an action name, not a secret
+EXTRACTOR_TOKEN_REVOKED = "extractor.token_revoked"  # noqa: S105 - an action name, not a secret
+
 RESOURCE_USER = "user"
 RESOURCE_SESSION = "session"
 RESOURCE_OPERATION = "operation"
@@ -94,6 +108,10 @@ RESOURCE_TOKEN = "token"  # noqa: S105 - a resource name, not a secret
 RESOURCE_WORKSPACE = "workspace"
 RESOURCE_FOLDER = "folder"
 RESOURCE_FILE = "file"
+#: An extractor is keyed by its id, which is text, while `resource_id` is a UUID — so extractor
+#: events carry the id in `details` and set `resource_id` only where there is a UUID to set (a
+#: token's). Details are the audit trail's self-contained record anyway (F-011/FR-9).
+RESOURCE_EXTRACTOR = "extractor"
 
 #: Detail keys that would put a credential into the permanent record. The log is the one
 #: table nothing ever deletes, so a secret written here is a secret kept forever.
@@ -115,6 +133,15 @@ class Actor:
     def system(cls) -> Actor:
         """Startup work, schedules, janitor — anything with no human behind it."""
         return cls("system")
+
+    @classmethod
+    def extractor(cls) -> Actor:
+        """An extractor container acting on its own behalf — registering, or submitting results.
+
+        Which extractor it was lives in the event's details, because `actor_user_id` is a user
+        id and an extractor is not a user (ADR-0007).
+        """
+        return cls("extractor")
 
 
 class UnsafeEventDetailsError(ValueError):

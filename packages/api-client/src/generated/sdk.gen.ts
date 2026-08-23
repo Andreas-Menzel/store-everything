@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -135,6 +135,76 @@ export const updateUser = <ThrowOnError extends boolean = false>(options: Option
         ...options.headers
     }
 });
+
+/**
+ * List extractors
+ *
+ * Every provisioned extractor.
+ *
+ * Unpaginated: one row per installed container, so the set is bounded by the compose file.
+ */
+export const listExtractors = <ThrowOnError extends boolean = false>(options?: Options<ListExtractorsData, ThrowOnError>): RequestResult<ListExtractorsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListExtractorsResponses, unknown, ThrowOnError>({ url: '/api/v1/extractors', ...options });
+
+/**
+ * Provision an extractor
+ *
+ * Allow an extractor id to exist, and mint its first credential.
+ *
+ * Provisioning comes first on purpose: an extractor cannot register itself into existence, so
+ * a credential is always bound to an id an administrator chose (ADR-0020).
+ */
+export const provisionExtractor = <ThrowOnError extends boolean = false>(options: Options<ProvisionExtractorData, ThrowOnError>): RequestResult<ProvisionExtractorResponses, ProvisionExtractorErrors, ThrowOnError> => (options.client ?? client).post<ProvisionExtractorResponses, ProvisionExtractorErrors, ThrowOnError>({
+    url: '/api/v1/extractors',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one extractor
+ */
+export const readExtractor = <ThrowOnError extends boolean = false>(options: Options<ReadExtractorData, ThrowOnError>): RequestResult<ReadExtractorResponses, ReadExtractorErrors, ThrowOnError> => (options.client ?? client).get<ReadExtractorResponses, ReadExtractorErrors, ThrowOnError>({ url: '/api/v1/extractors/{extractor_id}', ...options });
+
+/**
+ * Enable or disable an extractor
+ *
+ * Disabling stops jobs being routed here. It does not stop the container registering:
+ * a disabled extractor keeps its manifest current so that re-enabling needs no restart.
+ */
+export const updateExtractor = <ThrowOnError extends boolean = false>(options: Options<UpdateExtractorData, ThrowOnError>): RequestResult<UpdateExtractorResponses, UpdateExtractorErrors, ThrowOnError> => (options.client ?? client).patch<UpdateExtractorResponses, UpdateExtractorErrors, ThrowOnError>({
+    url: '/api/v1/extractors/{extractor_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List an extractor's credentials
+ */
+export const listExtractorTokens = <ThrowOnError extends boolean = false>(options: Options<ListExtractorTokensData, ThrowOnError>): RequestResult<ListExtractorTokensResponses, ListExtractorTokensErrors, ThrowOnError> => (options.client ?? client).get<ListExtractorTokensResponses, ListExtractorTokensErrors, ThrowOnError>({ url: '/api/v1/extractors/{extractor_id}/tokens', ...options });
+
+/**
+ * Mint another credential for an extractor
+ *
+ * Rotation: mint the replacement, restart the container with it, then revoke the old one.
+ */
+export const createExtractorToken = <ThrowOnError extends boolean = false>(options: Options<CreateExtractorTokenData, ThrowOnError>): RequestResult<CreateExtractorTokenResponses, CreateExtractorTokenErrors, ThrowOnError> => (options.client ?? client).post<CreateExtractorTokenResponses, CreateExtractorTokenErrors, ThrowOnError>({
+    url: '/api/v1/extractors/{extractor_id}/tokens',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Revoke an extractor's credential
+ */
+export const revokeExtractorToken = <ThrowOnError extends boolean = false>(options: Options<RevokeExtractorTokenData, ThrowOnError>): RequestResult<RevokeExtractorTokenResponses, RevokeExtractorTokenErrors, ThrowOnError> => (options.client ?? client).delete<RevokeExtractorTokenResponses, RevokeExtractorTokenErrors, ThrowOnError>({ url: '/api/v1/extractors/{extractor_id}/tokens/{token_id}', ...options });
 
 /**
  * List your workspaces

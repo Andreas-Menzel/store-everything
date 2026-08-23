@@ -24,10 +24,13 @@ failures=0
 skipped=0
 fixtures=()
 
-# Restored from a copy taken here, never from git: `git checkout -- openapi.json` would
-# throw away uncommitted work on a file this script deliberately mutates.
+# Restored from copies taken here, never from git: `git checkout -- openapi.json` would
+# throw away uncommitted work on files this script deliberately mutates. Both published
+# contracts are covered — the user-facing one and the extractor's (ADR-0020).
 OPENAPI_BACKUP="$(mktemp -t gate-openapi-XXXXXX.json)"
 cp "$REPO_ROOT/openapi.json" "$OPENAPI_BACKUP"
+EXTRACTOR_OPENAPI_BACKUP="$(mktemp -t gate-openapi-extractor-XXXXXX.json)"
+cp "$REPO_ROOT/openapi-extractor.json" "$EXTRACTOR_OPENAPI_BACKUP"
 
 cleanup() {
   for fixture in "${fixtures[@]:-}"; do
@@ -35,6 +38,9 @@ cleanup() {
   done
   [ -f "$OPENAPI_BACKUP" ] && cp "$OPENAPI_BACKUP" "$REPO_ROOT/openapi.json"
   rm -f "$OPENAPI_BACKUP"
+  [ -f "$EXTRACTOR_OPENAPI_BACKUP" ] &&
+    cp "$EXTRACTOR_OPENAPI_BACKUP" "$REPO_ROOT/openapi-extractor.json"
+  rm -f "$EXTRACTOR_OPENAPI_BACKUP"
 }
 trap cleanup EXIT
 
@@ -92,15 +98,25 @@ rm -f "$fixture"
 
 # ------------------------------------------------------------ contract: drift
 # Uses the project's own interpreter: a system `python3` may be anything at all.
-$UV run python -c '
+drift_document() {
+  $UV run python -c '
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 document = json.loads(path.read_text())
 document["info"]["title"] = "Drifted"
 path.write_text(json.dumps(document, indent=2) + "\n")
-' "$REPO_ROOT/openapi.json"
+' "$1"
+}
+
+drift_document "$REPO_ROOT/openapi.json"
 expect_failure "openapi drift" $UV run pytest tests/test_openapi_document.py -q
 cp "$OPENAPI_BACKUP" "$REPO_ROOT/openapi.json"
+
+# The second contract needs its own case: it is a separate file with a separate check, and
+# an assertion nobody red-tested is an assertion nobody knows runs.
+drift_document "$REPO_ROOT/openapi-extractor.json"
+expect_failure "extractor contract drift" $UV run pytest tests/test_openapi_document.py -q
+cp "$EXTRACTOR_OPENAPI_BACKUP" "$REPO_ROOT/openapi-extractor.json"
 
 # ------------------------------------------------------------ licences policy
 fixture="$(mktemp -t gate-policy-XXXXXX.json)"

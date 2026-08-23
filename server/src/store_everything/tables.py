@@ -28,6 +28,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    PrimaryKeyConstraint,
     SmallInteger,
     Table,
     Text,
@@ -938,3 +939,154 @@ dead folders the index holds.
 
 Per run rather than on the folder row, for the same reason `scan_blocked` is: the fact is about
 one traversal. A pair that means "renamed" this hour means nothing next hour."""
+
+
+# --------------------------------------------------------------- the extractor registry
+#
+# 05-extractor-contract.md, ADR-0020. An extractor is a container that analyses files; the
+# registry is what the core knows about it.
+
+#: The contract version this core speaks. Extractors declare theirs and are refused if it is
+#: not this one — the version is the compatibility promise (05 § compatibility rules).
+EXTRACTOR_API_VERSION = "v1"
+
+#: Output kinds a result envelope may carry (05 § result envelope).
+EXTRACTOR_OUTPUT_KINDS = (
+    "metadata",
+    "text_segments",
+    "tags",
+    "embeddings",
+    "derived_assets",
+    "renditions",
+    "faces",
+)
+
+#: A scheduler hint, not a priority: the core assigns priority from (output kind, trigger)
+#: (04 § prioritization).
+EXTRACTOR_COST_CLASSES = ("light", "medium", "heavy")
+
+EXTRACTOR_GPU_MODES = ("none", "optional", "required")
+
+#: `outbound` is the explicit, admin-visible opt-in of a remote-AI extractor; enforcement is
+#: the compose topology (ADR-0021), so this column records declared intent.
+EXTRACTOR_NETWORK_MODES = ("none", "outbound")
+
+#: The three output namespaces that have exactly one producer each (ADR-0020 § registration).
+EXTRACTOR_CLAIM_TYPES = ("rendition", "derived_asset", "embedding_space")
+
+#: Identifiers chosen by extractor authors — extractor ids, rendition kinds, derived-asset
+#: kinds, embedding spaces. Lower-case kebab, because they end up in operation kinds
+#: (`extract.pdf-text`), in URLs, and in derived-store paths.
+SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+MAX_SLUG_LENGTH = 64
+
+
+extractor = Table(
+    "extractor",
+    metadata,
+    # The manifest's `id` *is* the key. It is stable, chosen once by the extractor's author,
+    # and already the text every other mention is written in: the operation kind
+    # (`extract.pdf-text`), the admin URL, the provenance stamp on every derived row. A
+    # surrogate UUID would be an alias nothing outside this table ever used.
+    Column("id", Text, primary_key=True),
+    # Everything the manifest supplies is NULL until the container first registers: an admin
+    # provisions the id and its token, and the container declares what it can do (ADR-0020).
+    # So a row with no manifest is not broken — it is an extractor that has never started.
+    Column("version", Text, nullable=True),
+    Column("api_version", Text, nullable=True),
+    Column("model_name", Text, nullable=True),
+    Column("model_version", Text, nullable=True),
+    Column("cost_class", Text, nullable=True),
+    Column("gpu", Text, nullable=True),
+    Column("network", Text, nullable=True),
+    # The manifest as registered: parsed, unknown fields preserved. Kept whole because the
+    # contract tolerates fields this core does not know yet (05 § compatibility rules), and an
+    # admin reviewing an extractor should see what it declared, not only what we understood.
+    # Routing reads it too — at 10-30 extractors a scan of this table beats normalising every
+    # accepted MIME pattern into its own row.
+    Column("manifest", JSONB, nullable=True),
+    # Whether the core routes work here. One meaning only: a disabled extractor still
+    # authenticates and still registers (keeping its manifest current), it just gets no jobs —
+    # which is how `face-detect` ships installed but inactive (ADR-0011).
+    Column("enabled", Boolean, nullable=False, server_default=text("true")),
+    _created_at(),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("registered_at", DateTime(timezone=True), nullable=True),
+    # Last authenticated call, so an admin can tell a running extractor from an absent one.
+    Column("last_seen_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint(f"id ~ '{SLUG_PATTERN}'", name="id_slug"),
+    CheckConstraint(f"length(id) BETWEEN 1 AND {MAX_SLUG_LENGTH}", name="id_length"),
+    # The manifest and everything derived from it arrive together, in one statement, or not at
+    # all — so "registered" is one fact rather than four columns that could disagree.
+    CheckConstraint(
+        "(manifest IS NULL) = (version IS NULL)"
+        " AND (manifest IS NULL) = (api_version IS NULL)"
+        " AND (manifest IS NULL) = (registered_at IS NULL)",
+        name="registration_is_all_or_nothing",
+    ),
+    CheckConstraint(
+        f"cost_class IS NULL OR {one_of('cost_class', EXTRACTOR_COST_CLASSES)}",
+        name="cost_class_known",
+    ),
+    CheckConstraint(f"gpu IS NULL OR {one_of('gpu', EXTRACTOR_GPU_MODES)}", name="gpu_known"),
+    CheckConstraint(
+        f"network IS NULL OR {one_of('network', EXTRACTOR_NETWORK_MODES)}",
+        name="network_known",
+    ),
+)
+"""A registered extractor (05 § registration). Provisioned by an admin, described by itself."""
+
+
+extractor_token = Table(
+    "extractor_token",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "extractor_id",
+        Text,
+        ForeignKey("extractor.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", Text, nullable=False),
+    # The SHA-256 only, exactly as for a personal access token: a database dump is not a set
+    # of live credentials (07 § tokens & credentials).
+    Column("token_hash", Text, nullable=False),
+    _created_at(),
+    Column("last_used_at", DateTime(timezone=True), nullable=True),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint("token_hash"),
+    # A name is how an admin recognises one token among an extractor's several during a
+    # rotation, so it has to be unambiguous within the extractor.
+    UniqueConstraint("extractor_id", "name"),
+    CheckConstraint("length(name) BETWEEN 1 AND 100", name="name_length"),
+)
+"""The credential one extractor container authenticates with (ADR-0020).
+
+Bound to the extractor id rather than to a user: it says *which extractor this is*, which is
+what stops one extractor from claiming another's jobs or stamping another's provenance."""
+
+
+extractor_claim = Table(
+    "extractor_claim",
+    metadata,
+    Column("claim_type", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column(
+        "extractor_id",
+        Text,
+        ForeignKey("extractor.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    _created_at(),
+    # The single-provider rule as a constraint rather than a check in application code: two
+    # extractors cannot both produce `searchable-pdf`, so "which one wins" has no answer to
+    # get wrong (ADR-0020 § registration rules).
+    PrimaryKeyConstraint("claim_type", "kind"),
+    Index("ix_extractor_claim_extractor_id", "extractor_id"),
+    CheckConstraint(one_of("claim_type", EXTRACTOR_CLAIM_TYPES), name="claim_type_known"),
+    CheckConstraint(f"kind ~ '{SLUG_PATTERN}'", name="kind_slug"),
+    CheckConstraint(f"length(kind) BETWEEN 1 AND {MAX_SLUG_LENGTH}", name="kind_length"),
+)
+"""Which extractor owns each exclusive output name — rendition kinds, derived-asset kinds and
+embedding spaces (ADR-0020). Segments, metadata and tags are deliberately absent: those are
+multi-producer, and every row of them carries the run that produced it instead."""
