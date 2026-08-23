@@ -77,6 +77,8 @@ flowchart LR
     VIS & VIS2 --> CEMB["CLIP embeddings"]
 ```
 
+**Routing runs again whenever a result lands.** That is the whole of how chaining works: a result is what makes another extractor's precondition true (`needs_ocr`) or its input exist (a keyframe, a converted PDF), so the pass that applies a result also asks what is newly routable. It is idempotent per *(version, extractor, generation, input)*, so asking twice costs nothing — and a derived input is routed **once per asset**, which is what makes a video's keyframes many small jobs rather than one that cannot be resumed ([12 § job atomicity](12-reliability.md#job-atomicity)).
+
 Notes:
 - **PDF is a decision tree, not one tool**: born-digital PDFs use the text layer (faster, more accurate); Tesseract handles scans/photographed pages, decided **per page** — `pdf-text` writes the well-known keys `needs_ocr`/`ocr_pages`, and `tesseract-ocr`'s manifest predicate routes on them ([05 § dispatch](05-extractor-contract.md#dispatch--wire-protocol-extractor-apiv1)).
 - **Every image gets OCR and vision analysis** — including video keyframes, so on-screen text and visible objects in videos become searchable at their timestamp.

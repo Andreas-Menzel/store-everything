@@ -262,6 +262,56 @@
         }
       }
     },
+    "/extractor-api/v1/jobs/{job_id}/assets/{content_hash}": {
+      "put": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Stage one derived asset",
+        "description": "Upload one derived asset, ahead of the result that references it (05 § dispatch).\n\nTwo phases because a result envelope is a database transaction and a video preview is two\nhundred megabytes: the bytes arrive first, verified against the hash they claim, and the\nenvelope then references them by that hash. Idempotent — re-staging the same bytes for the\nsame job is a no-op, which is what makes a retried upload harmless.\n\nUnfenced, like reading an input: staging writes nothing a later attempt cannot overwrite, and\na worker that has lost its lease is refused when it tries to *submit*. The staged file is\nnamed after the job, so the janitor collects it when the job is gone (12 § debris).",
+        "operationId": "stage_asset",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "content_hash",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Content Hash"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedAsset"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job for this extractor"
+          },
+          "422": {
+            "description": "The bytes do not hash to the declared digest"
+          }
+        }
+      }
+    },
     "/extractor-api/v1/jobs/{job_id}/result": {
       "post": {
         "tags": [
@@ -307,17 +357,10 @@
             "description": "No such job for this extractor"
           },
           "409": {
-            "description": "The lease is no longer this caller's"
+            "description": "A lost lease, or an asset that was never staged"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "The envelope declared something it could not store"
           }
         }
       }
@@ -385,6 +428,61 @@
   },
   "components": {
     "schemas": {
+      "AssetEntry": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash"
+          },
+          "media_type": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Media Type"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "rendition_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rendition Kind"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "content_hash",
+          "media_type"
+        ],
+        "title": "AssetEntry",
+        "description": "One staged file, and what it is.\n\n`content_hash` is how it was staged and how the core finds it; `name` is what it will be\ncalled in the derived store. The extractor chooses the name because it knows what the file\nis; the core chooses the directory because it knows where the version's data belongs."
+      },
       "ClaimRequest": {
         "properties": {
           "worker": {
@@ -546,7 +644,10 @@
           },
           "kind": {
             "type": "string",
-            "const": "original",
+            "enum": [
+              "original",
+              "derived"
+            ],
             "title": "Kind"
           },
           "url": {
@@ -570,6 +671,29 @@
             "const": "sha256",
             "title": "Digest Algorithm",
             "default": "sha256"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset"
+          },
+          "asset_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Kind"
           }
         },
         "additionalProperties": false,
@@ -634,6 +758,13 @@
               }
             ],
             "title": "Finished At"
+          },
+          "stored": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Stored"
           }
         },
         "additionalProperties": false,
@@ -698,6 +829,34 @@
           "is_current"
         ],
         "title": "JobVersion"
+      },
+      "LineAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "line",
+            "title": "Kind",
+            "default": "line"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Start Line"
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "End Line"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "start_line",
+          "end_line"
+        ],
+        "title": "LineAnchor",
+        "description": "A line range, for text, markdown and code."
       },
       "Manifest": {
         "properties": {
@@ -926,6 +1085,57 @@
         "title": "ManifestRendition",
         "description": "One downloadable alternative form of a whole file (ADR-0008)."
       },
+      "MetadataEntry": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Key"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "text",
+              "integer",
+              "float",
+              "boolean",
+              "datetime",
+              "date",
+              "duration",
+              "geo",
+              "json"
+            ],
+            "title": "Type"
+          },
+          "value": {
+            "title": "Value"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "key",
+          "type",
+          "value"
+        ],
+        "title": "MetadataEntry",
+        "description": "One typed fact. The type decides both how it is stored and what can be asked of it."
+      },
       "NetworkMode": {
         "type": "string",
         "enum": [
@@ -944,6 +1154,96 @@
           "renditions",
           "faces"
         ]
+      },
+      "PageAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "page",
+            "title": "Kind",
+            "default": "page"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "char_start": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Start"
+          },
+          "char_end": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char End"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "page"
+        ],
+        "title": "PageAnchor",
+        "description": "A page, and optionally where on it — the anchor a document hit is rendered from."
+      },
+      "RegionAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "region",
+            "title": "Kind",
+            "default": "region"
+          },
+          "x": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y"
+          },
+          "width": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Width"
+          },
+          "height": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Height"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "RegionAnchor",
+        "description": "A rectangle on an image, normalised so it survives every rendition's scaling."
       },
       "RegistrationAccepted": {
         "properties": {
@@ -990,19 +1290,206 @@
       },
       "ResultEnvelope": {
         "properties": {
+          "metadata": {
+            "items": {
+              "$ref": "#/components/schemas/MetadataEntry"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Metadata",
+            "default": []
+          },
+          "text_segments": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentEntry"
+            },
+            "type": "array",
+            "maxItems": 50000,
+            "title": "Text Segments",
+            "default": []
+          },
+          "derived_assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetEntry"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Derived Assets",
+            "default": []
+          },
           "attempt": {
             "type": "integer",
             "minimum": 0.0,
             "title": "Attempt"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "attempt"
         ],
         "title": "ResultEnvelope",
-        "description": "The result of one job.\n\nThis core version accepts an envelope that carries **no outputs**: the lifecycle is complete,\nand the tables that hold segments, metadata, tags and derived assets arrive with the code\nthat writes them. Unknown fields are tolerated rather than refused (05 § compatibility\nrules), so an extractor written against a later core still completes its jobs here — its\noutputs are simply not stored yet, which the run's status reports honestly."
+        "description": "The result of one job: typed facts, positioned text, generated files.\n\nCarries the claim's `attempt` like every other write-back, so an envelope from a lost lease\nis refused rather than applied. Tags and embeddings are named by the contract but not stored\nby this core version — the committed `openapi-extractor.json` is the authority on which\noutputs a given release accepts."
+      },
+      "SegmentEntry": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "anchor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PageAnchor"
+              },
+              {
+                "$ref": "#/components/schemas/TimeAnchor"
+              },
+              {
+                "$ref": "#/components/schemas/LineAnchor"
+              },
+              {
+                "$ref": "#/components/schemas/SheetAnchor"
+              },
+              {
+                "$ref": "#/components/schemas/RegionAnchor"
+              },
+              {
+                "$ref": "#/components/schemas/WholeAnchor"
+              }
+            ],
+            "title": "Anchor",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "line": "#/components/schemas/LineAnchor",
+                "page": "#/components/schemas/PageAnchor",
+                "region": "#/components/schemas/RegionAnchor",
+                "sheet": "#/components/schemas/SheetAnchor",
+                "time": "#/components/schemas/TimeAnchor",
+                "whole": "#/components/schemas/WholeAnchor"
+              }
+            }
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 35,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "text",
+          "anchor"
+        ],
+        "title": "SegmentEntry",
+        "description": "A span of text and where it is."
+      },
+      "SheetAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "sheet",
+            "title": "Kind",
+            "default": "sheet"
+          },
+          "sheet": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Sheet"
+          },
+          "start_row": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Start Row"
+          },
+          "end_row": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "End Row"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "sheet",
+          "start_row",
+          "end_row"
+        ],
+        "title": "SheetAnchor",
+        "description": "A sheet and a row range — a better position for a spreadsheet than an invented page."
+      },
+      "StagedAsset": {
+        "properties": {
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_hash",
+          "size"
+        ],
+        "title": "StagedAsset"
+      },
+      "TimeAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "time",
+            "title": "Kind",
+            "default": "time"
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "End Ms"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "TimeAnchor",
+        "description": "A span of a recording, in milliseconds — *at 04:12* (F-006)."
       },
       "ValidationError": {
         "properties": {
@@ -1043,6 +1530,20 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WholeAnchor": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "whole",
+            "title": "Kind",
+            "default": "whole"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "WholeAnchor",
+        "description": "The whole file — an image's single OCR block, a short note's only segment."
       }
     }
   }

@@ -30,13 +30,22 @@ from fastapi.responses import FileResponse
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from store_everything import blobs, extraction, files, filestore, operations, workspaces
+from store_everything import (
+    blobs,
+    derived,
+    extraction,
+    files,
+    filestore,
+    operations,
+    results,
+    workspaces,
+)
 from store_everything.api.extractor_api import EXTRACTOR_API_PREFIX
 from store_everything.api.extractor_api.security import CurrentExtractor
 from store_everything.config import Settings
 from store_everything.db import DatabaseConnection
 from store_everything.extraction import ClaimedJob
-from store_everything.problems import ProblemException
+from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
 from store_everything.security import settings_of
 
@@ -57,14 +66,20 @@ class InputReference(BaseSchema):
     """Where to read one of a job's inputs. Range requests are supported."""
 
     index: int
-    kind: Literal["original"]
-    """`original` is the file's own bytes. Derived-asset inputs join this when chaining does."""
+    kind: Literal["original", "derived"]
+    """`original` is the file's own bytes; `derived` is another extractor's output — a keyframe,
+    a converted PDF — which is what chaining hands over (05 § dispatch)."""
 
     url: str
     media_type: str
     size: int
     content_hash: str
     digest_algorithm: Literal["sha256"] = "sha256"
+    asset: UUID | None = None
+    """The derived asset's id, for a `derived` input."""
+
+    asset_kind: str | None = None
+    """The kind it was produced as — what the manifest matched to get this job."""
 
 
 class JobVersion(BaseSchema):
@@ -120,17 +135,33 @@ class ClaimedJobResponse(BaseSchema):
                 media_class=version.media_class,  # pyright: ignore[reportArgumentType]
                 is_current=version.is_current,
             ),
-            inputs=[
-                InputReference(
-                    index=0,
-                    kind="original",
-                    url=f"{prefix}/jobs/{claimed.operation.id}/inputs/0",
-                    media_type=version.media_type,
-                    size=version.size_bytes,
-                    content_hash=version.content_hash,
-                )
-            ],
+            inputs=[_input_reference(claimed, prefix=prefix)],
         )
+
+
+def _input_reference(claimed: ClaimedJob, *, prefix: str) -> InputReference:
+    """The one thing this job is about — the file's own bytes, or the asset it was chained to."""
+    url = f"{prefix}/jobs/{claimed.operation.id}/inputs/0"
+    if claimed.input is not None:
+        return InputReference(
+            index=0,
+            kind="derived",
+            url=url,
+            media_type=claimed.input.media_type,
+            size=claimed.input.size_bytes,
+            content_hash=claimed.input.content_hash,
+            asset=claimed.input.id,
+            asset_kind=claimed.input.kind,
+        )
+    version = claimed.version
+    return InputReference(
+        index=0,
+        kind="original",
+        url=url,
+        media_type=version.media_type,
+        size=version.size_bytes,
+        content_hash=version.content_hash,
+    )
 
 
 class ClaimRequest(BaseSchema):
@@ -156,21 +187,29 @@ class JobErrorRequest(Fenced):
     """False for a file this extractor can never process — it dead-letters immediately."""
 
 
-class ResultEnvelope(Fenced):
-    """The result of one job.
+class ResultEnvelope(results.Envelope):
+    """The result of one job: typed facts, positioned text, generated files.
 
-    This core version accepts an envelope that carries **no outputs**: the lifecycle is complete,
-    and the tables that hold segments, metadata, tags and derived assets arrive with the code
-    that writes them. Unknown fields are tolerated rather than refused (05 § compatibility
-    rules), so an extractor written against a later core still completes its jobs here — its
-    outputs are simply not stored yet, which the run's status reports honestly.
+    Carries the claim's `attempt` like every other write-back, so an envelope from a lost lease
+    is refused rather than applied. Tags and embeddings are named by the contract but not stored
+    by this core version — the committed `openapi-extractor.json` is the authority on which
+    outputs a given release accepts.
     """
+
+    attempt: int = Field(ge=0)
 
 
 class JobOutcome(BaseSchema):
     id: UUID
     state: str
     finished_at: datetime | None
+    stored: dict[str, int] = Field(default_factory=dict)
+    """What the envelope actually wrote, by output kind — so an extractor can check itself."""
+
+
+class StagedAsset(BaseSchema):
+    content_hash: str
+    size: int
 
 
 def _lease(settings: Settings) -> timedelta:
@@ -318,6 +357,7 @@ async def heartbeat_job(
 async def submit_result(
     job_id: UUID,
     payload: ResultEnvelope,
+    request: Request,
     credential: CurrentExtractor,
     connection: DatabaseConnection,
 ) -> JobOutcome:
@@ -328,12 +368,89 @@ async def submit_result(
         extractor_id=credential.extractor.id,
         attempt=payload.attempt,
     )
-    if not await extraction.finish(connection, claimed=found):
+    store = derived.DerivedStore(settings_of(request).derived_root)
+    try:
+        results.validate_asset_names(payload)
+        applied = await extraction.complete(
+            connection, claimed=found, envelope=payload, store=store
+        )
+    except derived.InvalidAssetNameError as refused:
+        raise _invalid(str(refused), "/body/derived_assets") from refused
+    except results.MissingAssetError as absent:
+        raise ProblemException(
+            status=409,
+            slug="asset-not-staged",
+            title="Asset not staged",
+            detail=(
+                f"The envelope references an asset with hash {absent.content_hash}, which was "
+                "never staged for this job. Upload it first, then submit the result."
+            ),
+        ) from absent
+    except ValueError as malformed:
+        # A value that could not be stored as the type it declared — a boolean that is a string,
+        # a geo point off the earth. The envelope is refused whole rather than partly kept.
+        raise _invalid(str(malformed), "/body/metadata") from malformed
+
+    if applied is None:
         raise _lease_lost()
     run = await extraction.get_run(connection, job_id)
     if run is None:  # pragma: no cover - written in this transaction
         raise _no_such_job()
-    return JobOutcome(id=run.id, state=run.state, finished_at=run.finished_at)
+    return JobOutcome(
+        id=run.id,
+        state=run.state,
+        finished_at=run.finished_at,
+        stored={
+            "metadata": applied.metadata,
+            "text_segments": applied.segments,
+            "derived_assets": applied.assets,
+        },
+    )
+
+
+async def stage_asset(
+    job_id: UUID,
+    content_hash: Annotated[str, PathParam(pattern=r"^[0-9a-f]{64}$")],
+    request: Request,
+    credential: CurrentExtractor,
+    connection: DatabaseConnection,
+) -> StagedAsset:
+    """Upload one derived asset, ahead of the result that references it (05 § dispatch).
+
+    Two phases because a result envelope is a database transaction and a video preview is two
+    hundred megabytes: the bytes arrive first, verified against the hash they claim, and the
+    envelope then references them by that hash. Idempotent — re-staging the same bytes for the
+    same job is a no-op, which is what makes a retried upload harmless.
+
+    Unfenced, like reading an input: staging writes nothing a later attempt cannot overwrite, and
+    a worker that has lost its lease is refused when it tries to *submit*. The staged file is
+    named after the job, so the janitor collects it when the job is gone (12 § debris).
+    """
+    await _fenced_job(connection, job_id=job_id, extractor_id=credential.extractor.id)
+    body = await request.body()
+    store = derived.DerivedStore(settings_of(request).derived_root)
+    try:
+        staged = await asyncio.to_thread(
+            store.stage, operation_id=job_id, digest=content_hash, data=body
+        )
+    except ValueError as mismatch:
+        raise ProblemException(
+            status=422,
+            slug="content-hash-mismatch",
+            title="Content hash mismatch",
+            detail=str(mismatch),
+        ) from mismatch
+    return StagedAsset(content_hash=content_hash, size=staged.stat().st_size)
+
+
+async def _fenced_job(
+    connection: DatabaseConnection, *, job_id: UUID, extractor_id: str
+) -> extraction.Run:
+    """The job's run, if it is this extractor's to touch at all."""
+    owned = await extraction.owned_job(connection, job_id=job_id, extractor_id=extractor_id)
+    if owned is None:
+        raise _no_such_job()
+    return owned[1]
 
 
 async def report_error(
@@ -385,6 +502,10 @@ async def read_input(
     if index != 0:
         raise _no_such_job()
 
+    asset = await extraction.asset_facts(connection, run.input_asset_id)
+    if asset is not None:
+        return _asset_response(asset, settings=settings)
+
     version = await files.version(connection, run.file_version_id)
     if version is None:
         raise _no_such_job()
@@ -407,6 +528,38 @@ async def read_input(
             "Cache-Control": "private, no-store",
         },
         content_disposition_type="attachment",
+    )
+
+
+def _asset_response(asset: extraction.AssetFacts, *, settings: Settings) -> Response:
+    """A chained job's input: another extractor's output, read from the derived store."""
+    path = derived.DerivedStore(settings.derived_root).path_for(asset.source_hash, asset.name)
+    if not path.is_file():
+        raise ProblemException(
+            status=410,
+            slug="gone",
+            title="Gone",
+            detail="The derived asset this job was chained to is no longer stored.",
+        )
+    return FileResponse(
+        path,
+        media_type=asset.media_type,
+        headers={
+            "ETag": f'"{asset.content_hash}"',
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, no-store",
+        },
+        content_disposition_type="attachment",
+    )
+
+
+def _invalid(reason: str, pointer: str) -> ProblemException:
+    return ProblemException(
+        status=422,
+        slug="validation",
+        title="Validation failed",
+        detail="1 request field(s) are invalid.",
+        errors=[FieldProblem(detail=reason, pointer=pointer)],
     )
 
 

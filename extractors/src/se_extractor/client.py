@@ -15,6 +15,7 @@ matters at three in the morning:
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -127,6 +128,22 @@ class ExtractorClient:
             f"{self._api}/jobs/{job.id}/error",
             json={"attempt": job.attempt, "message": message[:2000], "retryable": retryable},
         )
+
+    def stage_asset(self, job: Job, data: bytes) -> str:
+        """Upload one derived asset ahead of the result that references it, and return its hash.
+
+        Two phases because an envelope is a database transaction and a preview is megabytes
+        (05 § dispatch). Idempotent: re-staging the same bytes for the same job is a no-op, so a
+        retried upload costs nothing.
+        """
+        digest = hashlib.sha256(data).hexdigest()
+        self._request(
+            "PUT",
+            f"{self._api}/jobs/{job.id}/assets/{digest}",
+            content=data,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        return digest
 
     # ------------------------------------------------------------------ the bytes
 

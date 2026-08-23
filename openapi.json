@@ -1752,6 +1752,132 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/segments": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "The searchable content of one file, with positions",
+        "description": "Every segment of the current version, in reading order.\n\nThis is [F-004](../../../../features/F-004-document-text-extraction.md)'s answer to *where*:\nthe same rows a search hit will point into, readable directly so that \"did the OCR work\" has\nan answer that does not depend on search existing yet.",
+        "operationId": "read_file_segments",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "exclusiveMinimum": 0,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SegmentInfo_"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/metadata": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "What is known about one file",
+        "description": "Every typed fact about the current version — EXIF, page count, detected language, position.\n\nUnpaginated: a file has tens of these, not thousands, and the ones a client renders are all\nof them.",
+        "operationId": "read_file_metadata",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MetadataInfo"
+                  },
+                  "title": "Response Read File Metadata"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/content": {
       "get": {
         "tags": [
@@ -2884,6 +3010,80 @@
         ],
         "title": "LoginRequest"
       },
+      "MetadataInfo": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "text",
+              "integer",
+              "float",
+              "boolean",
+              "datetime",
+              "date",
+              "duration",
+              "geo",
+              "json"
+            ],
+            "title": "Type"
+          },
+          "value": {
+            "title": "Value"
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Provenance"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "extractor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "type",
+          "value",
+          "provenance",
+          "confidence",
+          "extractor",
+          "generation"
+        ],
+        "title": "MetadataInfo",
+        "description": "One typed fact about a file, with the provenance every derived row carries."
+      },
       "NetworkMode": {
         "type": "string",
         "enum": [
@@ -2952,6 +3152,33 @@
           "data"
         ],
         "title": "Page[ScanFinding]"
+      },
+      "Page_SegmentInfo_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentInfo"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Page[SegmentInfo]"
       },
       "Page_UserSummary_": {
         "properties": {
@@ -3223,6 +3450,92 @@
         ],
         "title": "ScanSummary",
         "description": "One traversal, as a client watching an import sees it."
+      },
+      "SegmentInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "ordinal": {
+            "type": "integer",
+            "title": "Ordinal"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "anchor_kind": {
+            "type": "string",
+            "enum": [
+              "page",
+              "time",
+              "line",
+              "sheet",
+              "region",
+              "whole"
+            ],
+            "title": "Anchor Kind"
+          },
+          "anchor": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Anchor"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "extractor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "ordinal",
+          "text",
+          "anchor_kind",
+          "anchor",
+          "confidence",
+          "language",
+          "extractor",
+          "generation"
+        ],
+        "title": "SegmentInfo",
+        "description": "One span of a file's content, and where it is."
       },
       "SessionSummary": {
         "properties": {

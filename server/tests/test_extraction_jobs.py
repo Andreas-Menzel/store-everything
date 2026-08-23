@@ -281,6 +281,9 @@ async def test_a_claim_hands_over_everything_needed_to_do_the_work(
                 "size": len(CONTENT),
                 "content_hash": created["content_hash"],
                 "digest_algorithm": "sha256",
+                # Absent for a job over the file's own bytes; a chained job names its asset.
+                "asset": None,
+                "asset_kind": None,
             }
         ]
 

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -365,6 +365,27 @@ export const readFile = <ThrowOnError extends boolean = false>(options: Options<
  * keeps its own runs and its own results (F-007).
  */
 export const readFileExtraction = <ThrowOnError extends boolean = false>(options: Options<ReadFileExtractionData, ThrowOnError>): RequestResult<ReadFileExtractionResponses, ReadFileExtractionErrors, ThrowOnError> => (options.client ?? client).get<ReadFileExtractionResponses, ReadFileExtractionErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/extraction', ...options });
+
+/**
+ * The searchable content of one file, with positions
+ *
+ * Every segment of the current version, in reading order.
+ *
+ * This is [F-004](../../../../features/F-004-document-text-extraction.md)'s answer to *where*:
+ * the same rows a search hit will point into, readable directly so that "did the OCR work" has
+ * an answer that does not depend on search existing yet.
+ */
+export const readFileSegments = <ThrowOnError extends boolean = false>(options: Options<ReadFileSegmentsData, ThrowOnError>): RequestResult<ReadFileSegmentsResponses, ReadFileSegmentsErrors, ThrowOnError> => (options.client ?? client).get<ReadFileSegmentsResponses, ReadFileSegmentsErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/segments', ...options });
+
+/**
+ * What is known about one file
+ *
+ * Every typed fact about the current version — EXIF, page count, detected language, position.
+ *
+ * Unpaginated: a file has tens of these, not thousands, and the ones a client renders are all
+ * of them.
+ */
+export const readFileMetadata = <ThrowOnError extends boolean = false>(options: Options<ReadFileMetadataData, ThrowOnError>): RequestResult<ReadFileMetadataResponses, ReadFileMetadataErrors, ThrowOnError> => (options.client ?? client).get<ReadFileMetadataResponses, ReadFileMetadataErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/metadata', ...options });
 
 /**
  * Download a file's content

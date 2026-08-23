@@ -429,7 +429,14 @@ async def register(
     # Extraction is routed here, in the transaction that made the version exist, so that no path
     # can register content and forget to have it analysed (04 § detection). An instance with no
     # extractors installed creates no jobs and is none the worse for it.
-    await extraction.route(connection, file_version_id=version.id, media_type=version.media_type)
+    await extraction.route(
+        connection,
+        file_version_id=version.id,
+        media_type=version.media_type,
+        # The hash is what makes reuse possible: a copy of a file somebody already analysed
+        # needs no second analysis, only its own rows (F-009/FR-8).
+        content_hash=version.content_hash,
+    )
     return created, version
 
 
@@ -605,7 +612,14 @@ async def add_version(
         # Cooperative, so a running extractor learns at its next heartbeat, and a result that
         # arrives anyway is still kept: the version it describes still exists (F-007).
         await extraction.supersede_pending(connection, file_version_id=demoted[0])
-    await extraction.route(connection, file_version_id=version.id, media_type=version.media_type)
+    await extraction.route(
+        connection,
+        file_version_id=version.id,
+        media_type=version.media_type,
+        # The hash is what makes reuse possible: a copy of a file somebody already analysed
+        # needs no second analysis, only its own rows (F-009/FR-8).
+        content_hash=version.content_hash,
+    )
     return version
 
 

@@ -554,6 +554,42 @@ export type LoginRequest = {
     password: string;
 };
 
+/**
+ * MetadataInfo
+ *
+ * One typed fact about a file, with the provenance every derived row carries.
+ */
+export type MetadataInfo = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Type
+     */
+    type: 'string' | 'text' | 'integer' | 'float' | 'boolean' | 'datetime' | 'date' | 'duration' | 'geo' | 'json';
+    /**
+     * Value
+     */
+    value: unknown;
+    /**
+     * Provenance
+     */
+    provenance: 'auto' | 'manual';
+    /**
+     * Confidence
+     */
+    confidence: number | null;
+    /**
+     * Extractor
+     */
+    extractor: string | null;
+    /**
+     * Generation
+     */
+    generation: number;
+};
+
 export type NetworkMode = 'none' | 'outbound';
 
 export type Ordering = 'name' | 'size' | 'modified';
@@ -580,6 +616,20 @@ export type PageScanFinding = {
      * Data
      */
     data: Array<ScanFinding>;
+    /**
+     * Next Cursor
+     */
+    next_cursor?: string | null;
+};
+
+/**
+ * Page[SegmentInfo]
+ */
+export type PageSegmentInfo = {
+    /**
+     * Data
+     */
+    data: Array<SegmentInfo>;
     /**
      * Next Cursor
      */
@@ -750,6 +800,52 @@ export type ScanSummary = {
      * Error
      */
     error: string | null;
+};
+
+/**
+ * SegmentInfo
+ *
+ * One span of a file's content, and where it is.
+ */
+export type SegmentInfo = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Ordinal
+     */
+    ordinal: number;
+    /**
+     * Text
+     */
+    text: string;
+    /**
+     * Anchor Kind
+     */
+    anchor_kind: 'page' | 'time' | 'line' | 'sheet' | 'region' | 'whole';
+    /**
+     * Anchor
+     */
+    anchor: {
+        [key: string]: unknown;
+    };
+    /**
+     * Confidence
+     */
+    confidence: number | null;
+    /**
+     * Language
+     */
+    language: string | null;
+    /**
+     * Extractor
+     */
+    extractor: string | null;
+    /**
+     * Generation
+     */
+    generation: number;
 };
 
 /**
@@ -2289,6 +2385,85 @@ export type ReadFileExtractionResponses = {
 };
 
 export type ReadFileExtractionResponse = ReadFileExtractionResponses[keyof ReadFileExtractionResponses];
+
+export type ReadFileSegmentsData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/segments';
+};
+
+export type ReadFileSegmentsErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileSegmentsError = ReadFileSegmentsErrors[keyof ReadFileSegmentsErrors];
+
+export type ReadFileSegmentsResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageSegmentInfo;
+};
+
+export type ReadFileSegmentsResponse = ReadFileSegmentsResponses[keyof ReadFileSegmentsResponses];
+
+export type ReadFileMetadataData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/metadata';
+};
+
+export type ReadFileMetadataErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileMetadataError = ReadFileMetadataErrors[keyof ReadFileMetadataErrors];
+
+export type ReadFileMetadataResponses = {
+    /**
+     * Response Read File Metadata
+     *
+     * Successful Response
+     */
+    200: Array<MetadataInfo>;
+};
+
+export type ReadFileMetadataResponse = ReadFileMetadataResponses[keyof ReadFileMetadataResponses];
 
 export type ReadFileContentData = {
     body?: never;

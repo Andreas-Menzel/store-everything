@@ -91,7 +91,7 @@ Rules (ADR-0004):
 ### MetadataEntry
 A typed key–value fact about a file version. Carries the same provenance stamping as tags (`auto`/`manual`, source = extractor id + version + model version or user id, confidence where derived, `extracted_at`). Users can add/edit metadata via the API (`manual` provenance, stored only in the table — never written back into the file); metadata edited *inside* a file with external tools is simply a content change (new version → re-extraction picks up the new values). Tags and metadata are **app-private**: they exist only in the app's database; export (e.g. XMP sidecars) is a possible later feature.
 
-**Value types** — each determines indexing and available query operators:
+**Value types** — each determines indexing and available query operators. Stored in one typed column per class rather than one opaque blob, because the type is exactly what decides what can be *asked*: a range over `taken_at`, a facet over `camera`, a bounding box around `gps`. `geo` is a latitude/longitude pair of ordinary indexed floats — no PostGIS, and no argument about which axis is x ([ADR-0001](../decisions/ADR-0001-postgresql-single-datastore.md) keeps the datastore plain):
 
 | Type | Example keys | Query capability |
 |---|---|---|
@@ -122,6 +122,8 @@ The positional unit of search ([06-search.md](06-search.md)). A file version's s
 
 Segments carry the extracted text (for FTS) and are the unit that embeddings attach to. This is what lets search answer *"pages 1, 3 and 7"* and *"at 04:12"*.
 
+An anchor is stored as its **kind plus a payload**: the kind vocabulary is fixed (`page`, `time`, `line`, `sheet`, `region`, `whole`) and each kind's shape is validated on arrival, but the payload itself is opaque to queries. That is the honest split — an anchor is *returned* with a hit rather than filtered across kinds, and a plugin that invents a new kind of position should not need a schema migration. The full-text index over segment text arrives with search in phase 3, together with the language question it depends on (Q14): a `tsvector` needs an analyser, and choosing one before the query exists would be guessing.
+
 ### Embedding
 A vector for a segment, a face instance ([F-018](../features/F-018-people.md)), or a whole file in a named **embedding space** (`text-v1`, `clip-v1`, `face-v1`, …). Different spaces are never compared to each other; a query is embedded once per targeted space and results are fused (see 06). `face-v1` is matching-only — never a target of query-text embedding ([06](06-search.md#embedding-spaces-never-mixed)).
 
@@ -137,6 +139,8 @@ Face recognition data, existing only under the [F-018](../features/F-018-people.
 
 ### DerivedAsset
 A generated artifact stored in the derived store: preview/thumbnail images, video keyframes, transcript files, waveform data. Addressed by file version + extractor + kind. Fully regenerable.
+
+**The core owns the directory; the extractor names the file.** Assets live under the *source* content hash ([09 § storage](09-previews.md#storage)), which is what gives duplicate files one shared set of them — and the leaf name comes from the extractor that produced it, validated but never rewritten, so a plugin can call its output `turntable.glb` without a core change. Each asset also records its own content hash: that is how it is staged, verified on receipt, and checked later.
 
 A special class is the **Rendition** ([ADR-0008](../decisions/ADR-0008-renditions.md)): a downloadable *alternative form of the whole file* — searchable PDF with embedded OCR text layer, subtitled video, `.srt` file. Renditions never replace the original (`/content` always serves untouched bytes); they are listed and downloaded via their own endpoint.
 
