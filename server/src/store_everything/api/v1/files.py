@@ -27,6 +27,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import FileResponse
+from pydantic import Field
 
 from store_everything import (
     aggregates,
@@ -37,6 +38,7 @@ from store_everything import (
     mediatypes,
     names,
     results,
+    tagging,
     trash,
     workspaces,
 )
@@ -48,6 +50,7 @@ from store_everything.api.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
 )
+from store_everything.api.v1.tags import AppliedTag, TagApplyRequest, not_vocabulary, target_of
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
@@ -113,6 +116,11 @@ class FileSummary(BaseSchema):
     trash: TrashInfo | None = None
     """Present exactly when `state` is `trashed`."""
 
+    tags: list[AppliedTag] = Field(default_factory=list)
+    """Every tag on the file, with its provenance (F-003/FR-3). Included here rather than only
+    behind `/tags` because a file's tags are part of what a file *is*, and a detail view that
+    needed a second request to show them would show it late."""
+
     @classmethod
     def of(
         cls,
@@ -121,6 +129,7 @@ class FileSummary(BaseSchema):
         path: str,
         extraction_status: extraction.Status,
         trash: TrashInfo | None = None,
+        applied: list[tagging.Applied] | None = None,
     ) -> FileSummary:
         return cls(
             id=found.id,
@@ -137,6 +146,7 @@ class FileSummary(BaseSchema):
             created_at=found.created_at,
             modified_at=version.modified_at,
             trash=trash,
+            tags=[AppliedTag.of(one) for one in applied or []],
         )
 
 
@@ -240,6 +250,7 @@ async def summarize(connection: DatabaseConnection, found: files.File) -> FileSu
         await files.path_of(connection, found),
         extraction.status_of(await extraction.runs_for(connection, version.id)),
         await _trash_info(connection, found),
+        await tagging.tags_of_file(connection, found.id),
     )
 
 
@@ -410,6 +421,87 @@ async def read_file_metadata(
         )
         for entry in await results.metadata_of(connection, version.id)
     ]
+
+
+@router.get(
+    "/{file_id}/tags",
+    summary="The tags on one file",
+    response_model=list[AppliedTag],
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_tags(
+    file_id: UUID, credential: CurrentCredential, connection: DatabaseConnection
+) -> list[AppliedTag]:
+    """Every tag the file carries, in name order, each with its provenance (F-003/FR-3).
+
+    The same list `GET /files/{id}` embeds. It exists separately because tagging is the one
+    thing a client changes often, and re-reading a file's whole summary after every edit would
+    be a lot of response for one word.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    return [AppliedTag.of(one) for one in await tagging.tags_of_file(connection, found.id)]
+
+
+@router.post(
+    "/{file_id}/tags",
+    summary="Tag a file",
+    status_code=201,
+    response_model=AppliedTag,
+    responses={
+        404: {"description": "No such file, or not yours"},
+        409: {"description": "That tag is not part of the vocabulary"},
+        422: {"description": "No tag goes by that name"},
+    },
+)
+async def tag_file(
+    file_id: UUID,
+    request: TagApplyRequest,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> AppliedTag:
+    """Apply a tag by hand (F-003/FR-2), stamped with the caller's user id.
+
+    Tags belong to the file, not to the viewer: anyone who can write to it tags it, and everyone
+    who can read it sees the same tags with the same attribution
+    ([02 § file](../../../../specs/02-domain-model.md#file)). Phase 1's only permission is
+    ownership, so *write* still means *yours*; grants change that in one place (`readable`).
+
+    Idempotent — applying a tag the file already carries returns the row that is already there.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    target = await target_of(connection, request)
+    try:
+        applied = await tagging.apply_to_file(
+            connection,
+            file_id=found.id,
+            tag_id=target.id,
+            user_id=credential.user.id,
+            actor=Actor.user(credential.user.id),
+        )
+    except tagging.NotVocabularyError as refused:
+        raise not_vocabulary(refused) from refused
+    return AppliedTag.of(applied)
+
+
+@router.delete(
+    "/{file_id}/tags/{tag_id}",
+    summary="Remove a tag from a file",
+    status_code=204,
+    responses={404: {"description": "No such file, or it does not carry that tag"}},
+)
+async def untag_file(
+    file_id: UUID,
+    tag_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> None:
+    """Take a tag off a file. `404` when the file does not carry it — there is nothing to undo."""
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    removed = await tagging.remove_from_file(
+        connection, file_id=found.id, tag_id=tag_id, actor=Actor.user(credential.user.id)
+    )
+    if not removed:
+        raise not_found()
 
 
 @router.get(

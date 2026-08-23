@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -350,6 +350,41 @@ export const moveFolder = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
+ * The tags on one folder
+ *
+ * What this directory is tagged with — the folder itself, not its contents.
+ *
+ * A folder tag describes the folder ([F-015/FR-9](../../../../features/F-015-folders.md)):
+ * tagging `2024/tax` with `tax` says the directory is about tax, and a file inside it is not
+ * matched by that tag. Inheritance to contents needs precedence rules — how it displays on the
+ * file, what it does to a rejected file tag, how facets count it — and is deferred until they
+ * exist (Q23).
+ */
+export const readFolderTags = <ThrowOnError extends boolean = false>(options: Options<ReadFolderTagsData, ThrowOnError>): RequestResult<ReadFolderTagsResponses, ReadFolderTagsErrors, ThrowOnError> => (options.client ?? client).get<ReadFolderTagsResponses, ReadFolderTagsErrors, ThrowOnError>({ url: '/api/v1/folders/{folder_id}/tags', ...options });
+
+/**
+ * Tag a folder
+ *
+ * Apply a tag to a directory, from the same vocabulary files use (F-015/FR-9).
+ *
+ * Manual only, and that is not a simplification to fix later: extractors never run on folders,
+ * so there is no machine claim to confirm or reject and no generation to swap.
+ */
+export const tagFolder = <ThrowOnError extends boolean = false>(options: Options<TagFolderData, ThrowOnError>): RequestResult<TagFolderResponses, TagFolderErrors, ThrowOnError> => (options.client ?? client).post<TagFolderResponses, TagFolderErrors, ThrowOnError>({
+    url: '/api/v1/folders/{folder_id}/tags',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove a tag from a folder
+ */
+export const untagFolder = <ThrowOnError extends boolean = false>(options: Options<UntagFolderData, ThrowOnError>): RequestResult<UntagFolderResponses, UntagFolderErrors, ThrowOnError> => (options.client ?? client).delete<UntagFolderResponses, UntagFolderErrors, ThrowOnError>({ url: '/api/v1/folders/{folder_id}/tags/{tag_id}', ...options });
+
+/**
  * Read one file
  */
 export const readFile = <ThrowOnError extends boolean = false>(options: Options<ReadFileData, ThrowOnError>): RequestResult<ReadFileResponses, ReadFileErrors, ThrowOnError> => (options.client ?? client).get<ReadFileResponses, ReadFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}', ...options });
@@ -388,6 +423,45 @@ export const readFileSegments = <ThrowOnError extends boolean = false>(options: 
 export const readFileMetadata = <ThrowOnError extends boolean = false>(options: Options<ReadFileMetadataData, ThrowOnError>): RequestResult<ReadFileMetadataResponses, ReadFileMetadataErrors, ThrowOnError> => (options.client ?? client).get<ReadFileMetadataResponses, ReadFileMetadataErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/metadata', ...options });
 
 /**
+ * The tags on one file
+ *
+ * Every tag the file carries, in name order, each with its provenance (F-003/FR-3).
+ *
+ * The same list `GET /files/{id}` embeds. It exists separately because tagging is the one
+ * thing a client changes often, and re-reading a file's whole summary after every edit would
+ * be a lot of response for one word.
+ */
+export const readFileTags = <ThrowOnError extends boolean = false>(options: Options<ReadFileTagsData, ThrowOnError>): RequestResult<ReadFileTagsResponses, ReadFileTagsErrors, ThrowOnError> => (options.client ?? client).get<ReadFileTagsResponses, ReadFileTagsErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags', ...options });
+
+/**
+ * Tag a file
+ *
+ * Apply a tag by hand (F-003/FR-2), stamped with the caller's user id.
+ *
+ * Tags belong to the file, not to the viewer: anyone who can write to it tags it, and everyone
+ * who can read it sees the same tags with the same attribution
+ * ([02 § file](../../../../specs/02-domain-model.md#file)). Phase 1's only permission is
+ * ownership, so *write* still means *yours*; grants change that in one place (`readable`).
+ *
+ * Idempotent — applying a tag the file already carries returns the row that is already there.
+ */
+export const tagFile = <ThrowOnError extends boolean = false>(options: Options<TagFileData, ThrowOnError>): RequestResult<TagFileResponses, TagFileErrors, ThrowOnError> => (options.client ?? client).post<TagFileResponses, TagFileErrors, ThrowOnError>({
+    url: '/api/v1/files/{file_id}/tags',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove a tag from a file
+ *
+ * Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.
+ */
+export const untagFile = <ThrowOnError extends boolean = false>(options: Options<UntagFileData, ThrowOnError>): RequestResult<UntagFileResponses, UntagFileErrors, ThrowOnError> => (options.client ?? client).delete<UntagFileResponses, UntagFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags/{tag_id}', ...options });
+
+/**
  * Download a file's content
  */
 export const readFileContent = <ThrowOnError extends boolean = false>(options: Options<ReadFileContentData, ThrowOnError>): RequestResult<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError> => (options.client ?? client).get<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/content', ...options });
@@ -408,6 +482,91 @@ export const readFileContent = <ThrowOnError extends boolean = false>(options: O
  */
 export const moveFile = <ThrowOnError extends boolean = false>(options: Options<MoveFileData, ThrowOnError>): RequestResult<MoveFileResponses, MoveFileErrors, ThrowOnError> => (options.client ?? client).post<MoveFileResponses, MoveFileErrors, ThrowOnError>({
     url: '/api/v1/files/{file_id}/move',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Complete a tag prefix, or list the taxonomy
+ *
+ * Completion when `prefix` is given, the taxonomy listing otherwise.
+ *
+ * The two modes have different defaults, because a tag box wants a handful of candidates while
+ * an admin browsing the taxonomy wants a page of it. Only `active` tags are vocabulary, so only
+ * an admin may ask to see the others: a `suggested` tag is a machine's proposal awaiting review
+ * (F-003/FR-12) and a `rejected` one is a word the instance turned down. Both are visible on
+ * the file that carries them; neither belongs in a member's picker.
+ */
+export const listTags = <ThrowOnError extends boolean = false>(options?: Options<ListTagsData, ThrowOnError>): RequestResult<ListTagsResponses, ListTagsErrors, ThrowOnError> => (options?.client ?? client).get<ListTagsResponses, ListTagsErrors, ThrowOnError>({ url: '/api/v1/tags', ...options });
+
+/**
+ * Add a tag to the vocabulary
+ *
+ * Create an `active` tag, optionally with its parents and synonyms in one call.
+ */
+export const createTag = <ThrowOnError extends boolean = false>(options: Options<CreateTagData, ThrowOnError>): RequestResult<CreateTagResponses, CreateTagErrors, ThrowOnError> => (options.client ?? client).post<CreateTagResponses, CreateTagErrors, ThrowOnError>({
+    url: '/api/v1/tags',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Erase a tag nothing carries
+ *
+ * Hard-delete a tag — reserved for a typo with no history (ADR-0006).
+ *
+ * A tag anything carries is refused: the answer for a word that turned out wrong is to reject
+ * it, which keeps the name as a suppression record and leaves the files that used it alone.
+ */
+export const deleteTag = <ThrowOnError extends boolean = false>(options: Options<DeleteTagData, ThrowOnError>): RequestResult<DeleteTagResponses, DeleteTagErrors, ThrowOnError> => (options.client ?? client).delete<DeleteTagResponses, DeleteTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}', ...options });
+
+/**
+ * Read one tag
+ *
+ * The whole picture for one tag: its synonyms, its place in the DAG, its usage.
+ *
+ * Readable by any member, including a `suggested` one: quarantine keeps a suggestion out of
+ * search and completion, and a member looking at the tag their own file was given has to be
+ * able to see what it is.
+ */
+export const readTag = <ThrowOnError extends boolean = false>(options: Options<ReadTagData, ThrowOnError>): RequestResult<ReadTagResponses, ReadTagErrors, ThrowOnError> => (options.client ?? client).get<ReadTagResponses, ReadTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}', ...options });
+
+/**
+ * Rename a tag, or change its parents and synonyms
+ *
+ * Move a tag in the DAG, rename it, or change what resolves to it.
+ *
+ * Restructuring is instant and touches no file rows — that is ADR-0006's whole reason for
+ * expanding at query time. The old name is not kept as a synonym on a rename: a rename says
+ * the word was wrong, and an admin who wants it to keep resolving adds it back as an alias in
+ * the same request.
+ */
+export const updateTag = <ThrowOnError extends boolean = false>(options: Options<UpdateTagData, ThrowOnError>): RequestResult<UpdateTagResponses, UpdateTagErrors, ThrowOnError> => (options.client ?? client).patch<UpdateTagResponses, UpdateTagErrors, ThrowOnError>({
+    url: '/api/v1/tags/{tag_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Merge one tag into another
+ *
+ * Fold `tag_id` into `into`: same concept, two words.
+ *
+ * The merged tag's applications move, its names become synonyms of the survivor, and its
+ * place in the DAG is absorbed. Nothing a user curated is dropped — where both tags were on
+ * one file, the stronger statement wins (`confirmed` over `manual` over `rejected`).
+ */
+export const mergeTag = <ThrowOnError extends boolean = false>(options: Options<MergeTagData, ThrowOnError>): RequestResult<MergeTagResponses, MergeTagErrors, ThrowOnError> => (options.client ?? client).post<MergeTagResponses, MergeTagErrors, ThrowOnError>({
+    url: '/api/v1/tags/{tag_id}/merge',
     ...options,
     headers: {
         'Content-Type': 'application/json',

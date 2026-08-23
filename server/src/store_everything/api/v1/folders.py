@@ -33,6 +33,7 @@ from store_everything import (
     filestore,
     folders,
     names,
+    tagging,
     workspaces,
 )
 from store_everything.api.pagination import (
@@ -43,6 +44,7 @@ from store_everything.api.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
 )
+from store_everything.api.v1.tags import AppliedTag, TagApplyRequest, not_vocabulary, target_of
 from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
@@ -545,3 +547,81 @@ async def move_folder(
         assert root_of_destination is not None  # noqa: S101 - `_readable` refused a treeless one
         root = root_of_destination
     return await _summarize(connection, moved, root=root)
+
+
+@router.get(
+    FOLDERS_PATH + "/{folder_id}/tags",
+    summary="The tags on one folder",
+    response_model=list[AppliedTag],
+    responses={404: {"description": "No such folder, or not yours"}},
+)
+async def read_folder_tags(
+    folder_id: UUID, credential: CurrentCredential, connection: DatabaseConnection
+) -> list[AppliedTag]:
+    """What this directory is tagged with — the folder itself, not its contents.
+
+    A folder tag describes the folder ([F-015/FR-9](../../../../features/F-015-folders.md)):
+    tagging `2024/tax` with `tax` says the directory is about tax, and a file inside it is not
+    matched by that tag. Inheritance to contents needs precedence rules — how it displays on the
+    file, what it does to a rejected file tag, how facets count it — and is deferred until they
+    exist (Q23).
+    """
+    found, _, _ = await _readable(connection, folder_id, credential)
+    return [AppliedTag.of(one) for one in await tagging.tags_of_folder(connection, found.id)]
+
+
+@router.post(
+    FOLDERS_PATH + "/{folder_id}/tags",
+    summary="Tag a folder",
+    status_code=201,
+    response_model=AppliedTag,
+    responses={
+        404: {"description": "No such folder, or not yours"},
+        409: {"description": "That tag is not part of the vocabulary"},
+        422: {"description": "No tag goes by that name"},
+    },
+)
+async def tag_folder(
+    folder_id: UUID,
+    payload: TagApplyRequest,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> AppliedTag:
+    """Apply a tag to a directory, from the same vocabulary files use (F-015/FR-9).
+
+    Manual only, and that is not a simplification to fix later: extractors never run on folders,
+    so there is no machine claim to confirm or reject and no generation to swap.
+    """
+    found, _, _ = await _readable(connection, folder_id, credential)
+    target = await target_of(connection, payload)
+    try:
+        applied = await tagging.apply_to_folder(
+            connection,
+            folder_id=found.id,
+            tag_id=target.id,
+            user_id=credential.user.id,
+            actor=Actor.user(credential.user.id),
+        )
+    except tagging.NotVocabularyError as refused:
+        raise not_vocabulary(refused) from refused
+    return AppliedTag.of(applied)
+
+
+@router.delete(
+    FOLDERS_PATH + "/{folder_id}/tags/{tag_id}",
+    summary="Remove a tag from a folder",
+    status_code=204,
+    responses={404: {"description": "No such folder, or it does not carry that tag"}},
+)
+async def untag_folder(
+    folder_id: UUID,
+    tag_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> None:
+    found, _, _ = await _readable(connection, folder_id, credential)
+    removed = await tagging.remove_from_folder(
+        connection, folder_id=found.id, tag_id=tag_id, actor=Actor.user(credential.user.id)
+    )
+    if not removed:
+        raise _not_found()

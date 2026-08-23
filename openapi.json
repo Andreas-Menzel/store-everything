@@ -1659,6 +1659,157 @@
         }
       }
     },
+    "/api/v1/folders/{folder_id}/tags": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "The tags on one folder",
+        "description": "What this directory is tagged with — the folder itself, not its contents.\n\nA folder tag describes the folder ([F-015/FR-9](../../../../features/F-015-folders.md)):\ntagging `2024/tax` with `tax` says the directory is about tax, and a file inside it is not\nmatched by that tag. Inheritance to contents needs precedence rules — how it displays on the\nfile, what it does to a rejected file tag, how facets count it — and is deferred until they\nexist (Q23).",
+        "operationId": "read_folder_tags",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AppliedTag"
+                  },
+                  "title": "Response Read Folder Tags"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such folder, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Tag a folder",
+        "description": "Apply a tag to a directory, from the same vocabulary files use (F-015/FR-9).\n\nManual only, and that is not a simplification to fix later: extractors never run on folders,\nso there is no machine claim to confirm or reject and no generation to swap.",
+        "operationId": "tag_folder",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedTag"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such folder, or not yours"
+          },
+          "409": {
+            "description": "That tag is not part of the vocabulary"
+          },
+          "422": {
+            "description": "No tag goes by that name"
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{folder_id}/tags/{tag_id}": {
+      "delete": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Remove a tag from a folder",
+        "operationId": "untag_folder",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Folder Id"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such folder, or it does not carry that tag"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}": {
       "get": {
         "tags": [
@@ -1878,6 +2029,158 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/tags": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "The tags on one file",
+        "description": "Every tag the file carries, in name order, each with its provenance (F-003/FR-3).\n\nThe same list `GET /files/{id}` embeds. It exists separately because tagging is the one\nthing a client changes often, and re-reading a file's whole summary after every edit would\nbe a lot of response for one word.",
+        "operationId": "read_file_tags",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AppliedTag"
+                  },
+                  "title": "Response Read File Tags"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Tag a file",
+        "description": "Apply a tag by hand (F-003/FR-2), stamped with the caller's user id.\n\nTags belong to the file, not to the viewer: anyone who can write to it tags it, and everyone\nwho can read it sees the same tags with the same attribution\n([02 § file](../../../../specs/02-domain-model.md#file)). Phase 1's only permission is\nownership, so *write* still means *yours*; grants change that in one place (`readable`).\n\nIdempotent — applying a tag the file already carries returns the row that is already there.",
+        "operationId": "tag_file",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedTag"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "409": {
+            "description": "That tag is not part of the vocabulary"
+          },
+          "422": {
+            "description": "No tag goes by that name"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/tags/{tag_id}": {
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Remove a tag from a file",
+        "description": "Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.",
+        "operationId": "untag_file",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such file, or it does not carry that tag"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/content": {
       "get": {
         "tags": [
@@ -1984,10 +2287,407 @@
           }
         }
       }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Complete a tag prefix, or list the taxonomy",
+        "description": "Completion when `prefix` is given, the taxonomy listing otherwise.\n\nThe two modes have different defaults, because a tag box wants a handful of candidates while\nan admin browsing the taxonomy wants a page of it. Only `active` tags are vocabulary, so only\nan admin may ask to see the others: a `suggested` tag is a machine's proposal awaiting review\n(F-003/FR-12) and a `rejected` one is a word the instance turned down. Both are visible on\nthe file that carries them; neither belongs in a member's picker.",
+        "operationId": "list_tags",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Prefix"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "active",
+                "suggested",
+                "rejected",
+                "all"
+              ],
+              "type": "string",
+              "default": "active",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 200,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TagSummary_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The status filter is not the caller's to ask for"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Add a tag to the vocabulary",
+        "description": "Create an `active` tag, optionally with its parents and synonyms in one call.",
+        "operationId": "create_tag",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "409": {
+            "description": "That name already resolves to a tag"
+          },
+          "422": {
+            "description": "The name, a parent or an alias was refused"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag_id}": {
+      "get": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Read one tag",
+        "description": "The whole picture for one tag: its synonyms, its place in the DAG, its usage.\n\nReadable by any member, including a `suggested` one: quarantine keeps a suggestion out of\nsearch and completion, and a member looking at the tag their own file was given has to be\nable to see what it is.",
+        "operationId": "read_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Rename a tag, or change its parents and synonyms",
+        "description": "Move a tag in the DAG, rename it, or change what resolves to it.\n\nRestructuring is instant and touches no file rows — that is ADR-0006's whole reason for\nexpanding at query time. The old name is not kept as a synonym on a rename: a rename says\nthe word was wrong, and an admin who wants it to keep resolving adds it back as an alias in\nthe same request.",
+        "operationId": "update_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "The name is taken, or the edge would close a cycle"
+          },
+          "422": {
+            "description": "A name, parent or alias was refused"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Erase a tag nothing carries",
+        "description": "Hard-delete a tag — reserved for a typo with no history (ADR-0006).\n\nA tag anything carries is refused: the answer for a word that turned out wrong is to reject\nit, which keeps the name as a suppression record and leaves the files that used it alone.",
+        "operationId": "delete_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "Something still carries it"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag_id}/merge": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Merge one tag into another",
+        "description": "Fold `tag_id` into `into`: same concept, two words.\n\nThe merged tag's applications move, its names become synonyms of the survivor, and its\nplace in the DAG is absorbed. Nothing a user curated is dropped — where both tags were on\none file, the stronger statement wins (`confirmed` over `manual` over `rejected`).",
+        "operationId": "merge_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagMergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagMergeResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "422": {
+            "description": "A tag cannot be merged into itself"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AppliedTag": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suggested",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "confirmed",
+              "auto"
+            ],
+            "title": "Provenance"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "provenance",
+          "user",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AppliedTag",
+        "description": "One tag as it sits on a file or a folder.\n\nShared by both surfaces on purpose: a tag on a folder is the same word from the same\nvocabulary, and a client that can render one can render the other. `provenance` is what\ntells them apart in the other direction — a folder tag is always `manual`, because\nextractors never run on folders ([F-015/FR-9](../../../../features/F-015-folders.md))."
+      },
       "Child": {
         "anyOf": [
           {
@@ -2693,6 +3393,13 @@
                 "type": "null"
               }
             ]
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/AppliedTag"
+            },
+            "type": "array",
+            "title": "Tags"
           }
         },
         "additionalProperties": false,
@@ -3180,6 +3887,33 @@
         ],
         "title": "Page[SegmentInfo]"
       },
+      "Page_TagSummary_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TagSummary"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Page[TagSummary]"
+      },
       "Page_UserSummary_": {
         "properties": {
           "data": {
@@ -3596,6 +4330,352 @@
           "partial",
           "failed"
         ]
+      },
+      "TagApplyRequest": {
+        "properties": {
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TagApplyRequest",
+        "description": "Which tag to apply — by id, or by any spelling of its name.\n\nTwo ways because there are two callers. A picker has the id from a completion and should not\nre-resolve a word that may have been renamed since; a person typing has only the word, and\nresolving it through the alias table is how `automobile` lands on `car`."
+      },
+      "TagCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parents": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Parents"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Aliases"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagCreateRequest"
+      },
+      "TagDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suggested",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Aliases"
+          },
+          "parents": {
+            "items": {
+              "$ref": "#/components/schemas/TagReference"
+            },
+            "type": "array",
+            "title": "Parents"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/TagReference"
+            },
+            "type": "array",
+            "title": "Children"
+          },
+          "ancestors": {
+            "items": {
+              "$ref": "#/components/schemas/TagReference"
+            },
+            "type": "array",
+            "title": "Ancestors"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TagUsage"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "aliases",
+          "parents",
+          "children",
+          "ancestors",
+          "usage",
+          "created_at",
+          "created_by"
+        ],
+        "title": "TagDetail"
+      },
+      "TagMergeRequest": {
+        "properties": {
+          "into": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Into"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "into"
+        ],
+        "title": "TagMergeRequest"
+      },
+      "TagMergeResult": {
+        "properties": {
+          "tag": {
+            "$ref": "#/components/schemas/TagDetail"
+          },
+          "moved_files": {
+            "type": "integer",
+            "title": "Moved Files"
+          },
+          "moved_folders": {
+            "type": "integer",
+            "title": "Moved Folders"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "moved_files",
+          "moved_folders"
+        ],
+        "title": "TagMergeResult"
+      },
+      "TagReference": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "TagReference"
+      },
+      "TagSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suggested",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TagUsage"
+          },
+          "parents": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Parents"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched"
+          },
+          "matched_alias": {
+            "type": "boolean",
+            "title": "Matched Alias",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "usage",
+          "parents",
+          "created_at"
+        ],
+        "title": "TagSummary"
+      },
+      "TagUpdateRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parents": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parents"
+          },
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TagUpdateRequest",
+        "description": "Every field optional; absent means unchanged, and a present list is the whole set."
+      },
+      "TagUsage": {
+        "properties": {
+          "files": {
+            "type": "integer",
+            "title": "Files"
+          },
+          "folders": {
+            "type": "integer",
+            "title": "Folders"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "files",
+          "folders"
+        ],
+        "title": "TagUsage",
+        "description": "How much of **the caller's own** library carries the tag.\n\nCaller-scoped, not instance-wide: a member should not learn from an autocomplete how many\nfiles somebody else has tagged `divorce`, and instance admin is not data access\n([07](../../../../specs/07-identity-permissions-sharing.md))."
       },
       "TokenCreateRequest": {
         "properties": {
