@@ -18,6 +18,7 @@ The tests come in three groups, and the middle one is the point:
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -252,6 +253,135 @@ async def test_an_empty_directory_renamed_gets_a_new_identity(
         run = await latest_run(client, workspace)
         assert run["folders_transferred"] == 0
         assert run["folders_ambiguous"] == 0, "no evidence at all is not an ambiguous case"
+
+
+@pytest.mark.fr("F-015/FR-7", "F-015/FR-11")
+async def test_a_renamed_directory_keeps_the_empty_subdirectories_inside_it(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The other half of the empty-directory limit, and the one that used to end the scan.
+
+    An empty directory cannot be matched to anything *on its own*. Inside a directory whose
+    identity has just transferred it is not on its own: the two parents are one directory, so a
+    child of the same name under each of them is one child. Before that rule existed the two
+    rows simply collided — sibling uniqueness refused the re-parenting, the identity pass rolled
+    back, every retry hit the same state, and while the run sat there re-trying, every further
+    rescan of the workspace was refused as concurrent. Renaming a folder with an empty subfolder
+    in it was enough.
+
+    Nested, because an empty directory can hold empty directories.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"Album/beach.jpg": b"a photo of a beach", "Album/party.jpg": b"a party"})
+    (tree / "Album" / "Raw" / "Rejects").mkdir(parents=True)
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        album = await folder_at(identity_database, workspace, "Album")
+        raw = await folder_at(identity_database, workspace, "Album/Raw")
+        rejects = await folder_at(identity_database, workspace, "Album/Raw/Rejects")
+        assert album is not None and raw is not None and rejects is not None
+
+        (tree / "Album").rename(tree / "Photos")
+        await rescan(client, workspace, identity_database, identity_settings)
+
+        assert (await summary(client, album.id))["path"] == "Photos"
+        assert (await summary(client, raw.id))["path"] == "Photos/Raw", (
+            "the empty subdirectory kept the identity its grants would hang off"
+        )
+        assert (await summary(client, rejects.id))["path"] == "Photos/Raw/Rejects"
+        # Merged, not duplicated: four folders and the root, exactly as before the rename.
+        assert await folder_count(identity_database) == 4
+        merged = await read_events(identity_database, action="folder.identity_merged")
+        assert {event["details"]["path"] for event in merged} == {
+            "Photos/Raw",
+            "Photos/Raw/Rejects",
+        }
+
+
+@pytest.mark.fr("F-015/FR-7")
+async def test_a_namesake_child_is_merged_where_its_own_evidence_decided_nothing(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The rule's deliberate reach, written down because it settles a case FR-7 would refuse.
+
+    `Album/Trip`'s photos go two ways, two and two, so on its own evidence nothing says which
+    directory is `Trip` — left there it would be recorded as a split and given a new identity.
+    Then `Album` transfers, and that is evidence the earlier turn did not have: the directory
+    holding both candidates is now known to be the directory `Trip` sat in, and one of them
+    carries `Trip`'s name. The namesake takes the identity, and because the merge happens while
+    the transfer is running — before the pass gets to what it could not decide — no ambiguity is
+    recorded at all. The stronger evidence arrives in time to be used.
+    """
+    tree = tmp_path / "nas"
+    build(
+        tree,
+        {
+            "Album/cover.jpg": b"a cover",
+            "Album/Trip/one.jpg": b"the first",
+            "Album/Trip/two.jpg": b"the second",
+            "Album/Trip/three.jpg": b"the third",
+            "Album/Trip/four.jpg": b"the fourth",
+        },
+    )
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        album = await folder_at(identity_database, workspace, "Album")
+        trip = await folder_at(identity_database, workspace, "Album/Trip")
+        assert album is not None and trip is not None
+
+        (tree / "Photos" / "Trip").mkdir(parents=True)
+        (tree / "Photos" / "Elsewhere").mkdir()
+        (tree / "Album" / "cover.jpg").rename(tree / "Photos" / "cover.jpg")
+        # Two and two: no majority either way, so `Trip`'s own evidence decides nothing.
+        (tree / "Album" / "Trip" / "one.jpg").rename(tree / "Photos" / "Trip" / "one.jpg")
+        (tree / "Album" / "Trip" / "two.jpg").rename(tree / "Photos" / "Trip" / "two.jpg")
+        (tree / "Album" / "Trip" / "three.jpg").rename(tree / "Photos" / "Elsewhere" / "three.jpg")
+        (tree / "Album" / "Trip" / "four.jpg").rename(tree / "Photos" / "Elsewhere" / "four.jpg")
+        (tree / "Album" / "Trip").rmdir()
+        (tree / "Album").rmdir()
+        await rescan(client, workspace, identity_database, identity_settings)
+
+        assert (await summary(client, album.id))["path"] == "Photos"
+        assert (await summary(client, trip.id))["path"] == "Photos/Trip"
+        assert await read_events(identity_database, action="folder.identity_ambiguous") == [], (
+            "the parent's transfer settled it before the split pass could call it undecided"
+        )
+        merged = await read_events(identity_database, action="folder.identity_merged")
+        assert [event["details"]["path"] for event in merged] == ["Photos/Trip"]
+        assert (await latest_run(client, workspace))["folders_ambiguous"] == 0
+
+
+@pytest.mark.fr("F-015/FR-7", "F-001/FR-6")
+async def test_a_merged_child_takes_the_files_of_the_row_it_replaces(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The file side of the same seam: rename a directory and edit a file in it, in one pass.
+
+    Nothing under `Album/Notes` matches by content any more, so that folder has no evidence of
+    its own and its row stays put while the traversal registers a namesake. The merge then moves
+    a **live** file onto a name the survivor still holds a row for — which is only safe because
+    the row it holds was trashed by the sweep first, and sibling uniqueness for files covers live
+    rows alone (F-014/FR-1). The trashed row keeps its history; the live one is the new content.
+    """
+    tree = tmp_path / "nas"
+    build(tree, {"Album/cover.jpg": b"a cover", "Album/Notes/todo.txt": b"the old list"})
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        notes = await folder_at(identity_database, workspace, "Album/Notes")
+        assert notes is not None
+
+        (tree / "Album" / "Notes" / "todo.txt").write_bytes(b"an entirely different list")
+        (tree / "Album").rename(tree / "Photos")
+        await rescan(client, workspace, identity_database, identity_settings)
+
+        assert (await summary(client, notes.id))["path"] == "Photos/Notes"
+        assert await registered(identity_database) == {
+            "Photos/cover.jpg": hashlib.sha256(b"a cover").hexdigest(),
+            "Photos/Notes/todo.txt": hashlib.sha256(b"an entirely different list").hexdigest(),
+        }
 
 
 @pytest.mark.fr("F-015/FR-7")

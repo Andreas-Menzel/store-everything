@@ -595,6 +595,80 @@ async def _ambiguous(
     )
 
 
+async def _absorb(
+    connection: AsyncConnection,
+    *,
+    run: scans.Run,
+    into: folders.Folder,
+    discarded: folders.Folder,
+) -> list[tuple[UUID, UUID]]:
+    """Empty one folder into another, merging children the two both have a name for.
+
+    Two rows describing one directory cannot simply be poured together: sibling uniqueness
+    (F-015/FR-6) refuses a child that would land on a name the survivor already holds, and the
+    refusal takes the whole identity pass with it. That happens for a perfectly ordinary tree.
+    A renamed directory with an **empty** subdirectory in it is enough — FR-7 cannot match an
+    empty directory to anything, so the old row stays where it is while the traversal registers
+    a namesake under the new one — and so is a subdirectory this run called ambiguous.
+
+    The pair is the same directory, and the evidence is better than anything the deepest-first
+    pass had: the two parents are known to be one directory, so a child of the same comparison
+    key under each of them is one child. The older row wins, keeping the UUID that grants and
+    tags hang off, and takes the disk's spelling of the name. Recursively, because an empty
+    subdirectory can have empty subdirectories of its own.
+
+    Returns the pairs it merged, deepest first. Their events are written by the caller, once the
+    transfer has finished moving the chain they hang off: a path read here still resolves through
+    the directory name that is about to be replaced.
+    """
+    merged: list[tuple[UUID, UUID]] = []
+    for stale, fresh in await folders.namesakes(
+        connection, parent_id=into.id, other_id=discarded.id
+    ):
+        merged.extend(await _absorb(connection, run=run, into=stale, discarded=fresh))
+        # The same handover the transfer itself does, and for the same two reasons: `folder_delta`
+        # and `folder_aggregate` both cascade from the row that is about to go.
+        await aggregates.repoint(connection, from_folder=fresh.id, to_folder=stale.id)
+        await aggregates.inherit(connection, heir=stale.id, from_folder=fresh.id)
+        await folders.discard(connection, fresh.id)
+        if stale.name != fresh.name:
+            # Same comparison key, different spelling: the disk is the source of truth for how a
+            # name is written, and the rename event says the app merely recognised it.
+            stale = await folders.reposition(
+                connection,
+                found=stale,
+                parent=into,
+                name=fresh.name,
+                actor=Actor.system(),
+                detected="external",
+            )
+        await folders.stamp_seen(connection, folder_ids=[stale.id], seen_at=run.started_at)
+        merged.append((stale.id, fresh.id))
+    await folders.absorb(connection, into=into, discarded=discarded)
+    return merged
+
+
+async def _record_merge(connection: AsyncConnection, *, survivor: UUID, discarded: UUID) -> None:
+    """FR-11's record of a namesake merge — written after the chain above it has settled."""
+    found = await folders.get(connection, survivor)
+    if found is None:  # pragma: no cover - the survivor is the row that was kept
+        return
+    await events.record(
+        connection,
+        action=events.FOLDER_IDENTITY_MERGED,
+        resource_type=events.RESOURCE_FOLDER,
+        resource_id=found.id,
+        actor=Actor.system(),
+        details={
+            "workspace": str(found.workspace_id),
+            "path": await folders.path_of(connection, found),
+            "discarded": str(discarded),
+            "reason": "a namesake child of a directory whose identity transferred",
+            "detected": "external",
+        },
+    )
+
+
 async def _transfer(
     connection: AsyncConnection,
     *,
@@ -641,7 +715,7 @@ async def _transfer(
     # until the drift sweep happened past it, which is hours on a large tree.
     await aggregates.inherit(connection, heir=claim.source.id, from_folder=claim.destination.id)
 
-    await folders.absorb(connection, into=claim.source, discarded=claim.destination)
+    merged = await _absorb(connection, run=run, into=claim.source, discarded=claim.destination)
     await folders.discard(connection, claim.destination.id)
     moved = await folders.reposition(
         connection,
@@ -652,6 +726,10 @@ async def _transfer(
         detected="external",
     )
     await folders.stamp_seen(connection, folder_ids=[moved.id], seen_at=run.started_at)
+    for survivor, discarded in merged:
+        # Only now: every path under this folder resolved through the old directory name until
+        # the line above moved the chain.
+        await _record_merge(connection, survivor=survivor, discarded=discarded)
     if claim.source.parent_id != parent.id and (files or size_bytes):
         # The old chain keeps what it was owed and the new one gives back what it was not: above
         # the two parents' common ancestor the pair cancels, exactly as for a deliberate move.

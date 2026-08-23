@@ -843,11 +843,45 @@ async def reposition(
     return moved
 
 
+async def namesakes(
+    connection: AsyncConnection, *, parent_id: UUID, other_id: UUID
+) -> list[tuple[Folder, Folder]]:
+    """Children of two parents that share a comparison key, paired (`parent_id`'s first).
+
+    Asked before one folder absorbs another, because sibling uniqueness (FR-6) would refuse the
+    re-parenting outright and take the whole identity pass down with it. Both rows are children
+    of directories the caller has already established are the same one, so a shared name is not
+    a clash to resolve but two rows describing one directory.
+    """
+    held = folder.alias("held")
+    incoming = folder.alias("incoming")
+    rows = (
+        await connection.execute(
+            select(
+                *(held.c[column.name] for column in _COLUMNS),
+                *(incoming.c[column.name] for column in _COLUMNS),
+            )
+            .select_from(held.join(incoming, held.c.name_key == incoming.c.name_key))
+            .where(held.c.parent_id == parent_id, incoming.c.parent_id == other_id)
+            .order_by(incoming.c.name)
+        )
+    ).all()
+    width = len(_COLUMNS)
+    return [
+        (_as_folder(tuple(row[:width])), _as_folder(tuple(row[width:])))  # type: ignore[arg-type]
+        for row in rows
+    ]
+
+
 async def absorb(connection: AsyncConnection, *, into: Folder, discarded: Folder) -> None:
     """Move everything one folder holds into another, so the emptied one can be deleted.
 
     Files change folder, subfolders change parent, and the closure is rewritten for each of them.
     Nothing on disk moves: this is two rows describing one directory, and only one may survive.
+
+    The caller must have settled any children the two share a name for — `namesakes` finds them —
+    because re-parenting one onto the other's name violates sibling uniqueness (FR-6) and rolls
+    back everything the transaction has done.
     """
     await connection.execute(
         update(file)
