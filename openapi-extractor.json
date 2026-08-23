@@ -73,10 +73,407 @@
           }
         }
       }
+    },
+    "/extractor-api/v1/jobs/claim": {
+      "post": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Claim the next job",
+        "description": "Claim the next job for this extractor, or answer `204` when there is none.\n\nDeliberately not a consumer of the request transaction: waiting has to release its\nconnection between attempts, and a claim has to commit the instant it succeeds — the lease\nit takes is a promise to everybody else, not something to hold open until a response is\nserialised.",
+        "operationId": "claim_job",
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 0,
+              "default": 0,
+              "title": "Wait"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ClaimRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A claimed job, with its fencing token and inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimedJobResponse"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Nothing is due for this extractor"
+          },
+          "409": {
+            "description": "An administrator has disabled this extractor"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extractor-api/v1/jobs/{job_id}/heartbeat": {
+      "post": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Extend the lease, and learn whether to stop",
+        "description": "Extend the lease, and learn whether to stop.\n\nProgress *is* the heartbeat and the heartbeat *is* the cancellation channel (05 § job\nlifecycle): an extractor that keeps reporting keeps its job, and one that is told to stop\nlearns it here rather than from a signal it might miss.",
+        "operationId": "heartbeat_job",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Fenced"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartbeatResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job for this extractor"
+          },
+          "409": {
+            "description": "The lease is no longer this caller's"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extractor-api/v1/jobs/{job_id}/inputs/{index}": {
+      "get": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Read one of a job's inputs",
+        "description": "Stream one input of one job — the only bytes this extractor may read.\n\nWhich bytes depends on the version, not on the path: while a version is current its content\nis the file in the workspace, and once it is superseded the app's own copy in `versions/` is\nwhat remains (F-007/FR-9). A version whose bytes are gone from both — overwritten on the\nstorage before the app saw it — is `410`, because there is nothing to analyse and retrying\nwill not change that.",
+        "operationId": "read_input",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes to analyse",
+            "content": {
+              "*/*": {}
+            }
+          },
+          "206": {
+            "description": "The requested byte range"
+          },
+          "404": {
+            "description": "No such job or input for this extractor"
+          },
+          "410": {
+            "description": "This version's content is no longer stored"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extractor-api/v1/jobs/{job_id}/result": {
+      "post": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Finish a job",
+        "description": "Finish a job. One envelope, one guarded transaction, applied once.",
+        "operationId": "submit_result",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultEnvelope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOutcome"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job for this extractor"
+          },
+          "409": {
+            "description": "The lease is no longer this caller's"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extractor-api/v1/jobs/{job_id}/error": {
+      "post": {
+        "tags": [
+          "extractor-api"
+        ],
+        "summary": "Report a failed attempt",
+        "description": "Report a failed attempt. The queue decides whether it is retried or dead-lettered.",
+        "operationId": "report_error",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobErrorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOutcome"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job for this extractor"
+          },
+          "409": {
+            "description": "The lease is no longer this caller's"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ClaimRequest": {
+        "properties": {
+          "worker": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ClaimRequest"
+      },
+      "ClaimedJobResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "Idempotency Key"
+          },
+          "extractor_id": {
+            "type": "string",
+            "title": "Extractor Id"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Lease Expires At"
+          },
+          "heartbeat_interval_seconds": {
+            "type": "integer",
+            "title": "Heartbeat Interval Seconds"
+          },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested"
+          },
+          "file_version": {
+            "$ref": "#/components/schemas/JobVersion"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputReference"
+            },
+            "type": "array",
+            "title": "Inputs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "attempt",
+          "idempotency_key",
+          "extractor_id",
+          "generation",
+          "params",
+          "lease_expires_at",
+          "heartbeat_interval_seconds",
+          "cancel_requested",
+          "file_version",
+          "inputs"
+        ],
+        "title": "ClaimedJobResponse"
+      },
       "CostClass": {
         "type": "string",
         "enum": [
@@ -84,6 +481,21 @@
           "medium",
           "heavy"
         ]
+      },
+      "Fenced": {
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attempt"
+        ],
+        "title": "Fenced"
       },
       "GpuMode": {
         "type": "string",
@@ -105,6 +517,187 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HeartbeatResponse": {
+        "properties": {
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Lease Expires At"
+          },
+          "cancel": {
+            "type": "boolean",
+            "title": "Cancel"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lease_expires_at",
+          "cancel"
+        ],
+        "title": "HeartbeatResponse"
+      },
+      "InputReference": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "kind": {
+            "type": "string",
+            "const": "original",
+            "title": "Kind"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "const": "sha256",
+            "title": "Digest Algorithm",
+            "default": "sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "index",
+          "kind",
+          "url",
+          "media_type",
+          "size",
+          "content_hash"
+        ],
+        "title": "InputReference",
+        "description": "Where to read one of a job's inputs. Range requests are supported."
+      },
+      "JobErrorRequest": {
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempt"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message"
+          },
+          "retryable": {
+            "type": "boolean",
+            "title": "Retryable",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attempt",
+          "message"
+        ],
+        "title": "JobErrorRequest"
+      },
+      "JobOutcome": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "finished_at"
+        ],
+        "title": "JobOutcome"
+      },
+      "JobVersion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "content_hash": {
+            "type": "string",
+            "title": "Content Hash"
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "const": "sha256",
+            "title": "Digest Algorithm",
+            "default": "sha256"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "media_class": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "document",
+              "archive",
+              "other"
+            ],
+            "title": "Media Class"
+          },
+          "is_current": {
+            "type": "boolean",
+            "title": "Is Current"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "content_hash",
+          "size",
+          "media_type",
+          "media_class",
+          "is_current"
+        ],
+        "title": "JobVersion"
       },
       "Manifest": {
         "properties": {
@@ -394,6 +987,22 @@
           "manifest"
         ],
         "title": "RegistrationAccepted"
+      },
+      "ResultEnvelope": {
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attempt"
+        ],
+        "title": "ResultEnvelope",
+        "description": "The result of one job.\n\nThis core version accepts an envelope that carries **no outputs**: the lifecycle is complete,\nand the tables that hold segments, metadata, tags and derived assets arrive with the code\nthat writes them. Unknown fields are tolerated rather than refused (05 § compatibility\nrules), so an extractor written against a later core still completes its jobs here — its\noutputs are simply not stored yet, which the run's status reports honestly."
       },
       "ValidationError": {
         "properties": {

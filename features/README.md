@@ -8,7 +8,7 @@ A feature is **specified here before it is implemented** — no feature file, no
 
 | ID | Feature | Clients | Status | Priority |
 |---|---|---|---|---|
-| [F-001](F-001-upload-and-import.md) | File upload & workspace import | all | Approved | P0 |
+| [F-001](F-001-upload-and-import.md) | File upload & workspace import | all | Implemented | P0 |
 | [F-002](F-002-hybrid-search.md) | Hybrid search (exact + semantic, positional) | all | Draft | P0 |
 | [F-003](F-003-tagging.md) | Tagging (manual + auto, provenance) | all | Approved | P0 |
 | [F-004](F-004-document-text-extraction.md) | Document text extraction & OCR | all | Approved | P0 |

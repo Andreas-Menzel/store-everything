@@ -49,7 +49,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as UUID_TYPE
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import aggregates, events, mediatypes, names
+from store_everything import aggregates, events, extraction, mediatypes, names
 from store_everything.events import Actor
 from store_everything.ids import new_id
 from store_everything.tables import file, file_version, folder, folder_closure, scan_blocked
@@ -290,6 +290,19 @@ async def holds_any_content(connection: AsyncConnection, file_id: UUID) -> bool:
     )
 
 
+async def version(connection: AsyncConnection, version_id: UUID) -> Version | None:
+    """One version by its own id — how an extraction job finds the content it is about.
+
+    Deliberately not filtered to `is_current`: a job outlives the version it was created for,
+    and reading the bytes of a superseded version is exactly what makes its results still worth
+    keeping (F-007).
+    """
+    row = (
+        await connection.execute(select(*_VERSION_COLUMNS).where(file_version.c.id == version_id))
+    ).first()
+    return None if row is None else _as_version(tuple(row))
+
+
 async def current_version(connection: AsyncConnection, file_id: UUID) -> Version | None:
     row = (
         await connection.execute(
@@ -413,6 +426,10 @@ async def register(
         files=1,
         size_bytes=version.size_bytes,
     )
+    # Extraction is routed here, in the transaction that made the version exist, so that no path
+    # can register content and forget to have it analysed (04 § detection). An instance with no
+    # extractors installed creates no jobs and is none the worse for it.
+    await extraction.route(connection, file_version_id=version.id, media_type=version.media_type)
     return created, version
 
 
@@ -514,16 +531,18 @@ async def add_version(
     predecessor is demoted in the same statement batch, and a second attempt after a crash
     finds the new version already current and the old one already demoted.
     """
-    # The demoted version's size comes back from the statement that demotes it: the folder's
-    # total moves by the *difference*, and this is the only moment both numbers are in hand.
-    superseded = (
+    # The demoted version comes back from the statement that demotes it: the folder's total
+    # moves by the *difference* in size, and its id is what says whose extraction jobs are now
+    # work nobody is waiting for.
+    demoted = (
         await connection.execute(
             update(file_version)
             .where(file_version.c.file_id == found.id, file_version.c.is_current.is_(True))
             .values(is_current=False, restorable=predecessor_restorable)
-            .returning(file_version.c.size_bytes)
+            .returning(file_version.c.id, file_version.c.size_bytes)
         )
-    ).scalar_one_or_none()
+    ).first()
+    superseded = demoted[1] if demoted is not None else None
     version = _as_version(
         tuple(
             (
@@ -581,6 +600,12 @@ async def add_version(
             folder_id=found.folder_id,
             size_bytes=version.size_bytes - (superseded or 0),
         )
+    if demoted is not None:
+        # Whatever is still queued for the content this just replaced is work nobody waits for.
+        # Cooperative, so a running extractor learns at its next heartbeat, and a result that
+        # arrives anyway is still kept: the version it describes still exists (F-007).
+        await extraction.supersede_pending(connection, file_version_id=demoted[0])
+    await extraction.route(connection, file_version_id=version.id, media_type=version.media_type)
     return version
 
 

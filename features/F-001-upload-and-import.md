@@ -1,6 +1,6 @@
 # F-001 — File Upload & Workspace Import
 
-**Status:** Approved
+**Status:** Implemented
 **Priority:** P0
 **Clients:** all
 **Depends on:** —

@@ -70,9 +70,9 @@ The extraction queue *is* the operation layer ([ADR-0013](../decisions/ADR-0013-
 | Call | Semantics |
 |---|---|
 | `PUT /registration` | Manifest upsert (see above) |
-| `POST /jobs/claim` | Claim the next job for this extractor (long-poll; `204` when none). Returns the job payload: job id, **`attempt`** (the fencing token — [12](12-reliability.md#leases--fencing)), idempotency key, file version (id, content hash, media type/class, size), input references, generation, params, and the relevant well-known metadata |
-| `POST /jobs/{id}/heartbeat` | Extends the lease and returns the cancellation verdict (`{cancel: bool}` — user cancel, supersession by a newer generation). **Required at least every half lease interval** during work |
-| `GET /jobs/{id}/inputs/{n}` | Streams one input — original bytes or a chained derived asset — with Range support, scoped to this job |
+| `POST /jobs/claim` | Claim the next job for this extractor (`204` when none). Returns the job payload: job id, **`attempt`** (the fencing token — [12](12-reliability.md#leases--fencing)), idempotency key, file version (id, content hash, media type/class, size, whether it is still current), input references, generation, params, the lease's expiry and the heartbeat interval to keep it, and the relevant well-known metadata. An optional bounded `wait` (≤ 30 s) long-polls; the wait holds no database connection, so idle extractors cost nothing. A **disabled** extractor is refused with a typed `409` rather than told there is no work — "switched off" and "nothing to do" are different answers to an operator |
+| `POST /jobs/{id}/heartbeat` | Extends the lease and returns the cancellation verdict (`{cancel: bool}` — user cancel, supersession by a newer version or generation). **Required at least every half lease interval** during work |
+| `GET /jobs/{id}/inputs/{n}` | Streams one input — original bytes or a chained derived asset — with Range support, scoped to this job. Which bytes follows the *version*, not the path: the source tree while the version is current, the app's own copy in `versions/` once it is superseded, and `410` when neither holds it any more |
 | `PUT /jobs/{id}/assets/{sha256}` | Stages one derived-asset payload by content hash (idempotent; the core verifies the hash on receipt) — phase one of the two-phase result |
 | `POST /jobs/{id}/result` | Submits the one result envelope referencing staged assets — applied in **one guarded transaction** (see below) |
 | `POST /jobs/{id}/error` | Reports failure (`retryable` or not) → retry with backoff, or dead-letter |
@@ -118,7 +118,9 @@ One structured result per job; all content is optional, per the extractor's `pro
 | `renditions` | downloadable **alternative forms of the whole file** — searchable PDF (embedded OCR layer), subtitled video, `.srt` ([ADR-0008](../decisions/ADR-0008-renditions.md)). Originals are never replaced. |
 | `faces` | `{bbox (normalized), quality (0–1), embedding {space, vector}, crop (derived-asset ref), timestamp?}` list — face detections ([F-018](../features/F-018-people.md), additive within `v1.x`). Face embeddings ride inside each entry (they attach to face instances, not segments). Grouping instances into persons — identity resolution — is **core-owned, never extractor-owned** ([ADR-0011](../decisions/ADR-0011-person-recognition-architecture.md)). |
 
-Every persisted row is stamped by the core with: extractor id, extractor version, model version, extraction run, generation.
+Every persisted row is stamped by the core with: extractor id, extractor version, model version, extraction run, generation. The extractor version and model version are the ones of the image that **claimed** the job rather than the ones it was created with: an image upgraded in between is a different program, and provenance names what ran.
+
+The output kinds a given core version actually persists are visible in the committed contract (`openapi-extractor.json`): the tables behind them arrive with the code that writes them, and a result carrying a kind this core does not store yet is tolerated rather than refused, per the compatibility rules below.
 
 ## Built-in extractors (default installation, all local)
 
