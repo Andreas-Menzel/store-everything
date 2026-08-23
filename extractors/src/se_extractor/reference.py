@@ -48,7 +48,7 @@ MANIFEST: dict[str, Any] = {
     "version": VERSION,
     "api_version": "v1",
     "accepts": {"mime_types": ["*/*"]},
-    "produces": ["metadata", "text_segments", "derived_assets"],
+    "produces": ["metadata", "text_segments", "tags", "derived_assets"],
     "derived_asset_kinds": [ASSET_KIND],
     "cost_class": "light",
     "gpu": "none",
@@ -103,7 +103,7 @@ def _analyse(job: Job, context: JobContext) -> dict[str, Any] | None:
 
     Then the description, which is deliberately a sample of every output shape rather than
     anything clever: typed facts of each storage class, one segment per line with a line anchor,
-    and one staged asset. A test can therefore assert on all three from one job.
+    two tag labels, and one staged asset. A test can therefore assert on all of them from one job.
     """
     original = job.original
     if original is None:
@@ -142,6 +142,14 @@ def _analyse(job: Job, context: JobContext) -> dict[str, Any] | None:
                 "language": "und",
             }
             for number, line in enumerate(lines, start=1)
+        ],
+        # Labels, not tag ids: the core maps them into its own vocabulary, which is what lets a
+        # model's words drift without the taxonomy drifting with them. `text` is a word any
+        # instance plausibly has; `reference-checked` almost certainly is not — so between them
+        # they exercise both halves of the mapping, matching and suggesting.
+        "tags": [
+            {"name": "text", "confidence": 0.9 if _looks_like_text(data) else 0.1},
+            {"name": "reference-checked"},
         ],
         "derived_assets": [
             {

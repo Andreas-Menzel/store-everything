@@ -20,10 +20,11 @@ from fastapi import FastAPI
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from store_everything import extraction
 from store_everything.api.extractor_api import EXTRACTOR_API_PREFIX
 from store_everything.api.v1.router import API_V1_PREFIX
 from store_everything.config import Settings
-from store_everything.tables import extraction_run, operation
+from store_everything.tables import extraction_run, file_version, operation
 from tests.identity_helpers import BASE_URL, SAME_ORIGIN
 from tests.workspace_helpers import create_workspace, instance, provision_pending, signed_in
 
@@ -135,6 +136,35 @@ async def stage(
         headers={"Content-Type": "application/octet-stream"},
     )
     return digest, response
+
+
+async def reprocess(database_url: str, version_id: UUID, *, generation: int) -> None:
+    """Queue a new generation of extraction for one version.
+
+    What [F-009](../../features/F-009-reprocessing.md)'s management surface will call in phase 5;
+    the mechanism it drives — generations on every derived row — is phase 2's, so a test drives
+    it directly rather than waiting for the button.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(file_version.c.media_type, file_version.c.content_hash).where(
+                        file_version.c.id == version_id
+                    )
+                )
+            ).one()
+            await extraction.route(
+                connection,
+                file_version_id=version_id,
+                media_type=row.media_type,
+                content_hash=row.content_hash,
+                generation=generation,
+            )
+            await connection.commit()
+    finally:
+        await engine.dispose()
 
 
 async def rows_in(database_url: str, table: Any, *columns: str) -> list[dict[str, Any]]:

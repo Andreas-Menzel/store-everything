@@ -119,6 +119,12 @@ def test_an_extractor_container_analyses_an_uploaded_file(identity_settings: Set
             assert created["extraction_status"] == "pending"
 
             finished = _await_status(admin, str(created["id"]), "indexed")
+
+            # A real container's labels, mapped by the core on the way in: nothing in this
+            # instance's vocabulary matched them, so both arrive as quarantined suggestions with
+            # the run that proposed them (F-003/FR-11, FR-12).
+            tagged = admin.get(f"{API_V1_PREFIX}/files/{created['id']}/tags")
+            tagged.raise_for_status()
         finally:
             worker.stop()
             thread.join(timeout=10)
@@ -132,6 +138,13 @@ def test_an_extractor_container_analyses_an_uploaded_file(identity_settings: Set
         assert run["started_at"] is not None
         assert run["finished_at"] is not None
         assert run["error"] is None
+
+        claimed = {one["name"]: one for one in tagged.json()}
+        assert set(claimed) == {"reference-checked", "text"}
+        assert claimed["text"]["provenance"] == "auto"
+        assert claimed["text"]["status"] == "suggested"
+        assert claimed["text"]["source"]["extractor"] == EXTRACTOR_ID
+        assert claimed["text"]["source"]["confidence"] == 0.9
 
 
 def test_an_extractor_that_cannot_read_its_input_says_so_permanently(

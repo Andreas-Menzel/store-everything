@@ -1432,8 +1432,27 @@ tag = Table(
         ForeignKey("app_user.id", ondelete="RESTRICT"),
         nullable=True,
     ),
+    # Which run proposed it, for a `suggested` tag: the review queue's "where did this word come
+    # from" (F-003/FR-12). SET NULL rather than CASCADE — a suggestion outlives the run that
+    # made it, because deleting the word would undo an admin's pending decision.
+    Column(
+        "suggested_by_run_id",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("reviewed_at", DateTime(timezone=True), nullable=True),
+    Column(
+        "reviewed_by",
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
     _created_at(),
     CheckConstraint(one_of("status", TAG_STATUSES), name="status_known"),
+    # A decision has a decider and a moment, or neither: half a review record would be a
+    # question nobody can answer later.
+    CheckConstraint("(reviewed_at IS NULL) = (reviewed_by IS NULL)", name="review_is_whole"),
     # The review queue's read: every tag awaiting a decision (F-003/FR-12).
     Index("ix_tag_status", "status"),
 )
@@ -1555,6 +1574,49 @@ tag rejected. One row per pair, because a person's position on a tag is one posi
 On the *file*, not on a version: a tag describes the thing, so it survives a new upload of the
 same document (02 § file — tags attach to the UUID). Machine claims go the other way, per
 version, because they describe bytes that a new version replaces."""
+
+
+file_auto_tag = Table(
+    "file_auto_tag",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    # Per **version**, unlike curation: a machine's claim describes bytes, and a new version is
+    # different bytes. The user's word is about the file and outlives every upload.
+    Column(
+        "file_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("file_version.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "run_id",
+        UUID(as_uuid=True),
+        ForeignKey("extraction_run.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("tag_id", UUID(as_uuid=True), ForeignKey("tag.id", ondelete="CASCADE"), nullable=False),
+    Column("generation", Integer, nullable=False, server_default=text(str(FIRST_GENERATION))),
+    Column("confidence", Float, nullable=True),
+    _created_at(),
+    CheckConstraint(
+        "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="confidence_is_a_ratio"
+    ),
+    # One claim per tag per run: an extractor listing `cat` twice in one envelope means it once.
+    # The *run* is in the key rather than only the version, because two extractors may both see
+    # a cat and a generation swap must not take the other one's word away with it.
+    UniqueConstraint("file_version_id", "tag_id", "run_id"),
+    Index("ix_file_auto_tag_file_version_id", "file_version_id"),
+    Index("ix_file_auto_tag_tag_id", "tag_id"),
+    Index("ix_file_auto_tag_run_id", "run_id"),
+)
+"""**A machine's claim that a tag applies** — the fourth derived table, and the same shape as the
+other three: the version it describes and the run that produced it
+([02 § invariants](../../../specs/02-domain-model.md#invariants) #3).
+
+Separate from `file_tag` on purpose. Reprocessing replaces a generation's output by deleting this
+run's rows and writing the new ones (ADR-0004), and the table it must never touch is the one
+holding what a person said — so that table is not in this path at all. Confidence lives here
+because it is a property of the claim, not of the tag."""
 
 
 folder_tag = Table(

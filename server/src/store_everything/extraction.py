@@ -32,7 +32,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import operations, results
+from store_everything import operations, results, tagging
 from store_everything.derived import DerivedStore
 from store_everything.extractors import Manifest
 from store_everything.ids import new_id
@@ -43,6 +43,7 @@ from store_everything.tables import (
     derived_asset,
     extraction_run,
     extractor,
+    file_auto_tag,
     file_version,
     metadata_entry,
     operation,
@@ -201,9 +202,14 @@ async def route(
     3. **A derived input** — one job per matching asset, because a video's fifty keyframes are
        fifty pieces of work (12 § job atomicity).
     """
+    # Keyed by *this* generation's work, which is what makes the idempotence above true: a run
+    # from an earlier generation is history, not a reason to skip the reprocessing that was
+    # asked for. Without the generation in the key, `route(generation=2)` would look at
+    # generation 1's rows and conclude there was nothing to do (F-003/FR-6, F-009).
     existing = {
         (run.extractor_id, run.input_asset_id): run
         for run in await runs_for(connection, file_version_id)
+        if run.generation == generation
     }
     assets = await _assets_of(connection, file_version_id)
     created: list[Run] = []
@@ -529,6 +535,9 @@ async def _reuse(
             ),
         ),
         (segment, ("ordinal", "text", "anchor_kind", "anchor", "confidence", "language")),
+        # The claims come along too: identical bytes mean the same tags, and a duplicate file
+        # that arrived with metadata but no tags would be a hole a reader cannot explain.
+        (file_auto_tag, ("tag_id", "confidence")),
         (
             derived_asset,
             (
@@ -562,6 +571,10 @@ async def _reuse(
             # One statement per table rather than per row: a long document is thousands of
             # segments, and reuse exists to be cheaper than the work it replaces.
             await connection.execute(insert(table), rows)
+
+    # The copy is of somebody else's analysis, and this file may have refused some of it: a tag
+    # the user rejected here must not arrive through the back door (F-003/FR-5).
+    await tagging.drop_rejected_claims(connection, run_id=run_id)
 
     _logger.info("reused run %s for version %s (%s)", donor, file_version_id, extractor_id)
     found = await get_run(connection, run_id)
@@ -870,6 +883,7 @@ async def complete(
     applied = await results.apply(
         connection,
         run_id=run.id,
+        file_id=version.file_id,
         file_version_id=run.file_version_id,
         source_hash=version.content_hash,
         generation=run.generation,

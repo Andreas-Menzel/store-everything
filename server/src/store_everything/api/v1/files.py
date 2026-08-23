@@ -39,6 +39,7 @@ from store_everything import (
     names,
     results,
     tagging,
+    tags,
     trash,
     workspaces,
 )
@@ -483,6 +484,44 @@ async def tag_file(
     return AppliedTag.of(applied)
 
 
+@router.post(
+    "/{file_id}/tags/{tag_id}/confirm",
+    summary="Confirm a machine's tag",
+    response_model=AppliedTag,
+    responses={
+        404: {"description": "No such file, or nothing claims that tag on it"},
+        409: {"description": "That tag is not part of the vocabulary yet"},
+    },
+)
+async def confirm_file_tag(
+    file_id: UUID,
+    tag_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> AppliedTag:
+    """Agree with an `auto` tag (F-003/FR-4): from here it is user truth.
+
+    The difference that matters is not cosmetic — a confirmed tag survives every reprocessing,
+    because what carries it is a person's record rather than a generation's output. The model's
+    stamp stays visible alongside, so "which detector found this, and how sure was it" remains
+    answerable after the fact.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    try:
+        applied = await tagging.confirm_on_file(
+            connection,
+            file_id=found.id,
+            tag_id=tag_id,
+            user_id=credential.user.id,
+            actor=Actor.user(credential.user.id),
+        )
+    except (tagging.NothingToConfirmError, tags.UnknownTagError) as absent:
+        raise not_found() from absent
+    except tagging.NotVocabularyError as refused:
+        raise not_vocabulary(refused) from refused
+    return AppliedTag.of(applied)
+
+
 @router.delete(
     "/{file_id}/tags/{tag_id}",
     summary="Remove a tag from a file",
@@ -495,10 +534,19 @@ async def untag_file(
     credential: CurrentCredential,
     connection: DatabaseConnection,
 ) -> None:
-    """Take a tag off a file. `404` when the file does not carry it — there is nothing to undo."""
+    """Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.
+
+    Removing a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,
+    so no later generation puts the word back. Removing one a person applied is just a removal —
+    there is nothing to suppress.
+    """
     found, _ = await readable(connection, file_id=file_id, credential=credential)
     removed = await tagging.remove_from_file(
-        connection, file_id=found.id, tag_id=tag_id, actor=Actor.user(credential.user.id)
+        connection,
+        file_id=found.id,
+        tag_id=tag_id,
+        user_id=credential.user.id,
+        actor=Actor.user(credential.user.id),
     )
     if not removed:
         raise not_found()

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, ApproveTagData, ApproveTagErrors, ApproveTagResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, ConfirmFileTagData, ConfirmFileTagErrors, ConfirmFileTagResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RejectTagData, RejectTagErrors, RejectTagResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -455,9 +455,25 @@ export const tagFile = <ThrowOnError extends boolean = false>(options: Options<T
 });
 
 /**
+ * Confirm a machine's tag
+ *
+ * Agree with an `auto` tag (F-003/FR-4): from here it is user truth.
+ *
+ * The difference that matters is not cosmetic — a confirmed tag survives every reprocessing,
+ * because what carries it is a person's record rather than a generation's output. The model's
+ * stamp stays visible alongside, so "which detector found this, and how sure was it" remains
+ * answerable after the fact.
+ */
+export const confirmFileTag = <ThrowOnError extends boolean = false>(options: Options<ConfirmFileTagData, ThrowOnError>): RequestResult<ConfirmFileTagResponses, ConfirmFileTagErrors, ThrowOnError> => (options.client ?? client).post<ConfirmFileTagResponses, ConfirmFileTagErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags/{tag_id}/confirm', ...options });
+
+/**
  * Remove a tag from a file
  *
  * Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.
+ *
+ * Removing a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,
+ * so no later generation puts the word back. Removing one a person applied is just a removal —
+ * there is nothing to suppress.
  */
 export const untagFile = <ThrowOnError extends boolean = false>(options: Options<UntagFileData, ThrowOnError>): RequestResult<UntagFileResponses, UntagFileErrors, ThrowOnError> => (options.client ?? client).delete<UntagFileResponses, UntagFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags/{tag_id}', ...options });
 
@@ -573,3 +589,25 @@ export const mergeTag = <ThrowOnError extends boolean = false>(options: Options<
         ...options.headers
     }
 });
+
+/**
+ * Admit a suggested tag to the vocabulary
+ *
+ * Approve a machine's proposal (F-003/FR-12): the word becomes vocabulary.
+ *
+ * Nothing about the files changes — the claims recorded against it were always there, and
+ * approving is what makes them searchable, completable and countable. That is the whole point
+ * of quarantining rather than dropping: a suggestion keeps its evidence while it waits.
+ */
+export const approveTag = <ThrowOnError extends boolean = false>(options: Options<ApproveTagData, ThrowOnError>): RequestResult<ApproveTagResponses, ApproveTagErrors, ThrowOnError> => (options.client ?? client).post<ApproveTagResponses, ApproveTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}/approve', ...options });
+
+/**
+ * Turn a suggested tag down
+ *
+ * Turn a proposal down, and keep the refusal.
+ *
+ * The claims go with it; the row and its name stay as a **suppression record**, so a later run
+ * proposing the same word finds it already refused instead of creating the suggestion again
+ * (ADR-0006). That is why this is not a delete.
+ */
+export const rejectTag = <ThrowOnError extends boolean = false>(options: Options<RejectTagData, ThrowOnError>): RequestResult<RejectTagResponses, RejectTagErrors, ThrowOnError> => (options.client ?? client).post<RejectTagResponses, RejectTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}/reject', ...options });

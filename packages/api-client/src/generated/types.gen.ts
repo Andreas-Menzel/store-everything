@@ -35,6 +35,7 @@ export type AppliedTag = {
      * User
      */
     user: string | null;
+    source?: TagSource | null;
     /**
      * Created At
      */
@@ -1018,6 +1019,18 @@ export type TagDetail = {
      * Created By
      */
     created_by: string | null;
+    /**
+     * Suggested By Run
+     */
+    suggested_by_run?: string | null;
+    /**
+     * Reviewed At
+     */
+    reviewed_at?: string | null;
+    /**
+     * Reviewed By
+     */
+    reviewed_by?: string | null;
 };
 
 /**
@@ -1057,6 +1070,37 @@ export type TagReference = {
      * Name
      */
     name: string;
+};
+
+/**
+ * TagSource
+ *
+ * Which run claimed a tag, and how sure it was — the full stamp F-003/FR-3 asks for.
+ *
+ * The version and model are separate fields on purpose: the same detector at a newer model
+ * version is a different claim, and reprocessing eligibility is decided on exactly that.
+ */
+export type TagSource = {
+    /**
+     * Extractor
+     */
+    extractor: string;
+    /**
+     * Extractor Version
+     */
+    extractor_version: string | null;
+    /**
+     * Model Version
+     */
+    model_version: string | null;
+    /**
+     * Generation
+     */
+    generation: number;
+    /**
+     * Confidence
+     */
+    confidence: number | null;
 };
 
 /**
@@ -2901,6 +2945,48 @@ export type TagFileResponses = {
 
 export type TagFileResponse = TagFileResponses[keyof TagFileResponses];
 
+export type ConfirmFileTagData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/tags/{tag_id}/confirm';
+};
+
+export type ConfirmFileTagErrors = {
+    /**
+     * No such file, or nothing claims that tag on it
+     */
+    404: unknown;
+    /**
+     * That tag is not part of the vocabulary yet
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ConfirmFileTagError = ConfirmFileTagErrors[keyof ConfirmFileTagErrors];
+
+export type ConfirmFileTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: AppliedTag;
+};
+
+export type ConfirmFileTagResponse = ConfirmFileTagResponses[keyof ConfirmFileTagResponses];
+
 export type UntagFileData = {
     body?: never;
     path: {
@@ -3241,3 +3327,87 @@ export type MergeTagResponses = {
 };
 
 export type MergeTagResponse = MergeTagResponses[keyof MergeTagResponses];
+
+export type ApproveTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}/approve';
+};
+
+export type ApproveTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * That tag is not a pending suggestion
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApproveTagError = ApproveTagErrors[keyof ApproveTagErrors];
+
+export type ApproveTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type ApproveTagResponse = ApproveTagResponses[keyof ApproveTagResponses];
+
+export type RejectTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}/reject';
+};
+
+export type RejectTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * That tag is not a pending suggestion
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RejectTagError = RejectTagErrors[keyof RejectTagErrors];
+
+export type RejectTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type RejectTagResponse = RejectTagResponses[keyof RejectTagResponses];

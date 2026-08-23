@@ -2131,13 +2131,73 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/tags/{tag_id}/confirm": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Confirm a machine's tag",
+        "description": "Agree with an `auto` tag (F-003/FR-4): from here it is user truth.\n\nThe difference that matters is not cosmetic — a confirmed tag survives every reprocessing,\nbecause what carries it is a person's record rather than a generation's output. The model's\nstamp stays visible alongside, so \"which detector found this, and how sure was it\" remains\nanswerable after the fact.",
+        "operationId": "confirm_file_tag",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedTag"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or nothing claims that tag on it"
+          },
+          "409": {
+            "description": "That tag is not part of the vocabulary yet"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/tags/{tag_id}": {
       "delete": {
         "tags": [
           "files"
         ],
         "summary": "Remove a tag from a file",
-        "description": "Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.",
+        "description": "Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.\n\nRemoving a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,\nso no later generation puts the word back. Removing one a person applied is just a removal —\nthere is nothing to suppress.",
         "operationId": "untag_file",
         "parameters": [
           {
@@ -2618,6 +2678,112 @@
           }
         }
       }
+    },
+    "/api/v1/tags/{tag_id}/approve": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Admit a suggested tag to the vocabulary",
+        "description": "Approve a machine's proposal (F-003/FR-12): the word becomes vocabulary.\n\nNothing about the files changes — the claims recorded against it were always there, and\napproving is what makes them searchable, completable and countable. That is the whole point\nof quarantining rather than dropping: a suggestion keeps its evidence while it waits.",
+        "operationId": "approve_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "That tag is not a pending suggestion"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag_id}/reject": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Turn a suggested tag down",
+        "description": "Turn a proposal down, and keep the refusal.\n\nThe claims go with it; the row and its name stay as a **suppression record**, so a later run\nproposing the same word finds it already refused instead of creating the suggestion again\n(ADR-0006). That is why this is not a delete.",
+        "operationId": "reject_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "That tag is not a pending suggestion"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2662,6 +2828,16 @@
               }
             ],
             "title": "User"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "type": "string",
@@ -4464,6 +4640,42 @@
               }
             ],
             "title": "Created By"
+          },
+          "suggested_by_run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested By Run"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
           }
         },
         "additionalProperties": false,
@@ -4539,6 +4751,62 @@
           "name"
         ],
         "title": "TagReference"
+      },
+      "TagSource": {
+        "properties": {
+          "extractor": {
+            "type": "string",
+            "title": "Extractor"
+          },
+          "extractor_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor Version"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "extractor",
+          "extractor_version",
+          "model_version",
+          "generation",
+          "confidence"
+        ],
+        "title": "TagSource",
+        "description": "Which run claimed a tag, and how sure it was — the full stamp F-003/FR-3 asks for.\n\nThe version and model are separate fields on purpose: the same detector at a newer model\nversion is a different claim, and reprocessing eligibility is decided on exactly that."
       },
       "TagSummary": {
         "properties": {
