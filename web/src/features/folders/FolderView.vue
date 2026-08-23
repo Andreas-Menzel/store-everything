@@ -16,6 +16,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
+import TagList from '@/features/tags/TagList.vue';
 import UploadPanel from '@/features/upload/UploadPanel.vue';
 import { AppAlert, AppButton, AppCard, AppEmpty, AppSpinner, toFailure } from '@/shared';
 
@@ -156,6 +157,14 @@ async function refresh(): Promise<void> {
             Show more
           </AppButton>
         </div>
+      </AppCard>
+
+      <AppCard title="Tags">
+        <p class="mb-3 text-sm text-(--color-ink-muted)">
+          These describe the folder itself. Tagging a folder “tax” does not make everything inside
+          it a tax document — a file keeps its own tags.
+        </p>
+        <TagList :subject="{ kind: 'folder', id: id }" />
       </AppCard>
 
       <UploadPanel

@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/vue-query';
 import { computed } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
+import TagList from '@/features/tags/TagList.vue';
 import { AppAlert, AppCard, AppSpinner, toFailure } from '@/shared';
 
 const route = useRoute();
@@ -104,6 +105,10 @@ const extraction = computed(() => {
           Download
         </a>
       </template>
+    </AppCard>
+
+    <AppCard class="mt-4" title="Tags">
+      <TagList :subject="{ kind: 'file', id: id }" />
     </AppCard>
 
     <p class="mt-4 text-xs">

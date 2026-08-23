@@ -50,4 +50,19 @@ describe('toFailure', { tags: ['@F-027/FR-8'] }, () => {
     expect(isUnauthenticated(403)).toBe(false);
     expect(isUnauthenticated(undefined)).toBe(false);
   });
+
+  it('leaves an already-parsed failure alone', { tags: ['@F-027/FR-8'] }, () => {
+    // A query function throws the failure it made, and templates render `toFailure(error)`. Read
+    // as a problem document a second time, the field errors would vanish — they are `errors` on
+    // the wire and `fields` here — and the surface would show "something is invalid" with no
+    // word about what.
+    const once = toFailure({
+      title: 'Validation failed',
+      status: 422,
+      errors: [{ detail: 'no tag goes by that name', pointer: '/name' }],
+    });
+
+    expect(toFailure(once)).toEqual(once);
+    expect(toFailure(once).fields).toHaveLength(1);
+  });
 });

@@ -45,6 +45,11 @@ export function createAppRouter(cache: QueryClient): Router {
         component: () => import('@/features/files/FileView.vue'),
       },
       {
+        path: '/tags',
+        name: 'tags',
+        component: () => import('@/features/tags/TaxonomyView.vue'),
+      },
+      {
         path: '/docs',
         name: 'docs',
         component: () => import('@/features/docs/DocsView.vue'),
