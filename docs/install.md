@@ -335,11 +335,16 @@ transcription. Installing one is always the same three steps, and the first offi
 curl -X POST https://YOUR-HOST/api/v1/extractors \
   -H 'Content-Type: application/json' -b cookies.txt \
   -d '{"id":"preview-gen"}'
-# → put the credential in .env as SE_PREVIEW_GEN_TOKEN, then: docker compose up -d
+curl -X POST https://YOUR-HOST/api/v1/extractors \
+  -H 'Content-Type: application/json' -b cookies.txt \
+  -d '{"id":"pdf-pages"}'
+# → put the credentials in .env as SE_PREVIEW_GEN_TOKEN and SE_PDF_PAGES_TOKEN
+# → docker compose up -d
 ```
 
-Until it runs, files are stored, searchable by name and readable — they simply have no
-thumbnails, and listings say so per row rather than showing broken images.
+Until they run, files are stored, searchable by name and readable — they simply have no
+thumbnails and no page images, and the API says so per file rather than leaving a client to
+discover it from a broken image.
 
 **1. Provision its id and mint its credential.** As an administrator:
 

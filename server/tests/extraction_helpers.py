@@ -213,6 +213,7 @@ async def runs_in(database_url: str) -> list[dict[str, Any]]:
                         extraction_run.c.file_version_id,
                         extraction_run.c.state,
                         extraction_run.c.generation,
+                        extraction_run.c.variant,
                         extraction_run.c.extractor_version,
                         extraction_run.c.model_version,
                         extraction_run.c.error,

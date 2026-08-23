@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, ApproveTagData, ApproveTagErrors, ApproveTagResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, ConfirmFileTagData, ConfirmFileTagErrors, ConfirmFileTagResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFileThumbnailData, ReadFileThumbnailErrors, ReadFileThumbnailResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RejectTagData, RejectTagErrors, RejectTagResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, ApproveTagData, ApproveTagErrors, ApproveTagResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, ConfirmFileTagData, ConfirmFileTagErrors, ConfirmFileTagResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFilePageData, ReadFilePageErrors, ReadFilePageResponses, ReadFilePreviewAssetData, ReadFilePreviewAssetErrors, ReadFilePreviewAssetResponses, ReadFilePreviewData, ReadFilePreviewErrors, ReadFilePreviewResponses, ReadFileRenditionData, ReadFileRenditionErrors, ReadFileRenditionResponses, ReadFileRenditionsData, ReadFileRenditionsErrors, ReadFileRenditionsResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFileThumbnailData, ReadFileThumbnailErrors, ReadFileThumbnailResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RejectTagData, RejectTagErrors, RejectTagResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -499,6 +499,56 @@ export const readFileContent = <ThrowOnError extends boolean = false>(options: O
  * pretending to be the file.
  */
 export const readFileThumbnail = <ThrowOnError extends boolean = false>(options: Options<ReadFileThumbnailData, ThrowOnError>): RequestResult<ReadFileThumbnailResponses, ReadFileThumbnailErrors, ThrowOnError> => (options.client ?? client).get<ReadFileThumbnailResponses, ReadFileThumbnailErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/thumbnail', ...options });
+
+/**
+ * What can be rendered for this file
+ *
+ * The descriptor: every preview asset this file has, and the URLs to fetch them.
+ *
+ * Deliberately *not* a guess from the media type. A client that renders what this says will
+ * show a 3D model's turntable the day an extractor starts producing one, and will not try to
+ * paint a PDF page for a file that has none.
+ */
+export const readFilePreview = <ThrowOnError extends boolean = false>(options: Options<ReadFilePreviewData, ThrowOnError>): RequestResult<ReadFilePreviewResponses, ReadFilePreviewErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePreviewResponses, ReadFilePreviewErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview', ...options });
+
+/**
+ * One page of a document, rendered
+ *
+ * A page image, rendered on first request and stored (F-028/FR-7).
+ *
+ * Page 1 arrives with the thumbnail; anything else is rendered when somebody asks, which is the
+ * difference between storing three images for a three-page document and storing three hundred
+ * for a book nobody opened past the cover. The first request for a page answers `202` with a
+ * `Retry-After` and queues the work at interactive priority; the second serves the stored bytes.
+ *
+ * A `202` rather than a blocked request: holding an HTTP connection open across a queue, a
+ * lease and a container's render is how a proxy timeout becomes a mystery.
+ */
+export const readFilePage = <ThrowOnError extends boolean = false>(options: Options<ReadFilePageData, ThrowOnError>): RequestResult<ReadFilePageResponses, ReadFilePageErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePageResponses, ReadFilePageErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview/pages/{page}', ...options });
+
+/**
+ * One preview asset by id
+ *
+ * Whatever the descriptor pointed at — an image preview today, a plugin's kind tomorrow.
+ */
+export const readFilePreviewAsset = <ThrowOnError extends boolean = false>(options: Options<ReadFilePreviewAssetData, ThrowOnError>): RequestResult<ReadFilePreviewAssetResponses, ReadFilePreviewAssetErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePreviewAssetResponses, ReadFilePreviewAssetErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview/assets/{asset_id}', ...options });
+
+/**
+ * Alternative downloadable forms of this file
+ *
+ * What else this file can be downloaded as (F-028/FR-8, ADR-0008).
+ *
+ * A rendition is the whole file in another form — a searchable PDF, a subtitled video — and it
+ * never replaces the original: `/content` serves the bytes that were uploaded, always (FR-9).
+ */
+export const readFileRenditions = <ThrowOnError extends boolean = false>(options: Options<ReadFileRenditionsData, ThrowOnError>): RequestResult<ReadFileRenditionsResponses, ReadFileRenditionsErrors, ThrowOnError> => (options.client ?? client).get<ReadFileRenditionsResponses, ReadFileRenditionsErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/renditions', ...options });
+
+/**
+ * Download one rendition
+ *
+ * The rendition's bytes, as a download. The original is never served from here.
+ */
+export const readFileRendition = <ThrowOnError extends boolean = false>(options: Options<ReadFileRenditionData, ThrowOnError>): RequestResult<ReadFileRenditionResponses, ReadFileRenditionErrors, ThrowOnError> => (options.client ?? client).get<ReadFileRenditionResponses, ReadFileRenditionErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/renditions/{kind}', ...options });
 
 /**
  * Rename or move a file

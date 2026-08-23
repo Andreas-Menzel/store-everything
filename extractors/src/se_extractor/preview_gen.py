@@ -197,7 +197,7 @@ def _from_pdf(source: Path) -> tuple[pyvips.Image, list[dict[str, Any]]]:
     except pdfium.PdfiumError as broken:
         raise PermanentFailure(f"this PDF cannot be rendered: {broken}") from broken
 
-    image = _from_bitmap(bitmap)
+    image = bitmap_to_image(bitmap)
     return image, [_dimensions(image.width, image.height), _page_count(pages)]
 
 
@@ -206,7 +206,7 @@ def _pdf_scale() -> float:
     return max(THUMBNAIL_SIZES) / 612
 
 
-def _from_bitmap(bitmap: Any) -> pyvips.Image:
+def bitmap_to_image(bitmap: Any) -> pyvips.Image:
     """A PDFium bitmap as a libvips image, in RGB.
 
     Two details PDFium's buffer forces: the rows may be padded to a stride wider than the image,

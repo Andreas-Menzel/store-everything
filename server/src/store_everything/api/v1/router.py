@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from store_everything.api import API_V1_PREFIX
 from store_everything.api.v1 import (
     auth,
     extractors,
@@ -27,7 +28,7 @@ from store_everything.api.v1 import (
 )
 from store_everything.security import enforce_request_ceiling, require_auth
 
-API_V1_PREFIX = "/api/v1"
+__all__ = ["API_V1_PREFIX", "build_public_v1_router", "build_v1_router", "openapi_schema"]
 
 
 async def openapi_schema(request: Request) -> JSONResponse:

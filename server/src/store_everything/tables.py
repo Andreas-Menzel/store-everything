@@ -1148,15 +1148,22 @@ extraction_run = Table(
     Column("error", Text, nullable=True),
     _created_at(),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    # One run per (version, extractor, generation, input) — the structural half of "routing is
-    # idempotent", so a re-detected file cannot grow a second run of the same work.
+    # What was *asked for*, when the answer is not "everything this extractor does": `page:3`,
+    # `rendition:searchable-pdf`. NULL is the ordinary case — routing asking an extractor to do
+    # its job over an input — and a value is on-demand work somebody requested (F-028/FR-7,
+    # FR-8). It is part of the key below because two page requests over one PDF are two
+    # different pieces of work, and without it the second would converge onto the first.
+    Column("variant", Text, nullable=True),
+    # One run per (version, extractor, generation, input, variant) — the structural half of
+    # "routing is idempotent", so a re-detected file cannot grow a second run of the same work.
     # `NULLS NOT DISTINCT` is what makes that true for the common case: two runs over a file's
-    # own bytes both carry a NULL input, and PostgreSQL would otherwise consider them different.
+    # own bytes both carry NULLs here, and PostgreSQL would otherwise consider them different.
     UniqueConstraint(
         "file_version_id",
         "extractor_id",
         "generation",
         "input_asset_id",
+        "variant",
         # Named explicitly: the convention's generated name would be 71 characters, and
         # PostgreSQL truncates at 63 — which is a silent rename rather than an error.
         name="uq_extraction_run_one_per_input",

@@ -7,11 +7,12 @@
  * download are the browser's business rather than ours — and the bytes never pass through
  * JavaScript ([F-027/FR-1](../../../features/F-027-web-application-shell.md)).
  */
-import { readFile } from '@store-everything/api-client';
+import { readFile, readFilePreview } from '@store-everything/api-client';
 import { useQuery } from '@tanstack/vue-query';
 import { computed } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
+import PageViewer from '@/features/previews/PageViewer.vue';
 import TagList from '@/features/tags/TagList.vue';
 import { AppAlert, AppCard, AppSpinner, AppThumbnail, toFailure } from '@/shared';
 
@@ -28,6 +29,25 @@ const file = useQuery({
 });
 
 const href = computed(() => `/api/v1/files/${id.value}/content`);
+
+/**
+ * What can be shown for this file, as the server describes it
+ * ([F-028/FR-6](../../../features/F-028-thumbnails-and-previews.md)).
+ *
+ * Asked once per file rather than guessed from the media type: a document's page count and the
+ * URL pattern for one page both come from here, so a viewer for a kind that did not exist when
+ * this shipped needs no change on this side.
+ */
+const preview = useQuery({
+  queryKey: computed(() => ['file', id.value, 'preview']),
+  queryFn: async () => {
+    const { data, error, response } = await readFilePreview({ path: { file_id: id.value } });
+    if (error !== undefined) throw toFailure(error, response?.status);
+    return data;
+  },
+});
+
+const pages = computed(() => preview.data.value?.pages ?? 0);
 
 /**
  * What the analysis status means to somebody looking at their own file.
@@ -118,6 +138,10 @@ const extraction = computed(() => {
           Download
         </a>
       </template>
+    </AppCard>
+
+    <AppCard v-if="pages > 0" class="mb-4" title="Pages">
+      <PageViewer :file-id="id" :version="file.data.value.version" :pages="pages" />
     </AppCard>
 
     <AppCard class="mt-4" title="Tags">

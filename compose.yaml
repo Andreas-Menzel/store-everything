@@ -249,7 +249,42 @@ services:
     cpus: ${PREVIEW_GEN_CPUS:-2}
     stop_grace_period: 10s
 
-# Other extractors are ordinary services on the `extractors` network, shaped exactly like the one
+  # Page images for documents: the eager first page beside every thumbnail, and any other page
+  # when somebody asks for it (09-previews.md, F-028/FR-7). Its own service rather than part of
+  # `preview-gen` because the policies differ — this one answers requests, and a request has
+  # somebody waiting for it.
+  pdf-pages:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-pdf-pages']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_PAGES_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      # Shorter than the others: this extractor exists to answer requests, so an idle poll that
+      # takes a while to notice new work is felt directly.
+      SE_CLAIM_WAIT_SECONDS: '10'
+      VIPS_CONCURRENCY: ${PDF_PAGES_CONCURRENCY:-2}
+
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PDF_PAGES_MEMORY:-1g}
+    cpus: ${PDF_PAGES_CPUS:-2}
+    stop_grace_period: 10s
+
+# Other extractors are ordinary services on the `extractors` network, shaped exactly like the two
 # above — see `compose.extractor-example.yaml` for the annotated template and docs/install.md for
 # how to install one. The rest of the official set arrives over phase 2.
 
