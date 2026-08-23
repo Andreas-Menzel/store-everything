@@ -353,6 +353,93 @@ async def test_a_namesake_child_is_merged_where_its_own_evidence_decided_nothing
         assert (await latest_run(client, workspace))["folders_ambiguous"] == 0
 
 
+@pytest.mark.fr("F-015/FR-7")
+async def test_a_folder_with_a_history_of_deletions_is_still_rename_detectable(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The evidence is what the folder held *when the run started*, not what it ever held.
+
+    A trashed row keeps the folder it was in, so counting every state counted deletions from
+    months ago against the majority. A folder that has lost more files over its life than it
+    currently holds could then never reach one — and it is the ordinary shape of a working
+    directory. The consequence was not a wrong number but a permanent one: every external rename
+    of that folder created a new identity and orphaned its grants and tags, on every pass,
+    forever.
+
+    Here three of four photos are deleted on the storage and reconciled by their own scan, so
+    they are old news by the time the directory is renamed. One file is left, and one file going
+    to one directory is a majority of what the folder held.
+    """
+    tree = tmp_path / "nas"
+    build(
+        tree,
+        {
+            "Album/one.jpg": b"the first",
+            "Album/two.jpg": b"the second",
+            "Album/three.jpg": b"the third",
+            "Album/four.jpg": b"the fourth",
+        },
+    )
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        album = await folder_at(identity_database, workspace, "Album")
+        assert album is not None
+
+        for gone in ("one.jpg", "two.jpg", "three.jpg"):
+            (tree / "Album" / gone).unlink()
+        await rescan(client, workspace, identity_database, identity_settings)
+        assert len(await read_events(identity_database, action="file.trashed")) == 3
+
+        (tree / "Album").rename(tree / "Photos")
+        await rescan(client, workspace, identity_database, identity_settings)
+
+        after = await summary(client, album.id)
+        assert after["id"] == str(album.id), "the folder kept the identity its grants hang off"
+        assert after["path"] == "Photos"
+        run = await latest_run(client, workspace)
+        assert (run["folders_transferred"], run["folders_ambiguous"]) == (1, 0)
+
+
+@pytest.mark.fr("F-015/FR-7")
+async def test_files_this_run_trashed_still_count_against_the_majority(
+    identity_settings: Settings, identity_database: str, tmp_path: Path
+) -> None:
+    """The other side of the same line, so the fix cannot become "ignore every trashed row".
+
+    Deleting most of a directory's files *and* renaming it between one scan and the next leaves
+    this run's sweep to trash them — and those files were in the folder when the run started, so
+    they are still evidence about it. One file out of four turning up somewhere is not a majority
+    of four, and FR-7's answer to weak evidence is a new identity, not a guess.
+    """
+    tree = tmp_path / "nas"
+    build(
+        tree,
+        {
+            "Album/one.jpg": b"the first",
+            "Album/two.jpg": b"the second",
+            "Album/three.jpg": b"the third",
+            "Album/four.jpg": b"the fourth",
+        },
+    )
+
+    async with adopt(identity_settings, identity_database, tree) as (client, workspace):
+        await scan_pending(identity_database, identity_settings)
+        album = await folder_at(identity_database, workspace, "Album")
+        assert album is not None
+
+        # One pass sees both: three files gone and the directory under a new name.
+        (tree / "Album").rename(tree / "Photos")
+        for gone in ("one.jpg", "two.jpg", "three.jpg"):
+            (tree / "Photos" / gone).unlink()
+        await rescan(client, workspace, identity_database, identity_settings)
+
+        assert (await summary(client, album.id))["path"] == "Album", "no majority, no transfer"
+        fresh = await folder_at(identity_database, workspace, "Photos")
+        assert fresh is not None and fresh.id != album.id
+        assert (await latest_run(client, workspace))["folders_transferred"] == 0
+
+
 @pytest.mark.fr("F-015/FR-7", "F-001/FR-6")
 async def test_a_merged_child_takes_the_files_of_the_row_it_replaces(
     identity_settings: Settings, identity_database: str, tmp_path: Path

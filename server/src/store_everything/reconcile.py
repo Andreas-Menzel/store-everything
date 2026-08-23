@@ -48,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import (
@@ -67,6 +67,7 @@ from store_everything.blobs import BlobStore
 from store_everything.events import Actor
 from store_everything.tables import file as file_table
 from store_everything.tables import folder as folder_table
+from store_everything.tables import trash_entry
 
 _logger = logging.getLogger(__name__)
 
@@ -458,20 +459,35 @@ async def _known_content(
     connection: AsyncConnection,
     *,
     folder_id: UUID,
+    run_id: UUID,
     started_at: datetime,
     moves: list[scans.Relocation],
 ) -> tuple[int, int]:
     """What this folder held when the run started: files, then child folders.
 
     The denominator the majority is measured against. Both halves are needed because what left is
-    no longer filed here and what stayed never appears in the relocation counts. Files are counted
-    in **every** state: a file the sweep trashed was in this folder and is evidence about it.
+    no longer filed here and what stayed never appears in the relocation counts.
+
+    "When the run started" is the whole of it, and it is not the same as "ever". A trashed row
+    keeps the folder it was in, so counting every state counted deletions from months ago — and a
+    folder whose history of deletions outnumbers what it currently holds could then never reach a
+    majority, so an external rename of it was permanently undetectable and its grants and tags
+    were orphaned every time. What *this* run's sweep trashed does belong here: those files were
+    in the folder when it started and are evidence about it, which is why they are added back
+    rather than filtered out with the rest.
     """
+    trashed_by_this_run = select(trash_entry.c.file_id).where(
+        trash_entry.c.file_id == file_table.c.id, trash_entry.c.batch_id == run_id
+    )
     stayed_files = (
         await connection.execute(
             select(func.count())
             .select_from(file_table)
-            .where(file_table.c.folder_id == folder_id, file_table.c.created_at < started_at)
+            .where(
+                file_table.c.folder_id == folder_id,
+                file_table.c.created_at < started_at,
+                or_(file_table.c.state == "live", trashed_by_this_run.exists()),
+            )
         )
     ).scalar_one()
     stayed_folders = (
@@ -540,7 +556,11 @@ async def _claim(
         return None
 
     known_files, known_folders = await _known_content(
-        connection, folder_id=source_id, started_at=run.started_at, moves=moves
+        connection,
+        folder_id=source_id,
+        run_id=run.id,
+        started_at=run.started_at,
+        moves=moves,
     )
     verdict = _majority(moves, known_files=known_files, known_folders=known_folders)
     if verdict is None:
