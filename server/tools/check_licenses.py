@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SERVER_ROOT = REPO_ROOT / "server"
+#: Every Python package this repository *distributes*. The extractor SDK is one: the reference
+#: extractor image ships it and its dependency, so it is in scope for exactly the reason the
+#: core is (ADR-0016). Development tooling in either package is not.
+PYTHON_ROOTS = (REPO_ROOT / "server", REPO_ROOT / "extractors")
 POLICY_PATH = REPO_ROOT / "license-allowlist.json"
 
 UNKNOWN = "UNKNOWN"
@@ -84,31 +87,32 @@ def _python_license(distribution: str) -> str:
 
 
 def python_dependencies() -> list[Dependency]:
-    """Runtime dependencies of the core service, as the lockfile resolves them."""
-    exported = _run(
-        [
-            "uv",
-            "export",
-            "--no-dev",
-            "--no-emit-project",
-            "--no-hashes",
-            "--no-annotate",
-            "--format",
-            "requirements-txt",
-        ],
-        cwd=SERVER_ROOT,
-    )
-
+    """Runtime dependencies of every distributed Python package, as the lockfiles resolve them."""
     dependencies: list[Dependency] = []
-    for line in exported.splitlines():
-        entry = line.strip()
-        if not entry or entry.startswith("#") or "==" not in entry:
-            continue
-        name, _, remainder = entry.partition("==")
-        name = name.split("[", 1)[0].strip()
-        # `uv export` appends the environment marker: `tzdata==2026.3 ; sys_platform == ...`
-        version = remainder.split(";", 1)[0].strip()
-        dependencies.append(Dependency("python", name, version, _python_license(name)))
+    for root in PYTHON_ROOTS:
+        exported = _run(
+            [
+                "uv",
+                "export",
+                "--no-dev",
+                "--no-emit-project",
+                "--no-hashes",
+                "--no-annotate",
+                "--format",
+                "requirements-txt",
+            ],
+            cwd=root,
+        )
+
+        for line in exported.splitlines():
+            entry = line.strip()
+            if not entry or entry.startswith("#") or "==" not in entry:
+                continue
+            name, _, remainder = entry.partition("==")
+            name = name.split("[", 1)[0].strip()
+            # `uv export` appends the environment marker: `tzdata==2026.3 ; sys_platform == ...`
+            version = remainder.split(";", 1)[0].strip()
+            dependencies.append(Dependency("python", name, version, _python_license(name)))
     return sorted(set(dependencies))
 
 
