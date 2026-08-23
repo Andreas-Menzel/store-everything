@@ -44,6 +44,8 @@ dev = [
     # like anything else. It is here so one test can run the real three-sided arrangement —
     # API, worker, extractor — instead of a mock of the plugin boundary.
     "store-everything-extractors",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.uv.sources]

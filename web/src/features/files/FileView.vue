@@ -13,7 +13,7 @@ import { computed } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import TagList from '@/features/tags/TagList.vue';
-import { AppAlert, AppCard, AppSpinner, toFailure } from '@/shared';
+import { AppAlert, AppCard, AppSpinner, AppThumbnail, toFailure } from '@/shared';
 
 const route = useRoute();
 const id = computed(() => String(route.params.id));
@@ -60,6 +60,19 @@ const extraction = computed(() => {
   <template v-else-if="file.data.value">
     <h1 class="mb-1 text-lg font-semibold">{{ file.data.value.name }}</h1>
     <p class="mb-4 font-mono text-xs text-(--color-ink-muted)">{{ file.data.value.path }}</p>
+
+    <AppCard v-if="file.data.value.has_thumbnail" class="mb-4" title="Preview">
+      <!-- Pinned to this version, so the browser may cache it permanently (F-028/FR-4). The card
+           appears only when the server said there is something to show: a file with nothing to
+           render gets no broken image and no empty frame (FR-3). -->
+      <div class="h-64 w-full max-w-md overflow-hidden rounded-(--radius-control)">
+        <AppThumbnail
+          :src="`/api/v1/files/${id}/thumbnail?size=1024&v=${file.data.value.version}`"
+          :placeholder="file.data.value.placeholder_hash"
+          :alt="`Preview of ${file.data.value.name}`"
+        />
+      </div>
+    </AppCard>
 
     <AppCard title="File">
       <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">

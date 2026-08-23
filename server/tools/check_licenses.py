@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, metadata
 from pathlib import Path
 from typing import Any
 
@@ -58,28 +58,59 @@ def _run(command: list[str], cwd: Path) -> str:
     return result.stdout
 
 
-def _python_license(distribution: str) -> str:
+#: Dumps the licence fields of everything installed, as JSON. Run *inside* each package's own
+#: environment: a dependency of the extractor image is not installed in the core's virtualenv,
+#: and asking the wrong environment answers `UNKNOWN` for a package that states its licence
+#: perfectly well. One script, three fields, no policy — the verdict stays in this file.
+_METADATA_DUMP = """
+import json
+import re
+import re
+from importlib.metadata import distributions
+
+found = {}
+for distribution in distributions():
+    md = distribution.metadata
+    # PEP 503 normalisation, because a wheel calls itself `pydantic_core` while a lockfile
+    # calls it `pydantic-core`, and looking the wrong one up answers "unknown licence".
+    name = re.sub(r"[-_.]+", "-", (md["Name"] or "")).lower()
+    if not name:
+        continue
+    found[name] = {
+        "expression": md.get("License-Expression") or "",
+        "classifiers": [c for c in md.get_all("Classifier") or [] if c.startswith("License ::")],
+        "declared": md.get("License") or "",
+    }
+print(json.dumps(found))
+"""
+
+
+def _normalized(name: str) -> str:
+    """PEP 503's project-name normalisation, so both sides of the lookup spell it the same."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _installed_licences(root: Path) -> dict[str, dict[str, Any]]:
+    """The licence fields of every package installed for one project."""
+    return json.loads(_run(["uv", "run", "--no-sync", "python", "-c", _METADATA_DUMP], cwd=root))
+
+
+def _statement(fields: dict[str, Any] | None) -> str:
     """Best available licence statement, preferring the machine-readable forms."""
-    try:
-        md = metadata(distribution)
-    except PackageNotFoundError:
+    if fields is None:
         return UNKNOWN
 
-    expression = md.get("License-Expression")
+    expression = str(fields.get("expression") or "").strip()
     if expression:
-        return expression.strip()
+        return expression
 
     classifiers = sorted(
-        {
-            classifier.split("::")[-1].strip()
-            for classifier in md.get_all("Classifier") or []
-            if classifier.startswith("License ::")
-        }
+        {str(classifier).split("::")[-1].strip() for classifier in fields.get("classifiers") or []}
     )
     if classifiers:
         return "; ".join(classifiers)
 
-    declared = (md.get("License") or "").strip()
+    declared = str(fields.get("declared") or "").strip()
     if declared:
         # Some projects paste the whole licence text into this field.
         return declared.splitlines()[0][:100]
@@ -90,11 +121,17 @@ def python_dependencies() -> list[Dependency]:
     """Runtime dependencies of every distributed Python package, as the lockfiles resolve them."""
     dependencies: list[Dependency] = []
     for root in PYTHON_ROOTS:
+        installed = _installed_licences(root)
         exported = _run(
             [
                 "uv",
                 "export",
                 "--no-dev",
+                # Extras included: an optional dependency an official image installs is one this
+                # repository distributes, whatever the manifest calls it. `preview-gen`'s imaging
+                # stack is an extra precisely so third-party SDK users do not inherit it, and it
+                # would be exactly the wrong thing to hide from the licence gate (ADR-0016).
+                "--all-extras",
                 "--no-emit-project",
                 "--no-hashes",
                 "--no-annotate",
@@ -112,7 +149,8 @@ def python_dependencies() -> list[Dependency]:
             name = name.split("[", 1)[0].strip()
             # `uv export` appends the environment marker: `tzdata==2026.3 ; sys_platform == ...`
             version = remainder.split(";", 1)[0].strip()
-            dependencies.append(Dependency("python", name, version, _python_license(name)))
+            licence = _statement(installed.get(_normalized(name)))
+            dependencies.append(Dependency("python", name, version, licence))
     return sorted(set(dependencies))
 
 

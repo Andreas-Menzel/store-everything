@@ -14,6 +14,7 @@ are described in `hostile-names.json` and materialised by the test that needs th
 from __future__ import annotations
 
 import json
+import zlib
 import struct
 import zipfile
 from pathlib import Path
@@ -64,11 +65,107 @@ HOSTILE_NAMES = {
 }
 
 
+#: The image fixture's shape and halves. A 2:1 image, red on the left and blue on the right:
+#: the aspect ratio is what a thumbnail must preserve, and the two flat halves are what a
+#: placeholder must still show after being squeezed into a few dozen bytes.
+IMAGE_WIDTH = 800
+IMAGE_HEIGHT = 400
+IMAGE_LEFT = (203, 32, 39)
+IMAGE_RIGHT = (30, 66, 159)
+
+#: One line per page, each with something a later assertion can find: page 2 carries the pangram
+#: (Latin script, every letter), page 3 the distinctive phrase the text fixtures also use — so
+#: "which page is this phrase on" has an exact answer.
+PDF_PAGES = (
+    "Store Everything fixture page one.",
+    "The quick brown fox jumps over the lazy dog.",
+    "This page mentions xylophone marmalade exactly once.",
+)
+
+
 def write(relative: str, payload: bytes) -> Path:
     path = FIXTURES / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
     return path
+
+
+def _png_chunk(kind: bytes, body: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(body))
+        + kind
+        + body
+        + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    )
+
+
+def two_tone_png() -> bytes:
+    """A valid 8-bit RGB PNG, written by hand so its truth is exact.
+
+    Generated rather than curated (ADR-0015): a photograph would need a licence and would make
+    every assertion approximate, while two flat halves make the interesting questions — did the
+    aspect survive, are the colours where they should be — answerable by looking at one pixel.
+    """
+    header = struct.pack(">II", IMAGE_WIDTH, IMAGE_HEIGHT) + bytes([8, 2, 0, 0, 0])
+    row = bytes(IMAGE_LEFT) * (IMAGE_WIDTH // 2) + bytes(IMAGE_RIGHT) * (IMAGE_WIDTH // 2)
+    # Filter byte 0 (none) per scanline: the smallest thing a decoder must still handle.
+    raw = (b"\x00" + row) * IMAGE_HEIGHT
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(raw, 9))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def three_page_pdf() -> bytes:
+    """A three-page PDF with one line of text per page, assembled object by object.
+
+    Hand-written for the same reason as the PNG, and because the *positions* are the point: a
+    page anchor is only checkable against a document whose pages are known one by one. Letter
+    size, one built-in font, no compression — a fixture a person can read in a hex dump.
+    """
+    pages = len(PDF_PAGES)
+    # Object numbers: 1 catalog, 2 page tree, 3 font, then a page and a stream per page.
+    page_ids = [4 + index * 2 for index in range(pages)]
+    stream_ids = [identifier + 1 for identifier in page_ids]
+
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        (
+            "<< /Type /Pages /Count %d /Kids [%s] >>"
+            % (pages, " ".join(f"{identifier} 0 R" for identifier in page_ids))
+        ).encode("ascii"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    for index, line in enumerate(PDF_PAGES):
+        objects.append(
+            (
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
+                % stream_ids[index]
+            ).encode("ascii")
+        )
+        content = f"BT /F1 24 Tf 72 700 Td ({line}) Tj ET\n".encode("ascii")
+        objects.append(
+            b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"endstream"
+        )
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode("ascii") + body + b"\nendobj\n"
+
+    start_xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode("ascii")
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start_xref}\n%%EOF\n"
+    ).encode("ascii")
+    return bytes(out)
 
 
 def zip_slip_archive() -> bytes:
@@ -103,6 +200,8 @@ def oversized_dimensions_png() -> bytes:
 def main() -> int:
     write("text/known-phrases.txt", KNOWN_PHRASES.encode("utf-8"))
     write("text/sample.md", MARKDOWN_SAMPLE.encode("utf-8"))
+    write("images/two-tone.png", two_tone_png())
+    write("documents/three-pages.pdf", three_page_pdf())
     write("adversarial/zero-byte.bin", b"")
     write("adversarial/truncated.png", truncated_png())
     write("adversarial/oversized-dimensions.png", oversized_dimensions_png())

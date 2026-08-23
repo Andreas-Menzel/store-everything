@@ -29,6 +29,9 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # The image's default entrypoint is `preview-gen`, the extractor a real instance runs. This
+    # overlay is about the *double*, so it names the other one.
+    command: ['se-reference-extractor']
     environment:
       # Reachable *only* because the API is the one service that also joins this network.
       SE_CORE_URL: http://api:8000

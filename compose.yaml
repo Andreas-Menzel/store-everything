@@ -205,9 +205,53 @@ services:
     restart: 'no'
     networks: [internal]
 
-# Extractors are ordinary services on the `extractors` network — see
-# `compose.extractor-example.yaml` for a working one, and docs/install.md for how to install it.
-# There are no official extractor images yet; the analysis capabilities arrive over phase 2.
+  # The first official extractor: thumbnails, placeholders and image previews for every file
+  # that has a visual source (09-previews.md, F-028). It is here rather than in an overlay
+  # because a file browser without thumbnails looks broken, so this is part of the default
+  # stack — but it still needs an identity and a credential before it can do anything:
+  #
+  #     POST /api/v1/extractors  {"id": "preview-gen"}   → SE_PREVIEW_GEN_TOKEN in `.env`
+  #
+  # Everything below the network line is the hardening baseline from
+  # `compose.extractor-example.yaml`, which is the template every extractor service copies.
+  preview-gen:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-preview-gen']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PREVIEW_GEN_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      # One long poll rather than sixty short ones: an idle extractor should be quiet.
+      SE_CLAIM_WAIT_SECONDS: '30'
+      # libvips would otherwise size its cache and thread pool to the *host*, not to this
+      # container's limits — the usual way an image resizer becomes the reason a small server
+      # starts swapping.
+      VIPS_CONCURRENCY: ${PREVIEW_GEN_CONCURRENCY:-2}
+
+    # No egress, no database, no proxy: this network has no gateway, and PostgreSQL is not on
+    # it. An extractor's whole world is the extractor API (ADR-0021).
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PREVIEW_GEN_MEMORY:-1g}
+    cpus: ${PREVIEW_GEN_CPUS:-2}
+    stop_grace_period: 10s
+
+# Other extractors are ordinary services on the `extractors` network, shaped exactly like the one
+# above — see `compose.extractor-example.yaml` for the annotated template and docs/install.md for
+# how to install one. The rest of the official set arrives over phase 2.
 
 volumes:
   # Deliberately not switchable to a host path: PostgreSQL refuses a data directory whose

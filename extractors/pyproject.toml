@@ -9,8 +9,20 @@ license = "AGPL-3.0-only"
 # tooling, and every dependency here is one a third-party author inherits from us.
 dependencies = ["httpx>=0.28"]
 
+# What an *official* extractor in this repository needs, as an extra rather than a dependency —
+# for exactly the reason above. A third-party author gets the SDK and none of our imaging stack;
+# the `preview-gen` image asks for it by name (`uv sync --extra preview`).
+#
+# `pyvips[binary]` bundles libvips as a wheel (LGPL-2.1+, used unmodified through its own
+# binding) so neither the image nor a developer's machine needs a system package; `pypdfium2`
+# is PDFium (BSD-3-Clause) the same way. Both licences are recorded in the SBOM like every
+# other dependency (ADR-0016).
+[project.optional-dependencies]
+preview = ["pypdfium2>=5.0.0", "pyvips[binary]>=3.0.0"]
+
 [project.scripts]
 se-reference-extractor = "se_extractor.reference:main"
+se-preview-gen = "se_extractor.preview_gen:main"
 se-conformance = "se_extractor.conformance:main"
 
 [build-system]

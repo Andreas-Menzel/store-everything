@@ -46,7 +46,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install
-        run: uv sync --directory extractors --all-groups --locked
+        run: uv sync --directory extractors --all-groups --all-extras --locked
       - name: Lint
         run: |
           uv run --directory extractors ruff check .
@@ -298,17 +298,16 @@ jobs:
       # cookie same-site by construction (10 § topology, F-027/FR-1).
       - name: Build
         run: docker build -f server/Dockerfile -t store-everything-core:ci .
-      # The reference extractor's image, held to the same baseline (05 § container
-      # requirements): it is the shape every official extractor image follows, so a
-      # regression here would be inherited by all of them.
-      - name: Build the reference extractor
-        run: docker build -f extractors/Dockerfile -t store-everything-reference-extractor:ci extractors
+      # The extractors' image, held to the same baseline (05 § container requirements): every
+      # official extractor runs from it, so a regression here would be inherited by all of them.
+      - name: Build the extractors image
+        run: docker build -f extractors/Dockerfile -t store-everything-extractors:ci extractors
       # The virtualenv is built at image-build time, so a package installer in the
       # runtime is unnecessary — and a liability: pip carries its own vendored
       # dependency tree, which is where this image's only CVEs came from.
       - name: Runtimes carry no package installer
         run: |
-          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+          for image in store-everything-core:ci store-everything-extractors:ci; do
             if docker run --rm --entrypoint sh "$image" \
                 -c 'command -v pip || command -v pip3'; then
               echo "::error::pip is present in $image"
@@ -317,10 +316,16 @@ jobs:
           done
       - name: Extractor images run unprivileged
         run: |
-          if [ "$(docker run --rm --entrypoint id store-everything-reference-extractor:ci -u)" = "0" ]; then
-            echo '::error::the reference extractor image runs as root'
+          if [ "$(docker run --rm --entrypoint id store-everything-extractors:ci -u)" = "0" ]; then
+            echo '::error::the extractors image runs as root'
             exit 1
           fi
+      # The image must carry its analysis tooling, not discover at 3am that it does not: an
+      # extractor that cannot import libvips claims jobs and fails every one of them.
+      - name: The extractors image carries its imaging stack
+        run: |
+          docker run --rm --entrypoint python store-everything-extractors:ci -c \
+            'import pyvips, pypdfium2; print(pyvips.version(0), pyvips.version(1))'
       # The core ships none of its development dependencies. Asserted rather than assumed
       # because the extractor SDK is one of them — a path dependency of the dev group, so that
       # one test can drive the real plugin boundary — and an image that shipped it would be
@@ -339,7 +344,7 @@ jobs:
       # Publishing happens from tags only (11-engineering-standards.md § versioning).
       - name: Vulnerability scan
         run: |
-          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+          for image in store-everything-core:ci store-everything-extractors:ci; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
               aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
               --ignore-unfixed --no-progress "$image"

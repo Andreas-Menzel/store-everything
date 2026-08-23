@@ -1,8 +1,14 @@
 # syntax=docker/dockerfile:1
 #
-# The reference extractor image. Small on purpose: it is the shape every official extractor
-# image follows, and the only thing a reader should have to look past to see that shape is the
-# analysis tooling a real one adds.
+# The official extractors' image. It is the shape every extractor image follows, and the only
+# thing a reader should have to look past to see that shape is the analysis tooling a real one
+# adds — here libvips and PDFium, for `preview-gen`.
+#
+# One image, several entrypoints: the SDK, the reference double and `preview-gen` share a package,
+# so a service block picks which one runs (`command: se-preview-gen`). That trade holds while the
+# analysis tooling is a couple of wheels; the first extractor that needs system packages of its
+# own (OCR) is the point to split this into one image per extractor rather than to keep piling
+# apt installs onto everybody's image.
 #
 # The container baseline of 05 § container requirements, in the order the layers appear:
 # non-root, no package installer at runtime, and no capability it does not need. What it does
@@ -21,16 +27,18 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first: this package has one, and it changes far less often than the source.
+# Dependencies first: they change far less often than the source. `--extra preview` is what
+# brings the imaging stack in — the SDK itself keeps exactly one dependency so a third-party
+# author inherits nothing from us but `httpx`.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=README.md,target=README.md \
-    uv sync --locked --no-install-project --no-dev
+    uv sync --locked --no-install-project --no-dev --extra preview
 
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
+    uv sync --locked --no-dev --extra preview
 
 
 FROM python:3.13-slim-bookworm AS runtime
@@ -58,4 +66,7 @@ USER extractor
 
 # Nothing listens: dispatch is poll-based, so this container has no port and needs no inbound
 # route at all (ADR-0020). That is what lets it live on a network with no gateway.
-CMD ["se-reference-extractor"]
+#
+# `preview-gen` by default because it is the one a real instance runs; the reference double is
+# selected by overriding the command, which is what `compose.extractor-example.yaml` does.
+CMD ["se-preview-gen"]

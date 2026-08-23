@@ -31,12 +31,14 @@ from pydantic import Field
 
 from store_everything import (
     aggregates,
+    derived,
     extraction,
     files,
     filestore,
     folders,
     mediatypes,
     names,
+    previews,
     results,
     tagging,
     tags,
@@ -56,7 +58,7 @@ from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
-from store_everything.security import CurrentCredential
+from store_everything.security import CurrentCredential, settings_of
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -122,6 +124,15 @@ class FileSummary(BaseSchema):
     behind `/tags` because a file's tags are part of what a file *is*, and a detail view that
     needed a second request to show them would show it late."""
 
+    placeholder_hash: str | None = None
+    """The same few dozen bytes a listing row carries
+    ([F-028/FR-5](../../../../features/F-028-thumbnails-and-previews.md)), so a detail view can
+    paint the space the image will occupy while it loads."""
+
+    has_thumbnail: bool = False
+    """Whether a thumbnail request will produce one. A client shows a type icon otherwise,
+    rather than learning it from a failed image request (FR-3)."""
+
     @classmethod
     def of(
         cls,
@@ -131,6 +142,8 @@ class FileSummary(BaseSchema):
         extraction_status: extraction.Status,
         trash: TrashInfo | None = None,
         applied: list[tagging.Applied] | None = None,
+        placeholder: str | None = None,
+        has_thumbnail: bool = False,
     ) -> FileSummary:
         return cls(
             id=found.id,
@@ -148,6 +161,8 @@ class FileSummary(BaseSchema):
             modified_at=version.modified_at,
             trash=trash,
             tags=[AppliedTag.of(one) for one in applied or []],
+            placeholder_hash=placeholder,
+            has_thumbnail=has_thumbnail,
         )
 
 
@@ -252,6 +267,8 @@ async def summarize(connection: DatabaseConnection, found: files.File) -> FileSu
         extraction.status_of(await extraction.runs_for(connection, version.id)),
         await _trash_info(connection, found),
         await tagging.tags_of_file(connection, found.id),
+        placeholder=(await previews.placeholders(connection, [version.id])).get(version.id),
+        has_thumbnail=version.id in await previews.with_thumbnails(connection, [version.id]),
     )
 
 
@@ -624,6 +641,115 @@ async def read_file_content(
         content_disposition_type=_disposition(version.media_type),
         headers=headers,
     )
+
+
+@router.get(
+    "/{file_id}/thumbnail",
+    summary="A file's thumbnail at one of the fixed sizes",
+    response_class=FileResponse,
+    response_model=None,
+    responses={
+        404: {"description": "No such file, or nothing to render for it"},
+        410: {"description": "The file is in the trash"},
+    },
+)
+async def read_file_thumbnail(
+    file_id: UUID,
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    size: Annotated[int | None, Query(ge=1, le=8192)] = None,
+    v: UUID | None = None,
+) -> Response:
+    """A WebP thumbnail, at the nearest size **at or above** what was asked for (F-028/FR-1).
+
+    Three things make this endpoint worth its own code rather than a generic asset route:
+
+    - **`size` snaps into a fixed set.** Ask for 300, get 512. No free-form resizing, so the set
+      of derived files stays bounded and every URL is cacheable.
+    - **`v` pins a version, and only then is the answer immutable** (FR-4). A pinned URL can be
+      cached for a year because that version's thumbnail can never change; the unpinned URL
+      follows the current version and must be revalidated.
+    - **No thumbnail is a typed answer, not a broken image** (FR-3). A client gets
+      `problem+json` with its own slug and renders a type icon — never a placeholder graphic
+      pretending to be the file.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    if not found.is_live:
+        raise ProblemException(
+            status=410,
+            slug="gone",
+            title="Gone",
+            detail="This file is in the trash; its thumbnail is not served while it is there.",
+        )
+
+    version = await _pinned_version(connection, found=found, pinned=v)
+    tier = previews.snap(size)
+    stored = await previews.thumbnail(connection, file_version_id=version.id, size=tier)
+    if stored is None:
+        raise ProblemException(
+            status=404,
+            slug="no-thumbnail",
+            title="No thumbnail",
+            detail=(
+                "Nothing has been rendered for this file. Either its type has no visual "
+                "representation, or analysis has not finished yet — `GET /files/{id}/extraction` "
+                "says which."
+            ),
+        )
+
+    store = derived.DerivedStore(settings_of(request).derived_root)
+    absolute = store.path_for(stored.source_hash, stored.name)
+    if not await asyncio.to_thread(absolute.is_file):
+        # The row promises bytes the derived store does not have. Regenerable by definition
+        # (02 § invariants #5), so the honest answer is "not now" rather than a `500`.
+        raise ProblemException(
+            status=404,
+            slug="no-thumbnail",
+            title="No thumbnail",
+            detail="This file's thumbnail is missing from the derived store; it will be rebuilt.",
+        )
+
+    etag = f'"{stored.source_hash}-{tier}"'
+    headers = {
+        "ETag": etag,
+        # The whole reason for a fixed size set: a pinned URL identifies bytes that can never
+        # change, so a client may keep them for a year without asking again (FR-4).
+        "Cache-Control": (
+            "private, max-age=31536000, immutable" if v is not None else "private, no-cache"
+        ),
+        # It is an image *we* produced, but it is still an image: the same policy as content,
+        # because a WebP decoder is a decoder.
+        "Content-Security-Policy": _CONTENT_SECURITY,
+    }
+    if etag in {tag.strip() for tag in (request.headers.get("if-none-match") or "").split(",")}:
+        return Response(status_code=304, headers=headers)
+
+    return FileResponse(
+        absolute,
+        media_type=stored.media_type,
+        content_disposition_type="inline",
+        headers=headers,
+    )
+
+
+async def _pinned_version(
+    connection: DatabaseConnection, *, found: files.File, pinned: UUID | None
+) -> files.Version:
+    """The version a request is about: the one it pinned, or the current one.
+
+    A pinned version has to belong to *this* file — otherwise `?v=` would be a way to read one
+    file's assets through another file's permission check.
+    """
+    if pinned is None:
+        version = await files.current_version(connection, found.id)
+        if version is None:  # pragma: no cover - see `summarize`
+            raise RuntimeError(f"file {found.id} has no current version")
+        return version
+    version = await files.version(connection, pinned)
+    if version is None or version.file_id != found.id:
+        raise not_found()
+    return version
 
 
 def _disposition(media_type: str) -> str:

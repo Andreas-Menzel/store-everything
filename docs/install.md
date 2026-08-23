@@ -327,8 +327,19 @@ that belongs to the app.
 ## Installing an extractor
 
 An **extractor** is a container that analyses files: document text, OCR, thumbnails,
-transcription. The app ships none yet — the analysis capabilities arrive through phase 2 — but the
-mechanism is here, and installing one is always the same three steps.
+transcription. Installing one is always the same three steps, and the first official one —
+`preview-gen`, which renders the thumbnails and placeholders every grid needs — is already in
+`compose.yaml`. It will not start until you have done step 1 for it:
+
+```bash
+curl -X POST https://YOUR-HOST/api/v1/extractors \
+  -H 'Content-Type: application/json' -b cookies.txt \
+  -d '{"id":"preview-gen"}'
+# → put the credential in .env as SE_PREVIEW_GEN_TOKEN, then: docker compose up -d
+```
+
+Until it runs, files are stored, searchable by name and readable — they simply have no
+thumbnails, and listings say so per row rather than showing broken images.
 
 **1. Provision its id and mint its credential.** As an administrator:
 
@@ -343,9 +354,10 @@ same rule personal access tokens follow. An extractor cannot register itself int
 credential is bound to the id you chose here, so a leaked one cannot invent a second extractor or
 stamp another's provenance.
 
-**2. Put the credential in `.env`** and add the service. `compose.extractor-example.yaml` is a
-working one to copy — it runs the reference extractor, which reads each file it is given and
-checks the bytes against the hash the API declared:
+**2. Put the credential in `.env`** and add the service. `preview-gen` in `compose.yaml` is the
+worked example of a real one; `compose.extractor-example.yaml` is the annotated template, running
+the reference extractor, which reads each file it is given and checks the bytes against the hash
+the API declared:
 
 ```bash
 docker compose -f compose.yaml -f compose.extractor-example.yaml up -d

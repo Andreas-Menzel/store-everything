@@ -90,6 +90,14 @@ export type ChildFile = {
     version: string;
     extraction_status: Status;
     /**
+     * Placeholder Hash
+     */
+    placeholder_hash?: string | null;
+    /**
+     * Has Thumbnail
+     */
+    has_thumbnail?: boolean;
+    /**
      * Modified At
      */
     modified_at: string | null;
@@ -419,6 +427,14 @@ export type FileSummary = {
      * Tags
      */
     tags?: Array<AppliedTag>;
+    /**
+     * Placeholder Hash
+     */
+    placeholder_hash?: string | null;
+    /**
+     * Has Thumbnail
+     */
+    has_thumbnail?: boolean;
 };
 
 /**
@@ -3067,6 +3083,51 @@ export type ReadFileContentResponses = {
      * The requested byte range
      */
     206: unknown;
+};
+
+export type ReadFileThumbnailData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: {
+        /**
+         * Size
+         */
+        size?: number | null;
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/thumbnail';
+};
+
+export type ReadFileThumbnailErrors = {
+    /**
+     * No such file, or nothing to render for it
+     */
+    404: unknown;
+    /**
+     * The file is in the trash
+     */
+    410: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileThumbnailError = ReadFileThumbnailErrors[keyof ReadFileThumbnailErrors];
+
+export type ReadFileThumbnailResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type MoveFileData = {
