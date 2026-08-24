@@ -100,8 +100,27 @@ def _normalized(name: str) -> str:
 
 
 def _installed_licences(root: Path) -> dict[str, dict[str, Any]]:
-    """The licence fields of every package installed for one project."""
-    return json.loads(_run(["uv", "run", "--no-sync", "python", "-c", _METADATA_DUMP], cwd=root))
+    """The licence fields of every package installed for one project.
+
+    The environment is **synced first**, with every extra. A checkout only ever has the
+    environments somebody happened to build — CI provisions the core and nothing else — and
+    metadata that cannot be read comes back as `UNKNOWN`. That is the failure this gate reported
+    on its first real run: twelve dependencies "outside the licence policy", every one of them
+    permissively licensed, because the extractors project had no virtualenv to ask.
+
+    `sync` without `--no-dev` only ever *adds* to an environment, so running the gate cannot take
+    a developer's test tooling away from them.
+    """
+    _run(["uv", "sync", "--frozen", "--all-extras", "--quiet"], cwd=root)
+    found = json.loads(_run(["uv", "run", "--no-sync", "python", "-c", _METADATA_DUMP], cwd=root))
+    if not found:
+        # Belt and braces: an empty environment would otherwise be reported as every dependency
+        # having an unreadable licence, which sends the reader looking in entirely the wrong place.
+        raise RuntimeError(
+            f"{root.name}: nothing is installed in its environment, so no licence can be read "
+            f"(try `uv sync --directory {root.name} --all-extras`)"
+        )
+    return found
 
 
 def _statement(fields: dict[str, Any] | None) -> str:

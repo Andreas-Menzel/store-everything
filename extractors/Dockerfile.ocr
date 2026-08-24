@@ -52,7 +52,15 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # The engine and the two languages this instance searches in (Q14), plus orientation detection.
 # `--no-install-recommends` keeps the X11 and documentation trees that `tesseract-ocr` suggests
 # out of an image that will never draw anything.
+#
+# `upgrade` first, in the same layer: a base image is rebuilt on its own schedule, so it can carry
+# packages its own archive has already fixed. This one shipped util-linux 2.41-5 while Debian
+# security had 2.41.5-0+deb13u1 — four HIGH CVEs that the image scan rightly refuses. None of them
+# is reachable here (they are local-privilege bugs in a SUID `mount` this container has neither the
+# capabilities nor the user to run), but taking the fix costs one layer and arguing with a scanner
+# costs a standing exception.
 RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
     && apt-get install --yes --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \

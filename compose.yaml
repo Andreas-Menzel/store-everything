@@ -212,6 +212,13 @@ services:
   #
   #     POST /api/v1/extractors  {"id": "preview-gen"}   → SE_PREVIEW_GEN_TOKEN in `.env`
   #
+  # Every extractor token below defaults to empty (`:-`) rather than refusing to interpolate
+  # (`:?`), and that is not laziness. Compose interpolates the *whole file* on every command, so
+  # a required variable here would make `docker compose up -d api` fail — and the API is the only
+  # thing that can mint these tokens. A required variable would therefore deadlock the very first
+  # install, which is the one that has no tokens by definition. An extractor started without one
+  # exits immediately saying so, which is the same message a hundredth of a second later.
+  #
   # Everything below the network line is the hardening baseline from
   # `compose.extractor-example.yaml`, which is the template every extractor service copies.
   preview-gen:
@@ -226,7 +233,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_PREVIEW_GEN_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_PREVIEW_GEN_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       # One long poll rather than sixty short ones: an idle extractor should be quiet.
       SE_CLAIM_WAIT_SECONDS: '30'
@@ -265,7 +272,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_PDF_PAGES_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_PAGES_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       # Shorter than the others: this extractor exists to answer requests, so an idle poll that
       # takes a while to notice new work is felt directly.
@@ -299,7 +306,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_BASIC_METADATA_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_BASIC_METADATA_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       SE_CLAIM_WAIT_SECONDS: '30'
 
@@ -331,7 +338,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_PDF_TEXT_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_TEXT_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       SE_CLAIM_WAIT_SECONDS: '30'
     networks: [extractors]
@@ -360,7 +367,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_TEXT_PLAIN_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_TEXT_PLAIN_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       SE_CLAIM_WAIT_SECONDS: '30'
     networks: [extractors]
@@ -391,7 +398,7 @@ services:
         condition: service_healthy
     environment:
       SE_CORE_URL: http://api:8000
-      SE_EXTRACTOR_TOKEN: ${SE_TESSERACT_OCR_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_EXTRACTOR_TOKEN: ${SE_TESSERACT_OCR_TOKEN:-}
       SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
       SE_CLAIM_WAIT_SECONDS: '30'
       # Threads across jobs, not inside one: the queue can see the first kind of parallelism and

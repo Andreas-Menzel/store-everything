@@ -224,3 +224,33 @@ def test_every_extractor_service_carries_the_container_baseline() -> None:
         assert str(block.get("user", "")).startswith("10001"), f"{name} does not run unprivileged"
         assert block.get("pids_limit"), f"{name} has no process limit"
         assert block.get("mem_limit"), f"{name} has no memory limit"
+
+
+def test_no_extractor_token_can_block_the_first_start() -> None:
+    """Compose interpolates the whole file on every command, so a `:?` here is a deadlock.
+
+    The credentials these variables hold are minted by the *running* API. A required-variable
+    interpolation (`${VAR:?...}`) therefore makes `docker compose up -d api` fail on a fresh
+    install — the one install that has no tokens by definition — and there is no way out of it.
+    This is a real failure that reached CI: every compose command refused to interpolate, and the
+    sandbox check could not even build.
+
+    An empty default is correct instead: the extractor itself reports a missing token and exits.
+    """
+    text = COMPOSE.read_text(encoding="utf-8")
+    required = re.findall(r"\$\{(SE_[A-Z_]*_TOKEN):\?", text)
+
+    assert not required, (
+        f"{required} would make every compose command fail until they are set, including the "
+        "one that starts the API that mints them"
+    )
+
+
+def test_every_extractor_token_is_documented_with_a_placeholder() -> None:
+    """And the other half: a token nobody documents is a service nobody can turn on."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    tokens = set(re.findall(r"\$\{(SE_[A-Z_]*_TOKEN)", text))
+    documented = _documented()
+
+    assert tokens, "no extractor credentials in the compose file — has it changed shape?"
+    assert tokens <= documented, f"undocumented in .env.example: {sorted(tokens - documented)}"

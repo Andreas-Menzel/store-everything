@@ -346,6 +346,11 @@ Until they run, files are stored, searchable by name and readable — they simpl
 thumbnails, no page images and no extracted text, and the API says so per file rather than leaving
 a client to discover it from a broken image.
 
+An extractor container with no credential yet starts, says `SE_EXTRACTOR_TOKEN is not set`, and
+exits; Docker restarts it on a backoff until you paste the token in. That is deliberately not a
+hard failure of `docker compose`: the credentials are minted *by* the running API, so a compose
+file that refused to start without them could never be started a first time.
+
 **1. Provision its id and mint its credential.** As an administrator:
 
 ```bash
