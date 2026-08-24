@@ -338,7 +338,11 @@ curl -X POST https://YOUR-HOST/api/v1/extractors \
 curl -X POST https://YOUR-HOST/api/v1/extractors \
   -H 'Content-Type: application/json' -b cookies.txt \
   -d '{"id":"pdf-pages"}'
-# → put the credentials in .env as SE_PREVIEW_GEN_TOKEN and SE_PDF_PAGES_TOKEN
+curl -X POST https://YOUR-HOST/api/v1/extractors \
+  -H 'Content-Type: application/json' -b cookies.txt \
+  -d '{"id":"basic-metadata"}'
+# → put the credentials in .env as SE_PREVIEW_GEN_TOKEN, SE_PDF_PAGES_TOKEN and
+#   SE_BASIC_METADATA_TOKEN
 # → docker compose up -d
 ```
 

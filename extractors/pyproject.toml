@@ -24,6 +24,7 @@ preview = ["pypdfium2>=5.0.0", "pyvips[binary]>=3.0.0"]
 se-reference-extractor = "se_extractor.reference:main"
 se-preview-gen = "se_extractor.preview_gen:main"
 se-pdf-pages = "se_extractor.pdf_pages:main"
+se-basic-metadata = "se_extractor.basic_metadata:main"
 se-conformance = "se_extractor.conformance:main"
 
 [build-system]
