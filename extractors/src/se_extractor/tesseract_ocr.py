@@ -44,6 +44,7 @@ from typing import Any
 
 import pypdfium2 as pdfium
 
+from se_extractor import pdfium_guard
 from se_extractor.client import ExtractorClient
 from se_extractor.language import detect_language
 from se_extractor.loop import JobContext, PermanentFailure, Worker
@@ -144,8 +145,9 @@ def handle(job: Job, context: JobContext) -> dict[str, Any] | None:
                 sink.write(chunk)
 
         try:
-            document = pdfium.PdfDocument(str(source))
-            total = len(document)
+            with pdfium_guard.LOCK:
+                document = pdfium.PdfDocument(str(source))
+                total = len(document)
         except pdfium.PdfiumError as broken:
             raise PermanentFailure(f"this PDF cannot be read: {broken}") from broken
 
@@ -160,7 +162,8 @@ def handle(job: Job, context: JobContext) -> dict[str, Any] | None:
                 read.append(recognized)
 
         rendition = searchable_pdf(document, read, room=room) if read else None
-        document.close()
+        with pdfium_guard.LOCK:
+            document.close()
 
     if not read:
         # A scan of a blank page, or of something with no text on it. Not a failure — the file is
@@ -233,10 +236,12 @@ def read_page(document: Any, page: int, *, room: Path, binary: str) -> Recognize
     """Render one page and read it. `None` when there was nothing legible on it."""
     image = room / f"page-{page:04d}.png"
     try:
-        bitmap = document[page - 1].render(scale=_SCALE)
+        with pdfium_guard.LOCK:
+            bitmap = document[page - 1].render(scale=_SCALE)
+            rendered = bitmap_to_image(bitmap)
         # PNG, not WebP: this is Tesseract's input, and lossless is the point — a compression
         # artefact on a serif is a misread character.
-        bitmap_to_image(bitmap).write_to_file(str(image))
+        rendered.write_to_file(str(image))
     except pdfium.PdfiumError as broken:
         _logger.warning("page %d could not be rendered (%s)", page, broken)
         return None
@@ -350,25 +355,26 @@ def searchable_pdf(document: Any, read: list[Recognized], *, room: Path) -> byte
     """
     replacements: dict[int, Any] = {}
     try:
-        composed = pdfium.PdfDocument.new()
-        for one in read:
-            if not one.searchable:
-                continue
-            path = room / f"searchable-{one.page:04d}.pdf"
-            path.write_bytes(one.searchable)
-            replacements[one.page] = pdfium.PdfDocument(str(path))
-        if not replacements:
-            return None
+        with pdfium_guard.LOCK:
+            composed = pdfium.PdfDocument.new()
+            for one in read:
+                if not one.searchable:
+                    continue
+                path = room / f"searchable-{one.page:04d}.pdf"
+                path.write_bytes(one.searchable)
+                replacements[one.page] = pdfium.PdfDocument(str(path))
+            if not replacements:
+                return None
 
-        for page in range(1, len(document) + 1):
-            source = replacements.get(page)
-            if source is not None:
-                composed.import_pages(source, [0])
-            else:
-                composed.import_pages(document, [page - 1])
+            for page in range(1, len(document) + 1):
+                source = replacements.get(page)
+                if source is not None:
+                    composed.import_pages(source, [0])
+                else:
+                    composed.import_pages(document, [page - 1])
 
-        out = room / "searchable.pdf"
-        composed.save(str(out))
+            out = room / "searchable.pdf"
+            composed.save(str(out))
         return out.read_bytes()
     except pdfium.PdfiumError as broken:
         # The segments are the requirement; the rendition is a convenience. Losing the second one

@@ -51,6 +51,7 @@ from typing import Any
 import pypdfium2 as pdfium
 import pyvips
 
+from se_extractor import pdfium_guard
 from se_extractor.client import ExtractorClient
 from se_extractor.loop import JobContext, PermanentFailure, Worker
 from se_extractor.models import Job
@@ -189,15 +190,20 @@ def _from_pdf(source: Path) -> tuple[pyvips.Image, list[dict[str, Any]]]:
     ([09 § previews](../../../specs/09-previews.md#previews)) — and not this extractor's work.
     """
     try:
-        document = pdfium.PdfDocument(str(source))
-        pages = len(document)
-        if pages == 0:
-            raise PermanentFailure("this PDF has no pages")
-        bitmap = document[0].render(scale=_pdf_scale())
+        with pdfium_guard.LOCK:
+            document = pdfium.PdfDocument(str(source))
+            pages = len(document)
+            if pages == 0:
+                raise PermanentFailure("this PDF has no pages")
+            bitmap = document[0].render(scale=_pdf_scale())
+            # `bitmap_to_image` copies the pixels into a Python buffer, so the document is of no
+            # further use — and closing it here rather than leaving it to the collector keeps
+            # PDFium's teardown on this thread, under this lock (see `pdfium_guard`).
+            image = bitmap_to_image(bitmap)
+            document.close()
     except pdfium.PdfiumError as broken:
         raise PermanentFailure(f"this PDF cannot be rendered: {broken}") from broken
 
-    image = bitmap_to_image(bitmap)
     return image, [_dimensions(image.width, image.height), _page_count(pages)]
 
 

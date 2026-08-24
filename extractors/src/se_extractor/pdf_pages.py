@@ -37,6 +37,7 @@ from typing import Any
 import pypdfium2 as pdfium
 import pyvips
 
+from se_extractor import pdfium_guard
 from se_extractor.client import ExtractorClient
 from se_extractor.loop import JobContext, PermanentFailure, Worker
 from se_extractor.models import Job
@@ -92,8 +93,9 @@ def handle(job: Job, context: JobContext) -> dict[str, Any] | None:
                 sink.write(chunk)
 
         try:
-            document = pdfium.PdfDocument(str(source))
-            pages = len(document)
+            with pdfium_guard.LOCK:
+                document = pdfium.PdfDocument(str(source))
+                pages = len(document)
         except pdfium.PdfiumError as broken:
             raise PermanentFailure(f"this PDF cannot be read: {broken}") from broken
 
@@ -104,8 +106,12 @@ def handle(job: Job, context: JobContext) -> dict[str, Any] | None:
 
         context.raise_if_cancelled()
         try:
-            bitmap = document[requested - 1].render(scale=PAGE_MAX_EDGE / LETTER_LONG_EDGE)
-            image = bitmap_to_image(bitmap).thumbnail_image(PAGE_MAX_EDGE, size="down")
+            with pdfium_guard.LOCK:
+                bitmap = document[requested - 1].render(scale=PAGE_MAX_EDGE / LETTER_LONG_EDGE)
+                image = bitmap_to_image(bitmap).thumbnail_image(PAGE_MAX_EDGE, size="down")
+                # Closed here, not by the collector: PDFium's teardown belongs on the thread that
+                # opened it and under the same lock (see `pdfium_guard`).
+                document.close()
             payload = image.write_to_buffer(f".webp[Q={WEBP_QUALITY}]")
         except (pdfium.PdfiumError, pyvips.Error) as broken:
             raise PermanentFailure(f"page {requested} could not be rendered: {broken}") from broken

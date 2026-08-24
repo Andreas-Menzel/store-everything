@@ -41,6 +41,7 @@ from typing import Any
 import pypdfium2 as pdfium
 import pyvips
 
+from se_extractor import pdfium_guard
 from se_extractor.client import ExtractorClient
 from se_extractor.loop import JobContext, Worker
 from se_extractor.models import Job
@@ -154,10 +155,13 @@ def image_facts(source: Path) -> list[dict[str, Any]]:
 def document_facts(source: Path) -> list[dict[str, Any]]:
     """A PDF's information dictionary: what it calls itself, and when it was written."""
     try:
-        document = pdfium.PdfDocument(str(source))
-        information = {
-            key: str(value) for key, value in (document.get_metadata_dict() or {}).items()
-        }
+        with pdfium_guard.LOCK:
+            document = pdfium.PdfDocument(str(source))
+            information = {
+                key: str(value) for key, value in (document.get_metadata_dict() or {}).items()
+            }
+            # Closed on the thread that opened it, under the lock (see `pdfium_guard`).
+            document.close()
     except pdfium.PdfiumError:
         return []
 
