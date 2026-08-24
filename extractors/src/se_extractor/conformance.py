@@ -40,6 +40,47 @@ API = "/api/v1"
 DEFAULT_TIMEOUT = 30.0
 _POLL = 0.25
 
+#: A minimal one-page PDF, written out rather than generated: the kit has to work with no fixtures
+#: on disk and no dependency beyond `httpx`, and an extractor that only accepts PDFs still deserves
+#: to be checked. Uncompressed, no metadata, cross-reference table by hand.
+_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    b"2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n"
+    b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+    b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n"
+    b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+    b"5 0 obj\n<< /Length 66 >>\nstream\n"
+    b"BT /F1 14 Tf 72 700 Td (A conformance fixture with a line of text.) Tj ET\n"
+    b"endstream\nendobj\n"
+    b"trailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF\n"
+)
+
+#: A 1x1 white PNG, for the same reason.
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753"
+    "de0000000c4944415408d763f8ffff3f0005fe02fea735c9ab0000000049454e44ae426082"
+)
+
+#: What the kit can offer, in the order it prefers: text first because it is the cheapest thing
+#: any extractor can read, then the two binary shapes a document or imaging extractor wants.
+_SAMPLES: tuple[tuple[str, str, bytes], ...] = (
+    ("text/plain", "txt", b"work for the extractor under test\n"),
+    ("application/pdf", "pdf", _PDF),
+    ("image/png", "png", _PNG),
+)
+
+
+def _accepts(pattern: str, media_type: str) -> bool:
+    """Whether one manifest pattern covers one media type — `*/*`, `type/*`, or exact."""
+    pattern = pattern.strip()
+    if pattern == "*/*":
+        return True
+    if pattern.endswith("/*"):
+        return media_type.startswith(pattern[:-1])
+    return pattern == media_type
+
+
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
 
@@ -415,7 +456,18 @@ class Conformance:
         return None
 
     def _works(self, extractor_id: str) -> str:
-        created = self.upload(f"image-{_token()}.txt", b"work for the extractor under test")
+        found = self.extractor(extractor_id) or {}
+        accepts = (found.get("manifest") or {}).get("accepts") or {}
+        if accepts.get("when"):
+            # Its manifest says it wants files only *once* a well-known key says so, and nothing
+            # here can write that key — only another extractor's result can. Reporting that
+            # honestly beats uploading something it will rightly ignore and calling it a failure.
+            raise _Skipped("it routes on a predicate another extractor's result must satisfy")
+        if accepts.get("derived_kinds") and not accepts.get("mime_types"):
+            raise _Skipped("it accepts only other extractors' outputs, which this kit cannot stage")
+
+        media_type, suffix, body = self._sample_for(accepts.get("mime_types") or [])
+        created = self.upload(f"image-{_token()}.{suffix}", body, media_type=media_type)
         deadline = time.monotonic() + self._timeout
         while time.monotonic() < deadline:
             runs = [
@@ -434,6 +486,13 @@ class Conformance:
                 raise AssertionError(f"the run ended {run['state']}: {run.get('error')}")
             time.sleep(_POLL)
         raise AssertionError(f"the run did not finish within {self._timeout:.0f}s")
+
+    def _sample_for(self, patterns: list[Any]) -> tuple[str, str, bytes]:
+        """Something the manifest accepts, from the kit's own small set."""
+        for media_type, suffix, body in _SAMPLES:
+            if any(_accepts(str(pattern), media_type) for pattern in patterns):
+                return media_type, suffix, body
+        raise _Skipped(f"nothing in this kit's sample set matches {patterns}")
 
     def _selective(self, extractor_id: str) -> str:
         found = self.extractor(extractor_id) or {}

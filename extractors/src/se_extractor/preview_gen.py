@@ -147,8 +147,14 @@ def handle(job: Job, context: JobContext) -> dict[str, Any] | None:
         media_type = original.media_type
         if media_type == "application/pdf":
             image, facts = _from_pdf(source)
-        else:
+        elif media_type.startswith("image/"):
             image, facts = _from_image(source)
+        else:
+            # The manifest asks for images and PDFs, so nothing else should arrive — but a core
+            # still holding a previous version's manifest could send one. Declining is right
+            # either way: this file has no picture in it, and that is not a failure.
+            _logger.info("job %s is a %s, which has nothing to render", job.id, media_type)
+            return None
 
         try:
             return _render(job, context, image, facts)
