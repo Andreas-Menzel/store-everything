@@ -50,6 +50,15 @@
       "bytes": 1213
     },
     {
+      "path": "documents/mixed-text.pdf",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Two US-Letter pages. Page 1 reads 'This page carries its own text; the next one carries none.'; page 2 has no text operators at all, only a filled rectangle. So a per-page routing decision has an exact expected value: page 1 extracted, page 2 in `ocr_pages`.",
+      "sha256": "0ba0cf4c78c45af70deea95a5721fe09d3af3c18fe5111e176ae21eb1d3ab6ec",
+      "bytes": 880
+    },
+    {
       "path": "adversarial/zero-byte.bin",
       "origin": "generated",
       "generator": "corpus/generate.py",

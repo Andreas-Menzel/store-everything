@@ -82,6 +82,10 @@ PDF_PAGES = (
     "This page mentions xylophone marmalade exactly once.",
 )
 
+#: The one page of `mixed-text.pdf` that has a text layer. Its second page has none, which is
+#: what makes that fixture worth having: the routing decision is per page.
+MIXED_TEXT_PAGE = "This page carries its own text; the next one carries none."
+
 
 def write(relative: str, payload: bytes) -> Path:
     path = FIXTURES / relative
@@ -118,6 +122,11 @@ def two_tone_png() -> bytes:
     )
 
 
+def _text_page(line: str) -> bytes:
+    """A content stream that draws one line of Helvetica near the top of the page."""
+    return f"BT /F1 24 Tf 72 700 Td ({line}) Tj ET\n".encode("ascii")
+
+
 def three_page_pdf() -> bytes:
     """A three-page PDF with one line of text per page, assembled object by object.
 
@@ -125,7 +134,31 @@ def three_page_pdf() -> bytes:
     page anchor is only checkable against a document whose pages are known one by one. Letter
     size, one built-in font, no compression — a fixture a person can read in a hex dump.
     """
-    pages = len(PDF_PAGES)
+    return _assemble_pdf([_text_page(line) for line in PDF_PAGES])
+
+
+def mixed_text_pdf() -> bytes:
+    """One page with a text layer, one page without — the shape that routes to OCR.
+
+    The decision `pdf-text` makes is per page, and a document where every page agrees cannot
+    show that: `three-pages.pdf` proves text is read, and a fully scanned document would prove
+    OCR is reached, but neither proves the *choice*. This one does — page 1 is extracted, page 2
+    appears in `ocr_pages`, from one upload.
+
+    Page 2 is a filled rectangle rather than a photograph of paper: what makes it interesting is
+    the absence of text operators, and a real scan would add a licence, a megabyte and an
+    approximate assertion to say the same thing (ADR-0015).
+    """
+    return _assemble_pdf([_text_page(MIXED_TEXT_PAGE), b"0.5 g 72 480 468 240 re f\n"])
+
+
+def _assemble_pdf(streams: list[bytes]) -> bytes:
+    """A minimal PDF around one content stream per page.
+
+    Uncompressed, no metadata, cross-reference table written by hand — so the bytes depend on
+    nothing but the streams handed in, and two runs of this script produce the same file.
+    """
+    pages = len(streams)
     # Object numbers: 1 catalog, 2 page tree, 3 font, then a page and a stream per page.
     page_ids = [4 + index * 2 for index in range(pages)]
     stream_ids = [identifier + 1 for identifier in page_ids]
@@ -138,7 +171,7 @@ def three_page_pdf() -> bytes:
         ).encode("ascii"),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
-    for index, line in enumerate(PDF_PAGES):
+    for index, content in enumerate(streams):
         objects.append(
             (
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
@@ -146,9 +179,12 @@ def three_page_pdf() -> bytes:
                 % stream_ids[index]
             ).encode("ascii")
         )
-        content = f"BT /F1 24 Tf 72 700 Td ({line}) Tj ET\n".encode("ascii")
         objects.append(
-            b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"endstream"
+            b"<< /Length "
+            + str(len(content)).encode("ascii")
+            + b" >>\nstream\n"
+            + content
+            + b"endstream"
         )
 
     out = bytearray(b"%PDF-1.4\n")
@@ -202,6 +238,7 @@ def main() -> int:
     write("text/sample.md", MARKDOWN_SAMPLE.encode("utf-8"))
     write("images/two-tone.png", two_tone_png())
     write("documents/three-pages.pdf", three_page_pdf())
+    write("documents/mixed-text.pdf", mixed_text_pdf())
     write("adversarial/zero-byte.bin", b"")
     write("adversarial/truncated.png", truncated_png())
     write("adversarial/oversized-dimensions.png", oversized_dimensions_png())
