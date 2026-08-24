@@ -27,18 +27,18 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first: they change far less often than the source. `--extra preview` is what
-# brings the imaging stack in — the SDK itself keeps exactly one dependency so a third-party
-# author inherits nothing from us but `httpx`.
+# Dependencies first: they change far less often than the source. The extras are what bring the
+# tooling in — `preview` the imaging stack, `documents` the text stack — while the SDK itself keeps
+# exactly one dependency, so a third-party author inherits nothing from us but `httpx`.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=README.md,target=README.md \
-    uv sync --locked --no-install-project --no-dev --extra preview
+    uv sync --locked --no-install-project --no-dev --extra preview --extra documents
 
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --extra preview
+    uv sync --locked --no-dev --extra preview --extra documents
 
 
 FROM python:3.13-slim-bookworm AS runtime

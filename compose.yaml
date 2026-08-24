@@ -316,6 +316,65 @@ services:
     cpus: ${BASIC_METADATA_CPUS:-1}
     stop_grace_period: 10s
 
+  # A document's own text, page by page, plus the signal that says which pages have none
+  # (F-004/FR-1, FR-2). `medium` because text is what makes a file findable, which is the
+  # slower and more important half of ingestion (04 § prioritization).
+  pdf-text:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-pdf-text']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_TEXT_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PDF_TEXT_MEMORY:-1g}
+    cpus: ${PDF_TEXT_CPUS:-2}
+    stop_grace_period: 10s
+
+  # Text, markdown, code and CSV: the files there are most of, with the line numbers to
+  # find them by (F-004/FR-3) and the language that decides which analyser search uses (FR-4).
+  text-plain:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-text-plain']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_TEXT_PLAIN_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${TEXT_PLAIN_MEMORY:-512m}
+    cpus: ${TEXT_PLAIN_CPUS:-1}
+    stop_grace_period: 10s
+
 # Other extractors are ordinary services on the `extractors` network, shaped exactly like the ones
 # above — see `compose.extractor-example.yaml` for the annotated template and docs/install.md for
 # how to install one. The rest of the official set arrives over phase 2.

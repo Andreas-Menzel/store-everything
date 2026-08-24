@@ -19,12 +19,19 @@ dependencies = ["httpx>=0.28"]
 # other dependency (ADR-0016).
 [project.optional-dependencies]
 preview = ["pypdfium2>=5.0.0", "pyvips[binary]>=3.0.0"]
+documents = [
+    "charset-normalizer>=3.4",
+    "lingua-language-detector>=2.1",
+    "pymupdf>=1.26",
+]
 
 [project.scripts]
 se-reference-extractor = "se_extractor.reference:main"
 se-preview-gen = "se_extractor.preview_gen:main"
 se-pdf-pages = "se_extractor.pdf_pages:main"
 se-basic-metadata = "se_extractor.basic_metadata:main"
+se-pdf-text = "se_extractor.pdf_text:main"
+se-text-plain = "se_extractor.text_plain:main"
 se-conformance = "se_extractor.conformance:main"
 
 [build-system]

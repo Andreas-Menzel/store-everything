@@ -34,6 +34,25 @@ Results via `GET /files/{id}/segments`; extraction status via `GET /files/{id}`;
 
 Layout/table structure understanding, handwriting recognition, form-field extraction — candidates for future extractor plugins (the contract already supports them).
 
+## Staging
+
+**Phase 2 delivers FR-1 through FR-4 and FR-6 through FR-8** across three extractors: `pdf-text`
+(the per-page decision tree and the `needs_ocr`/`ocr_pages` signal it writes), `text-plain` (text,
+markdown, code, CSV, and office documents), and `tesseract-ocr` (the OCR half of FR-2, and the
+`searchable-pdf` rendition of FR-8).
+
+**FR-5** — segments feeding `text-v1` embeddings — is the one part that waits for **phase 3**: it
+needs the `text-embed` extractor and the embedding infrastructure around it.
+
+FR-3 is satisfied with the anchor it asks for. Office text is read by pure-python wheels
+(`python-docx`, `openpyxl`, `python-pptx`, `odfpy`) and anchored by **section** — heading path,
+sheet and row range, slide number — which is what FR-3 permits and what those formats actually
+have: a `.docx` has no pages until something lays it out. [05](../specs/05-extractor-contract.md)
+additionally routes office documents through a LibreOffice `pdf` rendition so a hit's *page* is the
+page a person sees in the preview; that conversion is a **refinement** of anchors already produced,
+it shares an image with phase 3's heavy toolchain, and it arrives with the office preview path of
+[09](../specs/09-previews.md). FR-3 does not wait for it.
+
 ## Open questions
 
 Routing is per page ([ADR-0020](../decisions/ADR-0020-extractor-dispatch-and-wire-protocol.md): `pdf-text` writes `needs_ocr`/`ocr_pages`, the OCR manifest predicate binds to them); the exact garbled-text thresholds inside `pdf-text`'s decision tree are implementation detail, tuned against corpus fixtures. [Q9](../OPEN-QUESTIONS.md)'s documents part is resolved ([05 § built-in extractors](../specs/05-extractor-contract.md#built-in-extractors-default-installation-all-local)); its embedding/vision/speech part remains for phase 3.

@@ -332,23 +332,18 @@ transcription. Installing one is always the same three steps, and the first offi
 `compose.yaml`. It will not start until you have done step 1 for it:
 
 ```bash
-curl -X POST https://YOUR-HOST/api/v1/extractors \
-  -H 'Content-Type: application/json' -b cookies.txt \
-  -d '{"id":"preview-gen"}'
-curl -X POST https://YOUR-HOST/api/v1/extractors \
-  -H 'Content-Type: application/json' -b cookies.txt \
-  -d '{"id":"pdf-pages"}'
-curl -X POST https://YOUR-HOST/api/v1/extractors \
-  -H 'Content-Type: application/json' -b cookies.txt \
-  -d '{"id":"basic-metadata"}'
-# → put the credentials in .env as SE_PREVIEW_GEN_TOKEN, SE_PDF_PAGES_TOKEN and
-#   SE_BASIC_METADATA_TOKEN
+for id in preview-gen pdf-pages basic-metadata pdf-text text-plain; do
+  curl -X POST https://YOUR-HOST/api/v1/extractors \
+    -H 'Content-Type: application/json' -b cookies.txt -d "{\"id\":\"$id\"}"
+done
+# → put each credential in .env: SE_PREVIEW_GEN_TOKEN, SE_PDF_PAGES_TOKEN,
+#   SE_BASIC_METADATA_TOKEN, SE_PDF_TEXT_TOKEN, SE_TEXT_PLAIN_TOKEN
 # → docker compose up -d
 ```
 
 Until they run, files are stored, searchable by name and readable — they simply have no
-thumbnails and no page images, and the API says so per file rather than leaving a client to
-discover it from a broken image.
+thumbnails, no page images and no extracted text, and the API says so per file rather than leaving
+a client to discover it from a broken image.
 
 **1. Provision its id and mint its credential.** As an administrator:
 

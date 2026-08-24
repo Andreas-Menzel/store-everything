@@ -812,11 +812,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "charset-normalizer", marker = "extra == 'documents'", specifier = ">=3.4" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "lingua-language-detector", marker = "extra == 'documents'", specifier = ">=2.1" },
+    { name = "pymupdf", marker = "extra == 'documents'", specifier = ">=1.26" },
     { name = "pypdfium2", marker = "extra == 'preview'", specifier = ">=5.0.0" },
     { name = "pyvips", extras = ["binary"], marker = "extra == 'preview'", specifier = ">=3.0.0" },
 ]
-provides-extras = ["preview"]
+provides-extras = ["preview", "documents"]
 
 [package.metadata.requires-dev]
 dev = [
