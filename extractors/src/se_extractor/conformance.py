@@ -71,7 +71,7 @@ _SAMPLES: tuple[tuple[str, str, bytes], ...] = (
 )
 
 
-def _accepts(pattern: str, media_type: str) -> bool:
+def matches_pattern(pattern: str, media_type: str) -> bool:
     """Whether one manifest pattern covers one media type — `*/*`, `type/*`, or exact."""
     pattern = pattern.strip()
     if pattern == "*/*":
@@ -490,7 +490,7 @@ class Conformance:
     def _sample_for(self, patterns: list[Any]) -> tuple[str, str, bytes]:
         """Something the manifest accepts, from the kit's own small set."""
         for media_type, suffix, body in _SAMPLES:
-            if any(_accepts(str(pattern), media_type) for pattern in patterns):
+            if any(matches_pattern(str(pattern), media_type) for pattern in patterns):
                 return media_type, suffix, body
         raise _Skipped(f"nothing in this kit's sample set matches {patterns}")
 

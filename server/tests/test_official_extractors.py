@@ -13,6 +13,9 @@ something asks.
 A check the kit cannot run here reports `skip` with its reason rather than a pass nobody earned:
 `tesseract-ocr` routes on a predicate that only another extractor's result can satisfy, and no
 fixture upload can fake that.
+
+The last test is the other half of the criterion — a kit nobody has seen go red is a rubber stamp,
+so one deliberately broken image has to fail it, for the right reason.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from se_extractor import basic_metadata, pdf_pages, pdf_text, preview_gen, text_plain
+from se_extractor import basic_metadata, pdf_pages, pdf_text, preview_gen, reference, text_plain
 from se_extractor import tesseract_ocr as ocr
 from se_extractor.conformance import Conformance, run_checks
 
@@ -75,3 +78,44 @@ def test_the_conformance_kit_passes_against_every_official_extractor(
     # The two every image must actually pass; the other checks may legitimately skip.
     passed = {check.name for check in report.checks if check.outcome == "pass"}
     assert {"the-extractor-registers", "its-manifest-is-coherent"} <= passed, report.render()
+
+
+def test_the_kit_fails_an_image_that_does_not_finish_its_jobs(
+    identity_settings: Settings,
+) -> None:
+    """The other half of the criterion: a deliberately broken image must *fail* the kit.
+
+    A conformance kit nobody has seen go red is a rubber stamp. The reference extractor can
+    misbehave on purpose (`SE_REFERENCE_MODE`), so this points the kit at one that fails every job
+    permanently and asserts the kit says so — by name, on the check that is about finishing work,
+    while the checks about registering still pass.
+    """
+    mode = "fail-permanently"
+    with (
+        live_instance(identity_settings) as instance,
+        signed_in(instance.base_url) as admin,
+    ):
+        active_workspace(admin, "Broken")
+        token = provision(admin, reference.EXTRACTOR_ID)
+        with (
+            running(
+                instance.base_url,
+                token,
+                reference.build_manifest(mode),
+                lambda job, context: reference.handle(job, context, mode=mode, delay=0.0),
+            ),
+            Conformance(
+                instance.base_url,
+                email=ADMIN_EMAIL,
+                password=ADMIN_PASSWORD,
+                timeout=20.0,
+            ) as conformance,
+        ):
+            report = run_checks(conformance, extractor_id=reference.EXTRACTOR_ID, protocol=False)
+
+    assert not report.ok, report.render()
+    failed = {check.name for check in report.checks if check.outcome == "fail"}
+    assert failed == {"it-claims-and-finishes-a-job"}, report.render()
+    # It registered and its manifest was coherent — the kit failed it for the right reason.
+    passed = {check.name for check in report.checks if check.outcome == "pass"}
+    assert "the-extractor-registers" in passed

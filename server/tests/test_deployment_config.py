@@ -171,3 +171,56 @@ def test_the_areas_holding_files_can_be_put_on_the_operators_own_storage() -> No
             assert f"${{{variable}:-" in mount, (
                 f"{mount} pins its source; it should default through ${variable}"
             )
+
+
+#: Every extractor service in `compose.yaml`. Identified by the entrypoint they run rather than
+#: by a hand-kept list: an extractor that was added and forgotten here is exactly the one whose
+#: isolation nobody checked.
+def _extractor_services() -> dict[str, dict[str, object]]:
+    document = yaml.safe_load(COMPOSE.read_text(encoding="utf-8")) or {}
+    services = document.get("services") or {}
+    found: dict[str, dict[str, object]] = {}
+    for name, block in services.items():
+        if not isinstance(block, dict):
+            continue
+        command = block.get("command") or []
+        entrypoints = command if isinstance(command, list) else [command]
+        if any(str(one).startswith("se-") for one in entrypoints):
+            found[str(name)] = block
+    return found
+
+
+def test_every_extractor_service_is_only_on_the_extractors_network() -> None:
+    """[ADR-0021](../../decisions/ADR-0021-extractor-sandbox-enforcement.md)'s promise is a
+    property of the topology, so it is the topology that has to be checked.
+
+    `tools/sandbox-check.sh` proves the `extractors` network has no way out, from inside a running
+    container. This proves every extractor is *on* that network and on nothing else — the mistake
+    a future service block will make is copying one that also joins `internal`, which would hand
+    an extractor the database it must never see.
+    """
+    services = _extractor_services()
+    assert services, "no extractor services found — has the compose file changed shape?"
+
+    for name, block in services.items():
+        assert block.get("networks") == ["extractors"], f"{name} is not sandboxed by its networks"
+        assert "ports" not in block, f"{name} publishes a port; dispatch is poll-based (ADR-0020)"
+
+
+def test_every_extractor_service_carries_the_container_baseline() -> None:
+    """The hardening baseline of
+    [05 § container requirements](../../specs/05-extractor-contract.md).
+
+    One service block per extractor means one place per extractor to forget a flag, and a
+    container that quietly runs as root or with a writable root filesystem looks exactly like one
+    that does not. Checked here rather than trusted to review.
+    """
+    for name, block in _extractor_services().items():
+        assert block.get("read_only") is True, f"{name} has a writable root filesystem"
+        assert block.get("cap_drop") == ["ALL"], f"{name} keeps capabilities it does not need"
+        options = block.get("security_opt")
+        assert isinstance(options, list), f"{name} declares no security options"
+        assert "no-new-privileges:true" in options, f"{name} may escalate"
+        assert str(block.get("user", "")).startswith("10001"), f"{name} does not run unprivileged"
+        assert block.get("pids_limit"), f"{name} has no process limit"
+        assert block.get("mem_limit"), f"{name} has no memory limit"
