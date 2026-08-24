@@ -36,22 +36,27 @@ Layout/table structure understanding, handwriting recognition, form-field extrac
 
 ## Staging
 
-**Phase 2 delivers FR-1 through FR-4 and FR-6 through FR-8** across three extractors: `pdf-text`
-(the per-page decision tree and the `needs_ocr`/`ocr_pages` signal it writes), `text-plain` (text,
-markdown, code, CSV, and office documents), and `tesseract-ocr` (the OCR half of FR-2, and the
-`searchable-pdf` rendition of FR-8).
+**Phase 2 delivers FR-1, FR-2, FR-4, FR-6, FR-7 and FR-8** across three extractors: `pdf-text` (the
+per-page decision tree and the `needs_ocr`/`ocr_pages` signal it writes), `text-plain` (text,
+markdown, code and CSV), and `tesseract-ocr` (the OCR half of FR-2, and the `searchable-pdf`
+rendition of FR-8). **FR-3** lands for text, markdown and code with line-range anchors.
 
-**FR-5** — segments feeding `text-v1` embeddings — is the one part that waits for **phase 3**: it
-needs the `text-embed` extractor and the embedding infrastructure around it.
+Two parts wait for **phase 3**, both because a phase-3 component is what makes them possible:
 
-FR-3 is satisfied with the anchor it asks for. Office text is read by pure-python wheels
-(`python-docx`, `openpyxl`, `python-pptx`, `odfpy`) and anchored by **section** — heading path,
-sheet and row range, slide number — which is what FR-3 permits and what those formats actually
-have: a `.docx` has no pages until something lays it out. [05](../specs/05-extractor-contract.md)
-additionally routes office documents through a LibreOffice `pdf` rendition so a hit's *page* is the
-page a person sees in the preview; that conversion is a **refinement** of anchors already produced,
-it shares an image with phase 3's heavy toolchain, and it arrives with the office preview path of
-[09](../specs/09-previews.md). FR-3 does not wait for it.
+- **Embeddings** (FR-5): segments feeding `text-v1` needs the `text-embed` extractor and the
+  embedding infrastructure around it.
+- **Office documents** (FR-3's office half) need an anchor that can honestly be used. Reading a `.docx`'s text is a wheel
+  away; saying *where* in it a hit is, is not: the anchor vocabulary is fixed at `page`, `time`,
+  `line`, `sheet`, `region`, `whole` ([02 § Segment](../specs/02-domain-model.md#segment)), and a
+  word-processing document has none of those until something lays it out into pages. This FR's
+  parenthetical "(or section)" invites a kind the domain model does not define — recorded as
+  [Q64](../OPEN-QUESTIONS.md). [05](../specs/05-extractor-contract.md)'s answer is `office-convert`:
+  LibreOffice renders one `pdf` rendition that chains into `pdf-text`, so a hit's page is the page
+  the preview shows — one conversion serving the anchor *and* the preview. It travels with phase
+  3's heavy toolchain, where LibreOffice's ~400 MB image belongs.
+
+So FR-3 is verified for text and stays unverified for office formats rather than being claimed on
+an anchor that would be a guess.
 
 ## Open questions
 
