@@ -26,6 +26,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_ROOTS = (REPO_ROOT / "server", REPO_ROOT / "extractors")
 POLICY_PATH = REPO_ROOT / "license-allowlist.json"
 
+#: Where a published image installs operating-system packages. Those are distributed too — a
+#: Debian package baked into an image we push is an artifact we ship — and no lockfile mentions
+#: them, so the Dockerfiles are the inventory (ADR-0016).
+DOCKERFILES = ("server/Dockerfile", "extractors/Dockerfile", "extractors/Dockerfile.ocr")
+
+#: `apt-get install` with its flags, up to the end of the command. Flags are dropped, package
+#: names are kept; a name pinned as `pkg=1.2` keeps only the name.
+_APT_INSTALL = re.compile(r"apt-get\s+install\b(?P<arguments>[^&|;]*)", re.DOTALL)
+
 UNKNOWN = "UNKNOWN"
 
 
@@ -154,6 +163,44 @@ def python_dependencies() -> list[Dependency]:
     return sorted(set(dependencies))
 
 
+def system_packages(dockerfiles: tuple[str, ...] = DOCKERFILES) -> list[Dependency]:
+    """Every OS package a published image installs, read out of the Dockerfiles that install it.
+
+    There is no metadata to read here — an apt package's licence lives in the distribution, not in
+    anything we can query offline — so the policy carries the statement and this only finds the
+    names. That is the useful half: a package added to an image without a licence decision is
+    exactly what the gate is for, and it is the failure that would otherwise ship silently.
+    """
+    found: list[Dependency] = []
+    for relative in dockerfiles:
+        path = REPO_ROOT / relative
+        if path.exists():
+            found += [
+                Dependency("system", name, "", UNKNOWN)
+                for name in apt_packages(path.read_text(encoding="utf-8"))
+            ]
+    return sorted(set(found))
+
+
+def apt_packages(dockerfile: str) -> list[str]:
+    """The package names an `apt-get install` in this Dockerfile names.
+
+    A real one is a line continuation carrying flags, so the continuations are joined first and
+    the flags dropped; `pkg=1.2` keeps the name, because the name is what a licence is declared
+    against.
+    """
+    names: list[str] = []
+    joined = dockerfile.replace("\\\n", " ")
+    for match in _APT_INSTALL.finditer(joined):
+        for word in match.group("arguments").split():
+            if word.startswith(("-", "#")):
+                continue
+            name = word.split("=", 1)[0].strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def javascript_dependencies(pnpm: str = "pnpm") -> list[Dependency]:
     """Runtime dependencies of the web client."""
     raw = _run([pnpm, "licenses", "list", "--prod", "--json"], cwd=REPO_ROOT)
@@ -195,6 +242,13 @@ def load_policy(path: Path = POLICY_PATH) -> tuple[set[str], dict[str, str]]:
         if not license_name:
             raise PolicyError(f"package exception {key!r} must declare a licence")
         declared[str(key)] = license_name
+    # System packages are declared the same way, under their own section so a reader can see at a
+    # glance what the images install beyond the wheels.
+    for key, value in document.get("systemPackages", {}).items():
+        license_name = str(value.get("license", "")).strip()
+        if not license_name:
+            raise PolicyError(f"system package {key!r} must declare a licence")
+        declared[f"system:{key}"] = license_name
 
     if not allowed:
         raise PolicyError(f"{path} allows nothing; that cannot be intended")
@@ -226,12 +280,12 @@ def render_notice(dependencies: list[Dependency]) -> str:
         "with Store Everything, which is itself licensed under AGPL-3.0-only.",
         "",
     ]
-    for ecosystem in ("python", "javascript"):
+    for ecosystem in ("python", "javascript", "system"):
         in_ecosystem = [d for d in dependencies if d.ecosystem == ecosystem]
         if not in_ecosystem:
             continue
         lines += [f"## {ecosystem}", "", "| Package | Version | Licence |", "|---|---|---|"]
-        lines += [f"| {d.name} | {d.version} | {d.license} |" for d in in_ecosystem]
+        lines += [f"| {d.name} | {d.version or '—'} | {d.license} |" for d in in_ecosystem]
         lines += [""]
     return "\n".join(lines)
 
@@ -239,7 +293,7 @@ def render_notice(dependencies: list[Dependency]) -> str:
 def collect(pnpm: str = "pnpm", policy_path: Path = POLICY_PATH) -> list[Dependency]:
     """Every distributed dependency, with human-declared licences applied."""
     _, declared = load_policy(policy_path)
-    found = python_dependencies() + javascript_dependencies(pnpm)
+    found = python_dependencies() + javascript_dependencies(pnpm) + system_packages()
     return [resolve(dependency, declared) for dependency in found]
 
 

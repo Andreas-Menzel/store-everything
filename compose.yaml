@@ -375,6 +375,42 @@ services:
     cpus: ${TEXT_PLAIN_CPUS:-1}
     stop_grace_period: 10s
 
+  # The text on pages that have none of their own. Its own image, because it is the one
+  # extractor whose tooling is not a wheel: the engine and its language models are system
+  # packages (05 § built-in extractors). It never has to be told which pages — `pdf-text` writes
+  # `needs_ocr`, and this one's manifest says it accepts PDFs when that key is true (F-004/FR-2).
+  tesseract-ocr:
+    image: ${OCR_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors-ocr:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile.ocr
+    command: ['se-tesseract-ocr']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_TESSERACT_OCR_TOKEN:?mint one with POST /api/v1/extractors}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+      # Threads across jobs, not inside one: the queue can see the first kind of parallelism and
+      # schedule around it, while the second just fights this container's own CPU limit.
+      OMP_THREAD_LIMIT: '1'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      # More room than the other extractors get: a 300-dpi page image is tens of megabytes, and
+      # a long document is one of those per page, one at a time.
+      - /tmp:rw,noexec,nosuid,size=${OCR_TMPFS_SIZE:-2g}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${OCR_MEMORY:-2g}
+    cpus: ${OCR_CPUS:-2}
+    stop_grace_period: 30s
+
 # Other extractors are ordinary services on the `extractors` network, shaped exactly like the ones
 # above — see `compose.extractor-example.yaml` for the annotated template and docs/install.md for
 # how to install one. The rest of the official set arrives over phase 2.

@@ -4,11 +4,11 @@
 # thing a reader should have to look past to see that shape is the analysis tooling a real one
 # adds — here libvips and PDFium, for `preview-gen`.
 #
-# One image, several entrypoints: the SDK, the reference double and `preview-gen` share a package,
-# so a service block picks which one runs (`command: se-preview-gen`). That trade holds while the
-# analysis tooling is a couple of wheels; the first extractor that needs system packages of its
-# own (OCR) is the point to split this into one image per extractor rather than to keep piling
-# apt installs onto everybody's image.
+# One image, several entrypoints: the SDK, the reference double and the extractors whose tooling
+# is a couple of wheels share a package, so a service block picks which one runs
+# (`command: se-preview-gen`). That trade holds exactly as long as the tooling stays wheels —
+# `tesseract-ocr` needed the engine and its language models as system packages, and took its own
+# image (`Dockerfile.ocr`) rather than adding an apt layer to every container on the instance.
 #
 # The container baseline of 05 § container requirements, in the order the layers appear:
 # non-root, no package installer at runtime, and no capability it does not need. What it does

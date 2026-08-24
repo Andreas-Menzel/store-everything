@@ -123,8 +123,15 @@ def two_tone_png() -> bytes:
 
 
 def _text_page(line: str) -> bytes:
-    """A content stream that draws one line of Helvetica near the top of the page."""
-    return f"BT /F1 24 Tf 72 700 Td ({line}) Tj ET\n".encode("ascii")
+    """A content stream that draws one line of Helvetica near the top of the page.
+
+    14 point, not the more readable 24: the longest fixture line is 58 characters, and Helvetica
+    at 24 point would run off the right edge of a 612-point page. A text layer says so anyway —
+    `pdf-text` reads the content stream, not the pixels — but the moment anything *renders* the
+    page, half the sentence would be missing, and a fixture whose picture and text disagree is a
+    fixture that will mislead somebody. At 14 point every line fits inside the margins.
+    """
+    return f"BT /F1 14 Tf 72 700 Td ({line}) Tj ET\n".encode("ascii")
 
 
 def three_page_pdf() -> bytes:

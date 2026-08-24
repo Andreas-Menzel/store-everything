@@ -332,12 +332,13 @@ transcription. Installing one is always the same three steps, and the first offi
 `compose.yaml`. It will not start until you have done step 1 for it:
 
 ```bash
-for id in preview-gen pdf-pages basic-metadata pdf-text text-plain; do
+for id in preview-gen pdf-pages basic-metadata pdf-text text-plain tesseract-ocr; do
   curl -X POST https://YOUR-HOST/api/v1/extractors \
     -H 'Content-Type: application/json' -b cookies.txt -d "{\"id\":\"$id\"}"
 done
 # → put each credential in .env: SE_PREVIEW_GEN_TOKEN, SE_PDF_PAGES_TOKEN,
-#   SE_BASIC_METADATA_TOKEN, SE_PDF_TEXT_TOKEN, SE_TEXT_PLAIN_TOKEN
+#   SE_BASIC_METADATA_TOKEN, SE_PDF_TEXT_TOKEN, SE_TEXT_PLAIN_TOKEN,
+#   SE_TESSERACT_OCR_TOKEN
 # → docker compose up -d
 ```
 

@@ -3,6 +3,7 @@
     "Licence policy for dependencies we distribute (ADR-0016). Development-only tooling",
     "is out of scope \u2014 it never ships. Adding an entry here is a deliberate, reviewed",
     "decision: it asserts the licence is compatible with distributing this AGPL-3.0 work.",
+    "Covers wheels, npm packages and the operating-system packages our images install: an apt package baked into a published image is distributed as surely as a dependency is.",
     "Enforced by `make licenses`."
   ],
   "allowed": [
@@ -50,6 +51,24 @@
     "python:pymupdf": {
       "license": "AGPL-3.0-only",
       "reason": "PyMuPDF is dual-licensed: AGPL-3.0 or an Artifex commercial licence, and its metadata says so as free text rather than as an SPDX expression. This project is AGPL-3.0-only, so the open half is the one that applies and nothing about distribution changes \u2014 which is also why it was chosen over a permissively licensed PDF text extractor with a worse decision tree (05 \u00a7 built-in extractors)."
+    }
+  },
+  "systemPackages": {
+    "tesseract-ocr": {
+      "license": "Apache-2.0",
+      "reason": "The OCR engine, baked into `extractors/Dockerfile.ocr` (05 \u00a7 built-in extractors). Apache-2.0 upstream and in Debian."
+    },
+    "tesseract-ocr-eng": {
+      "license": "Apache-2.0",
+      "reason": "English `tessdata_fast` model, shipped in the OCR image so it needs no network."
+    },
+    "tesseract-ocr-deu": {
+      "license": "Apache-2.0",
+      "reason": "German `tessdata_fast` model \u2014 the second language this instance searches (Q14)."
+    },
+    "tesseract-ocr-osd": {
+      "license": "Apache-2.0",
+      "reason": "Orientation and script detection data, used to read a page that was scanned sideways."
     }
   }
 }

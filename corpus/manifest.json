@@ -46,7 +46,7 @@
       "generator": "corpus/generate.py",
       "license": "AGPL-3.0-only",
       "asserts": "Three US-Letter pages, one line of Helvetica text each, uncompressed. Page 1 is 'Store Everything fixture page one.', page 2 the pangram, page 3 mentions 'xylophone marmalade' exactly once — so a page anchor has an exact expected value.",
-      "sha256": "5765ca56b1a0e1729763c41f8aafa6a635cf9fbd7c76c04b04b13cba509e75e8",
+      "sha256": "d5701d33b601dc24367ebb4e68b84c290e48357e403a416f82e96d244043eafd",
       "bytes": 1213
     },
     {
@@ -55,7 +55,7 @@
       "generator": "corpus/generate.py",
       "license": "AGPL-3.0-only",
       "asserts": "Two US-Letter pages. Page 1 reads 'This page carries its own text; the next one carries none.'; page 2 has no text operators at all, only a filled rectangle. So a per-page routing decision has an exact expected value: page 1 extracted, page 2 in `ocr_pages`.",
-      "sha256": "0ba0cf4c78c45af70deea95a5721fe09d3af3c18fe5111e176ae21eb1d3ab6ec",
+      "sha256": "b0bb688a010f31e935d26627b16442181d9436256fb3444ff11e14dafa3e7a2a",
       "bytes": 880
     },
     {

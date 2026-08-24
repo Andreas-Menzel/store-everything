@@ -32,6 +32,7 @@ se-pdf-pages = "se_extractor.pdf_pages:main"
 se-basic-metadata = "se_extractor.basic_metadata:main"
 se-pdf-text = "se_extractor.pdf_text:main"
 se-text-plain = "se_extractor.text_plain:main"
+se-tesseract-ocr = "se_extractor.tesseract_ocr:main"
 se-conformance = "se_extractor.conformance:main"
 
 [build-system]
