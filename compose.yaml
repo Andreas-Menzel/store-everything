@@ -205,9 +205,222 @@ services:
     restart: 'no'
     networks: [internal]
 
-# Extractors are ordinary services on the `extractors` network — see
-# `compose.extractor-example.yaml` for a working one, and docs/install.md for how to install it.
-# There are no official extractor images yet; the analysis capabilities arrive over phase 2.
+  # The first official extractor: thumbnails, placeholders and image previews for every file
+  # that has a visual source (09-previews.md, F-028). It is here rather than in an overlay
+  # because a file browser without thumbnails looks broken, so this is part of the default
+  # stack — but it still needs an identity and a credential before it can do anything:
+  #
+  #     POST /api/v1/extractors  {"id": "preview-gen"}   → SE_PREVIEW_GEN_TOKEN in `.env`
+  #
+  # Every extractor token below defaults to empty (`:-`) rather than refusing to interpolate
+  # (`:?`), and that is not laziness. Compose interpolates the *whole file* on every command, so
+  # a required variable here would make `docker compose up -d api` fail — and the API is the only
+  # thing that can mint these tokens. A required variable would therefore deadlock the very first
+  # install, which is the one that has no tokens by definition. An extractor started without one
+  # exits immediately saying so, which is the same message a hundredth of a second later.
+  #
+  # Everything below the network line is the hardening baseline from
+  # `compose.extractor-example.yaml`, which is the template every extractor service copies.
+  preview-gen:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-preview-gen']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PREVIEW_GEN_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      # One long poll rather than sixty short ones: an idle extractor should be quiet.
+      SE_CLAIM_WAIT_SECONDS: '30'
+      # libvips would otherwise size its cache and thread pool to the *host*, not to this
+      # container's limits — the usual way an image resizer becomes the reason a small server
+      # starts swapping.
+      VIPS_CONCURRENCY: ${PREVIEW_GEN_CONCURRENCY:-2}
+
+    # No egress, no database, no proxy: this network has no gateway, and PostgreSQL is not on
+    # it. An extractor's whole world is the extractor API (ADR-0021).
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PREVIEW_GEN_MEMORY:-1g}
+    cpus: ${PREVIEW_GEN_CPUS:-2}
+    stop_grace_period: 10s
+
+  # Page images for documents: the eager first page beside every thumbnail, and any other page
+  # when somebody asks for it (09-previews.md, F-028/FR-7). Its own service rather than part of
+  # `preview-gen` because the policies differ — this one answers requests, and a request has
+  # somebody waiting for it.
+  pdf-pages:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-pdf-pages']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_PAGES_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      # Shorter than the others: this extractor exists to answer requests, so an idle poll that
+      # takes a while to notice new work is felt directly.
+      SE_CLAIM_WAIT_SECONDS: '10'
+      VIPS_CONCURRENCY: ${PDF_PAGES_CONCURRENCY:-2}
+
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PDF_PAGES_MEMORY:-1g}
+    cpus: ${PDF_PAGES_CPUS:-2}
+    stop_grace_period: 10s
+
+  # What every file says about itself: when a photo was taken, where, with what; what a document
+  # calls itself (02 § MetadataEntry). Header reads only — it never decodes a pixel — which is why
+  # it can accept every file cheaply.
+  basic-metadata:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-basic-metadata']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_BASIC_METADATA_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    # Lower than the renderers on purpose: reading a header is not resizing an image.
+    mem_limit: ${BASIC_METADATA_MEMORY:-512m}
+    cpus: ${BASIC_METADATA_CPUS:-1}
+    stop_grace_period: 10s
+
+  # A document's own text, page by page, plus the signal that says which pages have none
+  # (F-004/FR-1, FR-2). `medium` because text is what makes a file findable, which is the
+  # slower and more important half of ingestion (04 § prioritization).
+  pdf-text:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-pdf-text']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_PDF_TEXT_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${PDF_TEXT_MEMORY:-1g}
+    cpus: ${PDF_TEXT_CPUS:-2}
+    stop_grace_period: 10s
+
+  # Text, markdown, code and CSV: the files there are most of, with the line numbers to
+  # find them by (F-004/FR-3) and the language that decides which analyser search uses (FR-4).
+  text-plain:
+    image: ${EXTRACTORS_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile
+    command: ['se-text-plain']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_TEXT_PLAIN_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${EXTRACTOR_TMPFS_SIZE:-512m}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${TEXT_PLAIN_MEMORY:-512m}
+    cpus: ${TEXT_PLAIN_CPUS:-1}
+    stop_grace_period: 10s
+
+  # The text on pages that have none of their own. Its own image, because it is the one
+  # extractor whose tooling is not a wheel: the engine and its language models are system
+  # packages (05 § built-in extractors). It never has to be told which pages — `pdf-text` writes
+  # `needs_ocr`, and this one's manifest says it accepts PDFs when that key is true (F-004/FR-2).
+  tesseract-ocr:
+    image: ${OCR_IMAGE:-ghcr.io/andreas-menzel/store-everything-extractors-ocr:latest}
+    build:
+      context: ./extractors
+      dockerfile: Dockerfile.ocr
+    command: ['se-tesseract-ocr']
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SE_CORE_URL: http://api:8000
+      SE_EXTRACTOR_TOKEN: ${SE_TESSERACT_OCR_TOKEN:-}
+      SE_LOG_LEVEL: ${SE_LOG_LEVEL:-INFO}
+      SE_CLAIM_WAIT_SECONDS: '30'
+      # Threads across jobs, not inside one: the queue can see the first kind of parallelism and
+      # schedule around it, while the second just fights this container's own CPU limit.
+      OMP_THREAD_LIMIT: '1'
+    networks: [extractors]
+    read_only: true
+    tmpfs:
+      # More room than the other extractors get: a 300-dpi page image is tens of megabytes, and
+      # a long document is one of those per page, one at a time.
+      - /tmp:rw,noexec,nosuid,size=${OCR_TMPFS_SIZE:-2g}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${OCR_MEMORY:-2g}
+    cpus: ${OCR_CPUS:-2}
+    stop_grace_period: 30s
+
+# Other extractors are ordinary services on the `extractors` network, shaped exactly like the ones
+# above — see `compose.extractor-example.yaml` for the annotated template and docs/install.md for
+# how to install one. The rest of the official set arrives over phase 2.
 
 volumes:
   # Deliberately not switchable to a host path: PostgreSQL refuses a data directory whose

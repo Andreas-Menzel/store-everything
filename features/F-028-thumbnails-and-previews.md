@@ -37,6 +37,17 @@ Every file gets a uniform visual surface: one thumbnail endpoint with a fixed We
 
 Video thumbnails, scrub sheets, video preview transcodes, and audio waveforms — their source assets arrive with keyframes and A/V extraction ([F-006](F-006-av-transcription-and-keyframes.md), phase 3); the descriptor mechanism here already carries them. On-demand "Generate" UX for heavy rendition kinds (no heavy kind exists before phase 3). Attention/face-aware smart cropping ([F-018](F-018-people.md), later). Per-layout aspect variants — cropping is a client concern ([09](../specs/09-previews.md#thumbnails)).
 
+## Staging
+
+Split across two phases (see [ROADMAP](../ROADMAP.md)). **Phase 2** delivers the surface for
+everything with a visual source *the phase's own toolchain can read*: images and PDFs — the
+thumbnail set, the placeholder, image previews, the preview descriptor, page images, and the
+renditions surface. **Audio cover art** ([FR-2](#functional-requirements)'s third source) waits
+for phase 3: reading an embedded picture out of an audio container is the A/V toolchain's job, it
+arrives with [F-006](F-006-av-transcription-and-keyframes.md), and there is no audio fixture to
+hold it to before then. FR-2 therefore stays unverified until that lands rather than being
+claimed on images and PDFs alone. Video thumbnails were always phase 3 (see out of scope).
+
 ## Open questions
 
 None — the 512 px tier question (Q42) was resolved at phase-2 entry: the set is 256/512/1024.

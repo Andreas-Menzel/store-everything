@@ -43,7 +43,14 @@ dev = [
     # only: the core neither imports nor ships them, and an extractor talks to it over HTTP
     # like anything else. It is here so one test can run the real three-sided arrangement —
     # API, worker, extractor — instead of a mock of the plugin boundary.
-    "store-everything-extractors",
+    #
+    # With the extras, because the official extractors are what a few requirements are about:
+    # "a born-digital PDF's text is searchable by page" is a claim about PyMuPDF's output
+    # arriving at `GET /files/{id}/segments`, and a test that substituted a fake extractor
+    # would verify the plumbing while leaving the requirement unverified.
+    "store-everything-extractors[preview,documents]",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.uv.sources]

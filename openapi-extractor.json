@@ -1308,6 +1308,15 @@
             "title": "Text Segments",
             "default": []
           },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagEntry"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Tags",
+            "default": []
+          },
           "derived_assets": {
             "items": {
               "$ref": "#/components/schemas/AssetEntry"
@@ -1462,6 +1471,36 @@
           "size"
         ],
         "title": "StagedAsset"
+      },
+      "TagEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagEntry",
+        "description": "One label a machine produced, and how sure it was.\n\nA *name*, not a tag id: a model's vocabulary is not ours, so the core maps the label into\nthe tag vocabulary (ADR-0006) rather than making every extractor learn it. The bounds are\nthe tag-name policy's, so a label that could never be a tag name is refused here — with a\nfield-level problem — instead of failing later on the way into the table."
       },
       "TimeAnchor": {
         "properties": {

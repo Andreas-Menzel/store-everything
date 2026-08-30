@@ -46,7 +46,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install
-        run: uv sync --directory extractors --all-groups --locked
+        run: uv sync --directory extractors --all-groups --all-extras --locked
       - name: Lint
         run: |
           uv run --directory extractors ruff check .
@@ -71,6 +71,14 @@ jobs:
       # plugin boundary, so the lockfile resolves it from the working tree.
       - name: Install
         run: uv sync --directory server --all-groups --locked
+      # OCR is verified against the real engine, because "a scanned page becomes searchable text"
+      # is not a claim a mock can support (F-004/FR-2, FR-8). The same packages the OCR image
+      # bakes in — `extractors/Dockerfile.ocr` — so what passes here is what will run there.
+      - name: Install the OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu tesseract-ocr-osd
       - name: Lint
         run: |
           uv run --directory server ruff check .
@@ -298,17 +306,23 @@ jobs:
       # cookie same-site by construction (10 § topology, F-027/FR-1).
       - name: Build
         run: docker build -f server/Dockerfile -t store-everything-core:ci .
-      # The reference extractor's image, held to the same baseline (05 § container
-      # requirements): it is the shape every official extractor image follows, so a
-      # regression here would be inherited by all of them.
-      - name: Build the reference extractor
-        run: docker build -f extractors/Dockerfile -t store-everything-reference-extractor:ci extractors
+      # The extractors' image, held to the same baseline (05 § container requirements): every
+      # official extractor runs from it, so a regression here would be inherited by all of them.
+      - name: Build the extractors image
+        run: docker build -f extractors/Dockerfile -t store-everything-extractors:ci extractors
+      # OCR is the one extractor with system packages of its own, so it has its own image — and
+      # the same baseline applies to it (05 § container requirements).
+      - name: Build the OCR image
+        run: |
+          docker build -f extractors/Dockerfile.ocr \
+            -t store-everything-extractors-ocr:ci extractors
       # The virtualenv is built at image-build time, so a package installer in the
       # runtime is unnecessary — and a liability: pip carries its own vendored
       # dependency tree, which is where this image's only CVEs came from.
       - name: Runtimes carry no package installer
         run: |
-          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+          for image in store-everything-core:ci store-everything-extractors:ci \
+                       store-everything-extractors-ocr:ci; do
             if docker run --rm --entrypoint sh "$image" \
                 -c 'command -v pip || command -v pip3'; then
               echo "::error::pip is present in $image"
@@ -317,10 +331,25 @@ jobs:
           done
       - name: Extractor images run unprivileged
         run: |
-          if [ "$(docker run --rm --entrypoint id store-everything-reference-extractor:ci -u)" = "0" ]; then
-            echo '::error::the reference extractor image runs as root'
-            exit 1
-          fi
+          for image in store-everything-extractors:ci store-everything-extractors-ocr:ci; do
+            if [ "$(docker run --rm --entrypoint id "$image" -u)" = "0" ]; then
+              echo "::error::$image runs as root"
+              exit 1
+            fi
+          done
+      # The image must carry its analysis tooling, not discover at 3am that it does not: an
+      # extractor that cannot import libvips claims jobs and fails every one of them.
+      - name: The extractors image carries its imaging stack
+        run: |
+          docker run --rm --entrypoint python store-everything-extractors:ci -c \
+            'import pyvips, pypdfium2; print(pyvips.version(0), pyvips.version(1))'
+      # Same reasoning for the OCR image, plus its language data: a container that had to fetch a
+      # model would have no way to — it lives on a network with no gateway (ADR-0021).
+      - name: The OCR image carries the engine and its languages
+        run: |
+          docker run --rm --entrypoint tesseract store-everything-extractors-ocr:ci --version
+          docker run --rm --entrypoint sh store-everything-extractors-ocr:ci -c \
+            'tesseract --list-langs | grep -qx deu && tesseract --list-langs | grep -qx eng'
       # The core ships none of its development dependencies. Asserted rather than assumed
       # because the extractor SDK is one of them — a path dependency of the dev group, so that
       # one test can drive the real plugin boundary — and an image that shipped it would be
@@ -339,7 +368,8 @@ jobs:
       # Publishing happens from tags only (11-engineering-standards.md § versioning).
       - name: Vulnerability scan
         run: |
-          for image in store-everything-core:ci store-everything-reference-extractor:ci; do
+          for image in store-everything-core:ci store-everything-extractors:ci \
+                       store-everything-extractors-ocr:ci; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
               aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL \
               --ignore-unfixed --no-progress "$image"

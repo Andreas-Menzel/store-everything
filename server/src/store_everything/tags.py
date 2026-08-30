@@ -28,6 +28,7 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Select, delete, func, insert, literal, or_, select, update
@@ -40,7 +41,9 @@ from store_everything.ids import new_id
 from store_everything.tables import (
     MAX_TAG_NAME_LENGTH,
     file,
+    file_auto_tag,
     file_tag,
+    file_version,
     folder,
     folder_tag,
     tag,
@@ -130,11 +133,20 @@ class Tag:
     status: str
     created_at: datetime
     created_by: UUID | None
+    #: The run that proposed the word, for a `suggested` tag — the review queue's provenance.
+    suggested_by_run_id: UUID | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
 
     @property
     def is_vocabulary(self) -> bool:
         """Whether it may be applied, completed and searched — `active` and nothing else."""
         return self.status == "active"
+
+    @property
+    def is_suggestion(self) -> bool:
+        """Whether it is a machine's proposal awaiting a decision (F-003/FR-12)."""
+        return self.status == "suggested"
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +218,9 @@ def validate_name(name: str) -> str:
 # ------------------------------------------------------------------------------------ reading
 
 
-def _tag_query() -> Select[tuple[UUID, str, str, str, datetime, UUID | None]]:
+def _tag_query() -> Select[
+    tuple[UUID, str, str, str, datetime, UUID | None, UUID | None, datetime | None, UUID | None]
+]:
     """A tag with its canonical name — the only shape callers ever want."""
     return select(
         tag.c.id,
@@ -215,12 +229,23 @@ def _tag_query() -> Select[tuple[UUID, str, str, str, datetime, UUID | None]]:
         tag.c.status,
         tag.c.created_at,
         tag.c.created_by,
+        tag.c.suggested_by_run_id,
+        tag.c.reviewed_at,
+        tag.c.reviewed_by,
     ).join(tag_name, (tag_name.c.tag_id == tag.c.id) & ~tag_name.c.is_alias)
 
 
-def _as_tag(row: tuple[UUID, str, str, str, datetime, UUID | None]) -> Tag:
+def _as_tag(row: tuple[Any, ...]) -> Tag:
     return Tag(
-        id=row[0], name=row[1], name_key=row[2], status=row[3], created_at=row[4], created_by=row[5]
+        id=row[0],
+        name=row[1],
+        name_key=row[2],
+        status=row[3],
+        created_at=row[4],
+        created_by=row[5],
+        suggested_by_run_id=row[6],
+        reviewed_at=row[7],
+        reviewed_by=row[8],
     )
 
 
@@ -239,39 +264,27 @@ async def by_ids(connection: AsyncConnection, tag_ids: list[UUID]) -> dict[UUID,
 
 
 async def resolve(connection: AsyncConnection, name: str) -> Resolved | None:
-    """Which tag a word means, canonical spelling or synonym. `None` if it means nothing yet."""
+    """Which tag a word means, canonical spelling or synonym. `None` if it means nothing yet.
+
+    Two queries rather than one: the name registry says *which* tag, and `get` says what the tag
+    is under its own name. Assembling the tag from this query's columns instead would work today
+    and break the day a column is added to `tag` — which is exactly what happened once.
+    """
     key = key_of(name)
     if not key:
         return None
     rows = await connection.execute(
-        select(
-            tag.c.id,
-            tag_name.c.name,
-            tag_name.c.name_key,
-            tag.c.status,
-            tag.c.created_at,
-            tag.c.created_by,
-            tag_name.c.is_alias,
+        select(tag_name.c.tag_id, tag_name.c.name, tag_name.c.is_alias).where(
+            tag_name.c.name_key == key
         )
-        .join(tag_name, tag_name.c.tag_id == tag.c.id)
-        .where(tag_name.c.name_key == key)
     )
     row = rows.first()
     if row is None:
         return None
-    matched = row.name
-    canonical = row if not row.is_alias else None
-    if canonical is None:
-        # Matched a synonym: the caller wants the tag, so fetch the name it is filed under.
-        found = await get(connection, row.id)
-        if found is None:  # pragma: no cover - a tag always has a canonical name
-            raise RuntimeError(f"tag {row.id} has no canonical name")
-        return Resolved(tag=found, matched=matched, is_alias=True)
-    return Resolved(
-        tag=_as_tag((row.id, row.name, row.name_key, row.status, row.created_at, row.created_by)),
-        matched=matched,
-        is_alias=False,
-    )
+    found = await get(connection, row.tag_id)
+    if found is None:  # pragma: no cover - a tag always has a canonical name
+        raise RuntimeError(f"tag {row.tag_id} has no canonical name")
+    return Resolved(tag=found, matched=row.name, is_alias=row.is_alias)
 
 
 async def aliases_of(connection: AsyncConnection, tag_id: UUID) -> list[str]:
@@ -319,6 +332,24 @@ async def ancestors_of(connection: AsyncConnection, tag_id: UUID) -> list[Tag]:
     return [_as_tag(tuple(row)) for row in rows.all()]
 
 
+def _rejected_on(file_id: Any, tag_id: Any) -> Any:
+    """Whether a person has rejected this tag on this file — the suppression record (FR-5).
+
+    Written as a correlated `EXISTS` because it belongs *inside* the queries that must respect
+    it: a rejection is not a filter callers can be trusted to remember.
+    """
+    rejection = file_tag.alias("rejection")
+    return (
+        select(literal(1))
+        .where(
+            rejection.c.file_id == file_id,
+            rejection.c.tag_id == tag_id,
+            rejection.c.provenance == "rejected",
+        )
+        .exists()
+    )
+
+
 async def usage_of(
     connection: AsyncConnection, tag_ids: list[UUID], *, owner_id: UUID
 ) -> dict[UUID, Usage]:
@@ -330,8 +361,10 @@ async def usage_of(
     """
     if not tag_ids:
         return {}
-    files = await connection.execute(
-        select(file_tag.c.tag_id, func.count().label("total"))
+    # A file counts once whether a person tagged it, a machine claimed it, or both — so the two
+    # sources are unioned into (tag, file) pairs and counted, rather than added up.
+    curated = (
+        select(file_tag.c.tag_id, file_tag.c.file_id)
         .select_from(file_tag)
         .join(file, file.c.id == file_tag.c.file_id)
         .join(workspace, workspace.c.id == file.c.workspace_id)
@@ -342,7 +375,25 @@ async def usage_of(
             file.c.state == "live",
             workspace.c.owner_id == owner_id,
         )
-        .group_by(file_tag.c.tag_id)
+    )
+    claimed = (
+        select(file_auto_tag.c.tag_id, file_version.c.file_id)
+        .select_from(file_auto_tag)
+        .join(file_version, file_version.c.id == file_auto_tag.c.file_version_id)
+        .join(file, file.c.id == file_version.c.file_id)
+        .join(workspace, workspace.c.id == file.c.workspace_id)
+        .where(
+            file_auto_tag.c.tag_id.in_(tag_ids),
+            # The current version's claims only: an older version's are history, not the file.
+            file_version.c.is_current,
+            file.c.state == "live",
+            workspace.c.owner_id == owner_id,
+            ~_rejected_on(file_version.c.file_id, file_auto_tag.c.tag_id),
+        )
+    )
+    pairs = curated.union(claimed).subquery("carried")
+    files = await connection.execute(
+        select(pairs.c.tag_id, func.count().label("total")).group_by(pairs.c.tag_id)
     )
     folders = await connection.execute(
         select(folder_tag.c.tag_id, func.count().label("total"))
@@ -395,15 +446,9 @@ async def complete(
     if not key:
         return []
     rows = await connection.execute(
-        select(
-            tag.c.id,
-            tag.c.status,
-            tag.c.created_at,
-            tag.c.created_by,
-            tag_name.c.name,
-            tag_name.c.name_key,
-            tag_name.c.is_alias,
-        )
+        # Which spellings match, and whose they are. The tags themselves are fetched below, by
+        # id: this query is about names.
+        select(tag.c.id, tag_name.c.name, tag_name.c.is_alias)
         .join(tag_name, tag_name.c.tag_id == tag.c.id)
         .where(
             tag.c.status == "active",
@@ -463,19 +508,28 @@ async def create(
     actor: Actor,
     status: str = "active",
     created_by: UUID | None = None,
+    suggested_by_run_id: UUID | None = None,
 ) -> Tag:
     """Add a word to the vocabulary.
 
     `status` is a parameter rather than always `active` because the same function creates the
     auto-tagger's `suggested` tags (F-003/FR-11) — one place that decides what a new tag looks
-    like, whoever asked for it.
+    like, whoever asked for it. A suggestion also records the run behind it, which is what a
+    review queue shows next to the word.
     """
     display = validate_name(name)
     key = key_of(display)
     await _refuse_taken(connection, key, display)
 
     tag_id = new_id()
-    await connection.execute(insert(tag).values(id=tag_id, status=status, created_by=created_by))
+    await connection.execute(
+        insert(tag).values(
+            id=tag_id,
+            status=status,
+            created_by=created_by,
+            suggested_by_run_id=suggested_by_run_id,
+        )
+    )
     await _claim_name(connection, key=key, name=display, tag_id=tag_id, is_alias=False)
     # Its own depth-0 row, so a subtree query includes the tag itself without a special case.
     # A full rebuild would be honest too and pointlessly expensive: a new tag has no edges.
@@ -664,6 +718,7 @@ class Merged:
 
     files: int
     folders: int
+    claims: int
     aliases: int
     edges: int
 
@@ -699,6 +754,7 @@ async def merge(
 
     files = await _merge_file_tags(connection, source_id=source_id, target_id=target_id)
     folders = await _merge_folder_tags(connection, source_id=source_id, target_id=target_id)
+    claims = await _merge_claims(connection, source_id=source_id, target_id=target_id)
     edges = await _merge_edges(connection, source_id=source_id, target_id=target_id)
 
     aliases = await connection.execute(
@@ -720,14 +776,43 @@ async def merge(
             "into": target.name,
             "files": files,
             "folders": folders,
+            "claims": claims,
         },
     )
-    return Merged(files=files, folders=folders, aliases=aliases.rowcount, edges=edges)
+    return Merged(
+        files=files, folders=folders, claims=claims, aliases=aliases.rowcount, edges=edges
+    )
 
 
 #: Which curation statement survives a merge collision. Positive beats negative; between two
 #: positives, the one that also carries a machine's claim behind it.
 _CURATION_RANK = {"rejected": 0, "manual": 1, "confirmed": 2}
+
+
+async def _merge_claims(connection: AsyncConnection, *, source_id: UUID, target_id: UUID) -> int:
+    """Re-point the machine claims. A collision is one run saying the same thing twice.
+
+    The unique key is (version, tag, run), so a run that claimed both words ends up with two
+    rows that are now the same claim — the second is dropped rather than merged, because a
+    claim carries no user's word to lose. Anything with no counterpart simply moves.
+    """
+    duplicate = file_auto_tag.alias("existing")
+    already = (
+        select(literal(1))
+        .where(
+            duplicate.c.file_version_id == file_auto_tag.c.file_version_id,
+            duplicate.c.run_id == file_auto_tag.c.run_id,
+            duplicate.c.tag_id == target_id,
+        )
+        .exists()
+    )
+    moved = await connection.execute(
+        update(file_auto_tag)
+        .where(file_auto_tag.c.tag_id == source_id, ~already)
+        .values(tag_id=target_id)
+    )
+    await connection.execute(delete(file_auto_tag).where(file_auto_tag.c.tag_id == source_id))
+    return moved.rowcount
 
 
 async def _merge_file_tags(connection: AsyncConnection, *, source_id: UUID, target_id: UUID) -> int:
@@ -845,8 +930,14 @@ async def delete_tag(connection: AsyncConnection, *, tag_id: UUID, actor: Actor)
         connection,
         select(func.count()).select_from(folder_tag).where(folder_tag.c.tag_id == tag_id),
     )
-    if files or folders:
-        raise TagInUseError(tag_id, files=files, folders=folders)
+    # A machine's claim counts too: erasing the word would leave a run's output referring to
+    # nothing, and "a machine mentioned it" is history in the sense ADR-0006 means.
+    claims = await _count(
+        connection,
+        select(func.count()).select_from(file_auto_tag).where(file_auto_tag.c.tag_id == tag_id),
+    )
+    if files or folders or claims:
+        raise TagInUseError(tag_id, files=files + claims, folders=folders)
 
     await connection.execute(delete(tag).where(tag.c.id == tag_id))
     await rebuild_closure(connection)
@@ -858,6 +949,68 @@ async def delete_tag(connection: AsyncConnection, *, tag_id: UUID, actor: Actor)
         actor=actor,
         details={"name": found.name},
     )
+
+
+class NotASuggestionError(Exception):
+    """Approve and reject are answers to a *proposal*; a tag in the vocabulary is not one.
+
+    Retiring an established word is a different act with different consequences (files carry it,
+    searches use it) and deliberately has no endpoint yet: it would need a decision about what
+    happens to those files, and nothing in v1 asks for it.
+    """
+
+    def __init__(self, tag_id: UUID, status: str) -> None:
+        super().__init__(status)
+        self.tag_id = tag_id
+        self.status = status
+
+
+async def review(
+    connection: AsyncConnection, *, tag_id: UUID, approved: bool, reviewer: UUID, actor: Actor
+) -> Tag:
+    """Decide about a machine's proposal (F-003/FR-12): into the vocabulary, or turned down.
+
+    Approving is the whole of it — the word becomes `active` and every claim already recorded
+    against it becomes visible, searchable and completable without touching a single file row.
+
+    Rejecting does two things, and the second is the point of the state: the word becomes
+    `rejected` and **its claims are deleted**. What stays is the row and its name, which is the
+    suppression record — a later run proposing the same word finds it already refused instead of
+    creating the suggestion again (ADR-0006).
+    """
+    found = await get(connection, tag_id)
+    if found is None:
+        raise UnknownTagError(tag_id)
+    if not found.is_suggestion:
+        raise NotASuggestionError(tag_id, found.status)
+
+    await connection.execute(
+        update(tag)
+        .where(tag.c.id == tag_id)
+        .values(
+            status="active" if approved else "rejected",
+            reviewed_at=func.now(),
+            reviewed_by=reviewer,
+        )
+    )
+    discarded = 0
+    if not approved:
+        removed = await connection.execute(
+            delete(file_auto_tag).where(file_auto_tag.c.tag_id == tag_id)
+        )
+        discarded = removed.rowcount
+    await events.record(
+        connection,
+        action=events.TAG_APPROVED if approved else events.TAG_REJECTED,
+        resource_type=events.RESOURCE_TAG,
+        resource_id=tag_id,
+        actor=actor,
+        details={"name": found.name, "claims_discarded": discarded},
+    )
+    reviewed = await get(connection, tag_id)
+    if reviewed is None:  # pragma: no cover - updated in this transaction
+        raise RuntimeError(f"tag {tag_id} vanished while being reviewed")
+    return reviewed
 
 
 # ------------------------------------------------------------------------------- the closure
@@ -966,6 +1119,7 @@ __all__ = [
     "Merged",
     "NameRaceError",
     "NameTakenError",
+    "NotASuggestionError",
     "Resolved",
     "Tag",
     "TagInUseError",
@@ -987,6 +1141,7 @@ __all__ = [
     "rebuild_closure",
     "rename",
     "resolve",
+    "review",
     "set_aliases",
     "set_parents",
     "usage_of",

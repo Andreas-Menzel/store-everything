@@ -16,8 +16,17 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { computed, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
+import TagList from '@/features/tags/TagList.vue';
 import UploadPanel from '@/features/upload/UploadPanel.vue';
-import { AppAlert, AppButton, AppCard, AppEmpty, AppSpinner, toFailure } from '@/shared';
+import {
+  AppAlert,
+  AppButton,
+  AppCard,
+  AppEmpty,
+  AppSpinner,
+  AppThumbnail,
+  toFailure,
+} from '@/shared';
 
 type Ordering = 'name' | 'size' | 'modified';
 
@@ -54,6 +63,24 @@ const children = useInfiniteQuery({
 const rows = computed<Child[]>(() =>
   (children.data.value?.pages ?? []).flatMap((page) => page?.data ?? []),
 );
+
+/**
+ * The thumbnail URL for a row, pinned to the version the listing named.
+ *
+ * Pinned on purpose: that URL identifies bytes which can never change, so the browser may cache
+ * it for a year without asking again ([F-028/FR-4](../../../features/F-028-thumbnails-and-previews.md)).
+ * 512 rather than 256 because a row's picture is drawn at device pixel ratios above one, and the
+ * server snaps a request up into its fixed set anyway.
+ */
+function thumbnailUrl(row: Extract<Child, { kind?: 'file' }>): string {
+  return `/api/v1/files/${row.id}/thumbnail?size=512&v=${row.version}`;
+}
+
+/** Three letters for a file with nothing to render — an icon a person can read. */
+function typeLabel(mediaType: string): string {
+  const subtype = mediaType.split('/')[1] ?? '';
+  return (subtype.split(/[.+-]/).pop() ?? 'file').slice(0, 4).toUpperCase();
+}
 
 function bytes(count: number): string {
   const units = ['B', 'kB', 'MB', 'GB', 'TB'];
@@ -136,6 +163,20 @@ async function refresh(): Promise<void> {
             <template v-if="row.kind === 'file'">
               <RouterLink
                 :to="{ name: 'file', params: { id: row.id } }"
+                class="h-10 w-10 shrink-0 overflow-hidden rounded-(--radius-control)"
+                :aria-hidden="true"
+                tabindex="-1"
+              >
+                <AppThumbnail
+                  :src="row.has_thumbnail ? thumbnailUrl(row) : undefined"
+                  :placeholder="row.placeholder_hash"
+                  :alt="''"
+                >
+                  <template #fallback>{{ typeLabel(row.media_type) }}</template>
+                </AppThumbnail>
+              </RouterLink>
+              <RouterLink
+                :to="{ name: 'file', params: { id: row.id } }"
                 class="grow truncate text-sm underline-offset-2 hover:underline"
               >
                 {{ row.name }}
@@ -156,6 +197,14 @@ async function refresh(): Promise<void> {
             Show more
           </AppButton>
         </div>
+      </AppCard>
+
+      <AppCard title="Tags">
+        <p class="mb-3 text-sm text-(--color-ink-muted)">
+          These describe the folder itself. Tagging a folder “tax” does not make everything inside
+          it a tax document — a file keeps its own tags.
+        </p>
+        <TagList :subject="{ kind: 'folder', id: id }" />
       </AppCard>
 
       <UploadPanel

@@ -120,6 +120,16 @@ TAG_DELETED = "tag.deleted"
 #: F-003/FR-9 promises the audit trail carries, on a resource other people can also edit.
 FILE_TAGGED = "file.tagged"
 FILE_UNTAGGED = "file.untagged"
+#: Curation *of a machine's claim*, which is a different act from tagging by hand and worth its
+#: own action: these two are the ground truth a model's quality could later be measured against
+#: (ADR-0004), and "who disagreed with the model" is the question an audit reader has.
+FILE_TAG_CONFIRMED = "file.tag_confirmed"
+FILE_TAG_REJECTED = "file.tag_rejected"
+
+#: A machine's proposal, decided (F-003/FR-12). Approving admits the word to the vocabulary;
+#: rejecting keeps the row as a suppression record and takes its claims with it.
+TAG_APPROVED = "tag.approved"
+TAG_REJECTED = "tag.rejected"
 
 FOLDER_TAGGED = "folder.tagged"
 FOLDER_UNTAGGED = "folder.untagged"

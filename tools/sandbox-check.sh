@@ -73,6 +73,15 @@ SE_SESSION_COOKIE_SECURE=false
 SE_REFERENCE_TOKEN=placeholder
 EOF
 
+# Every extractor credential the compose files mention, with a placeholder value. Read out of the
+# files rather than listed here: compose interpolates the whole file on every command, so one
+# extractor service added next month would otherwise break this script — which is how it broke
+# once already. The tokens are never used; nothing in this check claims a job.
+for variable in $(grep -ho '\${SE_[A-Z_]*_TOKEN' compose.yaml compose.extractor-example.yaml \
+                  | sed 's/^\${//' | sort -u); do
+  grep -q "^$variable=" "$ENV_FILE" || echo "$variable=placeholder" >> "$ENV_FILE"
+done
+
 compose() { "${COMPOSE[@]}" --env-file "$ENV_FILE" "$@"; }
 
 note "building and starting the core"

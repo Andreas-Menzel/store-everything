@@ -327,8 +327,29 @@ that belongs to the app.
 ## Installing an extractor
 
 An **extractor** is a container that analyses files: document text, OCR, thumbnails,
-transcription. The app ships none yet — the analysis capabilities arrive through phase 2 — but the
-mechanism is here, and installing one is always the same three steps.
+transcription. Installing one is always the same three steps, and the first official one —
+`preview-gen`, which renders the thumbnails and placeholders every grid needs — is already in
+`compose.yaml`. It will not start until you have done step 1 for it:
+
+```bash
+for id in preview-gen pdf-pages basic-metadata pdf-text text-plain tesseract-ocr; do
+  curl -X POST https://YOUR-HOST/api/v1/extractors \
+    -H 'Content-Type: application/json' -b cookies.txt -d "{\"id\":\"$id\"}"
+done
+# → put each credential in .env: SE_PREVIEW_GEN_TOKEN, SE_PDF_PAGES_TOKEN,
+#   SE_BASIC_METADATA_TOKEN, SE_PDF_TEXT_TOKEN, SE_TEXT_PLAIN_TOKEN,
+#   SE_TESSERACT_OCR_TOKEN
+# → docker compose up -d
+```
+
+Until they run, files are stored, searchable by name and readable — they simply have no
+thumbnails, no page images and no extracted text, and the API says so per file rather than leaving
+a client to discover it from a broken image.
+
+An extractor container with no credential yet starts, says `SE_EXTRACTOR_TOKEN is not set`, and
+exits; Docker restarts it on a backoff until you paste the token in. That is deliberately not a
+hard failure of `docker compose`: the credentials are minted *by* the running API, so a compose
+file that refused to start without them could never be started a first time.
 
 **1. Provision its id and mint its credential.** As an administrator:
 
@@ -343,9 +364,10 @@ same rule personal access tokens follow. An extractor cannot register itself int
 credential is bound to the id you chose here, so a leaked one cannot invent a second extractor or
 stamp another's provenance.
 
-**2. Put the credential in `.env`** and add the service. `compose.extractor-example.yaml` is a
-working one to copy — it runs the reference extractor, which reads each file it is given and
-checks the bytes against the hash the API declared:
+**2. Put the credential in `.env`** and add the service. `preview-gen` in `compose.yaml` is the
+worked example of a real one; `compose.extractor-example.yaml` is the annotated template, running
+the reference extractor, which reads each file it is given and checks the bytes against the hash
+the API declared:
 
 ```bash
 docker compose -f compose.yaml -f compose.extractor-example.yaml up -d

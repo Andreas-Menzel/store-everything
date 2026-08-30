@@ -28,14 +28,18 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from store_everything import derived as derived_store
+from store_everything import tagging
 from store_everything.derived import DerivedStore, InvalidAssetNameError
 from store_everything.ids import new_id
-from store_everything.tables import derived_asset, metadata_entry, segment
+from store_everything.tables import MAX_TAG_NAME_LENGTH, derived_asset, metadata_entry, segment
 
 MAX_METADATA_ENTRIES = 500
 MAX_SEGMENTS = 50_000
 MAX_ASSETS = 500
 MAX_SEGMENT_LENGTH = 100_000
+#: Per envelope. An open-vocabulary model can emit a lot of labels, and every unmatched one
+#: becomes a suggestion an administrator has to look at — so the queue has a bound per job.
+MAX_TAGS = 200
 
 
 class _Part(BaseModel):
@@ -144,6 +148,19 @@ class MetadataEntry(_Part):
     confidence: float | None = Field(default=None, ge=0, le=1)
 
 
+class TagEntry(_Part):
+    """One label a machine produced, and how sure it was.
+
+    A *name*, not a tag id: a model's vocabulary is not ours, so the core maps the label into
+    the tag vocabulary (ADR-0006) rather than making every extractor learn it. The bounds are
+    the tag-name policy's, so a label that could never be a tag name is refused here — with a
+    field-level problem — instead of failing later on the way into the table.
+    """
+
+    name: str = Field(min_length=1, max_length=MAX_TAG_NAME_LENGTH)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
 class SegmentEntry(_Part):
     """A span of text and where it is."""
 
@@ -175,6 +192,7 @@ class Envelope(_Part):
 
     metadata: tuple[MetadataEntry, ...] = Field(default=(), max_length=MAX_METADATA_ENTRIES)
     text_segments: tuple[SegmentEntry, ...] = Field(default=(), max_length=MAX_SEGMENTS)
+    tags: tuple[TagEntry, ...] = Field(default=(), max_length=MAX_TAGS)
     derived_assets: tuple[AssetEntry, ...] = Field(default=(), max_length=MAX_ASSETS)
 
     @model_validator(mode="after")
@@ -192,6 +210,9 @@ class Applied:
     metadata: int
     segments: int
     assets: int
+    tags: int = 0
+    """Claims recorded. Lower than what was sent when a label was already rejected — as a word
+    or on this file — which is the answer an extractor should be able to see."""
 
 
 class MissingAssetError(Exception):
@@ -209,6 +230,7 @@ async def apply(
     connection: AsyncConnection,
     *,
     run_id: UUID,
+    file_id: UUID,
     file_version_id: UUID,
     source_hash: str,
     generation: int,
@@ -222,6 +244,9 @@ async def apply(
     rather than doubles. Then bytes before rows, per asset: a committed file with no row is
     debris the janitor collects, while a row with no file is a broken promise
     (02 § invariants #8).
+
+    Tags take the file's id as well as the version's, because a claim is stored per version
+    while the rejection that can veto it belongs to the file (ADR-0004).
     """
     await discard(connection, run_id=run_id)
 
@@ -279,10 +304,22 @@ async def apply(
             )
         )
 
+    claimed = await tagging.apply_claims(
+        connection,
+        file_id=file_id,
+        file_version_id=file_version_id,
+        run_id=run_id,
+        generation=generation,
+        claims=tuple(
+            tagging.Claim(name=entry.name, confidence=entry.confidence) for entry in envelope.tags
+        ),
+    )
+
     return Applied(
         metadata=len(envelope.metadata),
         segments=len(envelope.text_segments),
         assets=len(envelope.derived_assets),
+        tags=claimed,
     )
 
 
@@ -292,9 +329,13 @@ async def discard(connection: AsyncConnection, *, run_id: UUID) -> None:
     Deleting the files would be wrong here: a derived asset lives under the *source* hash, so a
     second version of identical content — or a reused run — points at the same bytes. Reclaiming
     them is the purge's job, once nothing references them at all (F-014).
+
+    Tag *claims* go the same way and user curation does not, which is the whole of invariant #4:
+    this function is the one reprocessing calls, and `file_tag` is not in it.
     """
     for table in (segment, metadata_entry, derived_asset):
         await connection.execute(delete(table).where(table.c.run_id == run_id))
+    await tagging.discard_claims(connection, run_id=run_id)
 
 
 def _stored_value(entry: MetadataEntry) -> dict[str, Any]:

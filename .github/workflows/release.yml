@@ -41,3 +41,43 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  extractors:
+    # The images `compose.yaml` names for the official extractors. Published from the same tag as
+    # the core, because an extractor speaks a contract version and the pair has to be installable
+    # together — a compose file pointing at an image nobody pushed is a broken install.
+    name: Publish extractor images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Everything whose tooling is a wheel shares one image and picks an entrypoint.
+          - name: extractors
+            dockerfile: extractors/Dockerfile
+          # OCR needs the engine and its language data as system packages, so it has its own.
+          - name: extractors-ocr
+            dockerfile: extractors/Dockerfile.ocr
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/andreas-menzel/store-everything-${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: extractors
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

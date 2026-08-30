@@ -35,6 +35,12 @@ async function signOut(): Promise<void> {
           Workspaces
         </RouterLink>
         <RouterLink
+          :to="{ name: 'tags' }"
+          class="text-(--color-ink-muted) hover:text-(--color-ink) aria-[current=page]:text-(--color-ink) aria-[current=page]:underline"
+        >
+          Tags
+        </RouterLink>
+        <RouterLink
           :to="{ name: 'docs' }"
           class="text-(--color-ink-muted) hover:text-(--color-ink) aria-[current=page]:text-(--color-ink) aria-[current=page]:underline"
         >

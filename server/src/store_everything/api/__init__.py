@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from fastapi.routing import APIRoute
 
+#: Where the versioned API lives. Here rather than in the router that mounts it, because the
+#: routers *inside* it need to write URLs into their own responses — a preview descriptor names
+#: the endpoint that serves each asset (F-028/FR-6) — and importing the router from a router it
+#: includes is a cycle.
+API_V1_PREFIX = "/api/v1"
+
 
 def operation_id(route: APIRoute) -> str:
     """Name operations after their handler.

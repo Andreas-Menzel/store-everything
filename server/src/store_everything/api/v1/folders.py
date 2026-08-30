@@ -33,6 +33,7 @@ from store_everything import (
     filestore,
     folders,
     names,
+    previews,
     tagging,
     workspaces,
 )
@@ -129,6 +130,16 @@ class ChildFile(BaseSchema):
 
     extraction_status: extraction.Status
     """`pending` while content analysis is still running for this version (F-001/FR-8)."""
+
+    placeholder_hash: str | None = None
+    """A few dozen bytes that look like the file, for the cell to paint *now*
+    ([F-028/FR-5](../../../../features/F-028-thumbnails-and-previews.md)). Inline rather than a
+    request per row: a grid of fifty files would otherwise be fifty requests before it can show
+    anything at all. Absent for a file with nothing to render."""
+
+    has_thumbnail: bool = False
+    """Whether asking for a thumbnail will produce one. A client renders a type icon when it is
+    false instead of discovering the fact from a failed image request (FR-3)."""
 
     modified_at: datetime | None
     created_at: datetime
@@ -391,9 +402,21 @@ async def list_children(
     shown = page_of_files[:remaining]
     # One query for the whole page's extraction status, not one per row: a folder listing is the
     # hottest read in the app, and `pending` is what makes a just-uploaded file honest (F-001/FR-8).
-    statuses = await extraction.statuses_of(connection, [known.version.id for known in shown])
+    versions = [known.version.id for known in shown]
+    statuses = await extraction.statuses_of(connection, versions)
+    # Two more page-wide queries for what a grid needs before it can paint: the placeholder to
+    # show immediately, and whether a thumbnail request will succeed at all (F-028/FR-5, FR-3).
+    placeholders = await previews.placeholders(connection, versions)
+    renderable = await previews.with_thumbnails(connection, versions)
     items.extend(
-        _as_child_file(known, here, statuses.get(known.version.id, "none")) for known in shown
+        _as_child_file(
+            known,
+            here,
+            statuses.get(known.version.id, "none"),
+            placeholder=placeholders.get(known.version.id),
+            has_thumbnail=known.version.id in renderable,
+        )
+        for known in shown
     )
     if len(page_of_files) <= remaining:
         return Page(data=items, next_cursor=None)
@@ -446,7 +469,14 @@ def _as_child_folder(found: folders.Folder, here: str) -> ChildFolder:
     )
 
 
-def _as_child_file(known: files.Known, here: str, status: extraction.Status) -> ChildFile:
+def _as_child_file(
+    known: files.Known,
+    here: str,
+    status: extraction.Status,
+    *,
+    placeholder: str | None = None,
+    has_thumbnail: bool = False,
+) -> ChildFile:
     return ChildFile(
         id=known.file.id,
         name=known.file.name,
@@ -457,6 +487,8 @@ def _as_child_file(known: files.Known, here: str, status: extraction.Status) -> 
         media_class=known.version.media_class,  # pyright: ignore[reportArgumentType]
         version=known.version.id,
         extraction_status=status,
+        placeholder_hash=placeholder,
+        has_thumbnail=has_thumbnail,
         modified_at=known.version.modified_at,
         created_at=known.file.created_at,
     )

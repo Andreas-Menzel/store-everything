@@ -4,8 +4,9 @@
     "Every fixture states where it came from, under which licence, and what truth it backs.",
     "`sha256` and `bytes` are filled in by `make corpus`; licence and `asserts` are written",
     "by a human, because both are claims someone has to stand behind.",
-    "Corpus v0 covers what phase 0 can trust without an extractor. Positioned documents",
-    "arrive with phase 2, images and audio/video with phase 3."
+    "Corpus v0 covered what phase 0 could trust without an extractor. Positioned documents",
+    "and images arrived with phase 2 — thumbnails need a picture and page anchors need pages;",
+    "audio and video arrive with phase 3."
   ],
   "budget": {
     "total_bytes": 20971520,
@@ -29,6 +30,33 @@
       "asserts": "Markdown with two headings ('Fixture heading', 'Second heading') and a two-item list; 'xylophone marmalade' occurs exactly once.",
       "sha256": "a98489d3a33c23abf86ab0f97f9bda976c7ab8888816b855f348362d8647fbba",
       "bytes": 165
+    },
+    {
+      "path": "images/two-tone.png",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "800x400 8-bit RGB PNG, exactly 2:1. The left half is red (203,32,39) and the right half blue (30,66,159), so a thumbnail's aspect and a placeholder's colours are both checkable from one pixel.",
+      "sha256": "e34852a1f3e40876c07732d2114b9ae0fb4a2385b987f00367db48b4e5cd5aa7",
+      "bytes": 2131
+    },
+    {
+      "path": "documents/three-pages.pdf",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Three US-Letter pages, one line of Helvetica text each, uncompressed. Page 1 is 'Store Everything fixture page one.', page 2 the pangram, page 3 mentions 'xylophone marmalade' exactly once — so a page anchor has an exact expected value.",
+      "sha256": "d5701d33b601dc24367ebb4e68b84c290e48357e403a416f82e96d244043eafd",
+      "bytes": 1213
+    },
+    {
+      "path": "documents/mixed-text.pdf",
+      "origin": "generated",
+      "generator": "corpus/generate.py",
+      "license": "AGPL-3.0-only",
+      "asserts": "Two US-Letter pages. Page 1 reads 'This page carries its own text; the next one carries none.'; page 2 has no text operators at all, only a filled rectangle. So a per-page routing decision has an exact expected value: page 1 extracted, page 2 in `ocr_pages`.",
+      "sha256": "b0bb688a010f31e935d26627b16442181d9436256fb3444ff11e14dafa3e7a2a",
+      "bytes": 880
     },
     {
       "path": "adversarial/zero-byte.bin",

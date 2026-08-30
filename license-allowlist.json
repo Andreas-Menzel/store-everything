@@ -1,8 +1,9 @@
 {
   "$comment": [
     "Licence policy for dependencies we distribute (ADR-0016). Development-only tooling",
-    "is out of scope — it never ships. Adding an entry here is a deliberate, reviewed",
+    "is out of scope \u2014 it never ships. Adding an entry here is a deliberate, reviewed",
     "decision: it asserts the licence is compatible with distributing this AGPL-3.0 work.",
+    "Covers wheels, npm packages and the operating-system packages our images install: an apt package baked into a published image is distributed as surely as a dependency is.",
     "Enforced by `make licenses`."
   ],
   "allowed": [
@@ -21,14 +22,18 @@
     "PSF-2.0",
     "MPL-2.0",
     "Mozilla Public License 2.0 (MPL 2.0)",
-    "LGPL-3.0-only"
+    "LGPL-3.0-only",
+    "GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "AGPL-3.0-only"
   ],
   "rationale": {
-    "MIT-0": "cffi (via argon2-cffi, the password hasher). MIT with the attribution clause removed — strictly more permissive than MIT, which is already allowed, so nothing about distribution changes.",
+    "MIT-0": "cffi (via argon2-cffi, the password hasher). MIT with the attribution clause removed \u2014 strictly more permissive than MIT, which is already allowed, so nothing about distribution changes.",
     "LGPL-3.0-only": "psycopg and its helpers. The LGPL explicitly permits use by, and distribution with, a (A)GPL-3.0 work; we link it unmodified and ship its source availability notice.",
-    "MPL-2.0": "lightningcss (via Tailwind). File-level copyleft: MPL-2.0 §3.3 permits distribution as part of a larger AGPL-3.0 work provided the MPL-covered files stay under the MPL.",
-    "Mozilla Public License 2.0 (MPL 2.0)": "certifi (via httpx, in the extractor SDK). The same licence as the entry above, spelled as a classifier rather than as an SPDX id — the substance, and the reasoning, are identical.",
-    "Apache Software License; MIT License": "uvloop declares both; either alone is compatible."
+    "MPL-2.0": "lightningcss (via Tailwind). File-level copyleft: MPL-2.0 \u00a73.3 permits distribution as part of a larger AGPL-3.0 work provided the MPL-covered files stay under the MPL.",
+    "Mozilla Public License 2.0 (MPL 2.0)": "certifi (via httpx, in the extractor SDK). The same licence as the entry above, spelled as a classifier rather than as an SPDX id \u2014 the substance, and the reasoning, are identical.",
+    "Apache Software License; MIT License": "uvloop declares both; either alone is compatible.",
+    "GNU Lesser General Public License v3 or later (LGPLv3+)": "pyvips-binary, the wheel that carries libvips for `preview-gen`. Same substance as the LGPL-3.0-only entry above, spelled as a classifier: the LGPL permits use by, and distribution with, an (A)GPL-3.0 work. We ship it unmodified, load it through its own binding, and keep its source-availability notice.",
+    "AGPL-3.0-only": "This project's own licence (ADR-0016). A dependency under the same terms as the work that distributes it needs no further reasoning \u2014 and the AGPL is why PyMuPDF's decision tree is available to us at all without a commercial licence."
   },
   "packageExceptions": {
     "python:colorama": {
@@ -38,6 +43,32 @@
     "python:tzdata": {
       "license": "Apache-2.0",
       "reason": "Windows-only conditional dependency; same reasoning as colorama."
+    },
+    "python:pypdfium2": {
+      "license": "BSD-3-Clause",
+      "reason": "PDFium (Google) is BSD-3-Clause; the binding adds Apache-2.0 parts and the wheel's metadata states both as free text rather than an SPDX expression, which this gate cannot read. Both licences are already allowed above; the entry records the reading rather than granting anything new."
+    },
+    "python:pymupdf": {
+      "license": "AGPL-3.0-only",
+      "reason": "PyMuPDF is dual-licensed: AGPL-3.0 or an Artifex commercial licence, and its metadata says so as free text rather than as an SPDX expression. This project is AGPL-3.0-only, so the open half is the one that applies and nothing about distribution changes \u2014 which is also why it was chosen over a permissively licensed PDF text extractor with a worse decision tree (05 \u00a7 built-in extractors)."
+    }
+  },
+  "systemPackages": {
+    "tesseract-ocr": {
+      "license": "Apache-2.0",
+      "reason": "The OCR engine, baked into `extractors/Dockerfile.ocr` (05 \u00a7 built-in extractors). Apache-2.0 upstream and in Debian."
+    },
+    "tesseract-ocr-eng": {
+      "license": "Apache-2.0",
+      "reason": "English `tessdata_fast` model, shipped in the OCR image so it needs no network."
+    },
+    "tesseract-ocr-deu": {
+      "license": "Apache-2.0",
+      "reason": "German `tessdata_fast` model \u2014 the second language this instance searches (Q14)."
+    },
+    "tesseract-ocr-osd": {
+      "license": "Apache-2.0",
+      "reason": "Orientation and script detection data, used to read a page that was scanned sideways."
     }
   }
 }

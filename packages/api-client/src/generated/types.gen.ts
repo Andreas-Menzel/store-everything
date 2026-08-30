@@ -35,6 +35,7 @@ export type AppliedTag = {
      * User
      */
     user: string | null;
+    source?: TagSource | null;
     /**
      * Created At
      */
@@ -88,6 +89,14 @@ export type ChildFile = {
      */
     version: string;
     extraction_status: Status;
+    /**
+     * Placeholder Hash
+     */
+    placeholder_hash?: string | null;
+    /**
+     * Has Thumbnail
+     */
+    has_thumbnail?: boolean;
     /**
      * Modified At
      */
@@ -418,6 +427,14 @@ export type FileSummary = {
      * Tags
      */
     tags?: Array<AppliedTag>;
+    /**
+     * Placeholder Hash
+     */
+    placeholder_hash?: string | null;
+    /**
+     * Has Thumbnail
+     */
+    has_thumbnail?: boolean;
 };
 
 /**
@@ -724,6 +741,84 @@ export type PageWorkspaceSummary = {
 };
 
 /**
+ * PreviewAsset
+ *
+ * One thing a client can render or download, named by the descriptor.
+ */
+export type PreviewAsset = {
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Params
+     */
+    params: {
+        [key: string]: unknown;
+    };
+    /**
+     * Size Bytes
+     */
+    size_bytes: number;
+};
+
+/**
+ * PreviewDescriptor
+ *
+ * What exists, and what can be made, for one file (F-028/FR-6).
+ *
+ * A client renders from this rather than from the MIME type. That is the difference between a
+ * viewer that has to know about every format the instance might grow and one that shows what
+ * the server says is there — including kinds that did not exist when the client shipped.
+ */
+export type PreviewDescriptor = {
+    /**
+     * Version
+     */
+    version: string;
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Media Class
+     */
+    media_class: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    /**
+     * Placeholder Hash
+     */
+    placeholder_hash: string | null;
+    /**
+     * Thumbnail Sizes
+     */
+    thumbnail_sizes: Array<number>;
+    /**
+     * Assets
+     */
+    assets: Array<PreviewAsset>;
+    /**
+     * Pages
+     */
+    pages?: number | null;
+    /**
+     * Pages Url
+     */
+    pages_url?: string | null;
+    /**
+     * Renditions
+     */
+    renditions?: Array<string>;
+};
+
+/**
  * ReadyResponse
  */
 export type ReadyResponse = {
@@ -731,6 +826,30 @@ export type ReadyResponse = {
      * Status
      */
     status: 'ready';
+};
+
+/**
+ * RenditionInfo
+ *
+ * One alternative form of the whole file, ready to download (ADR-0008).
+ */
+export type RenditionInfo = {
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Media Type
+     */
+    media_type: string;
+    /**
+     * Size Bytes
+     */
+    size_bytes: number;
+    /**
+     * Url
+     */
+    url: string;
 };
 
 /**
@@ -1018,6 +1137,18 @@ export type TagDetail = {
      * Created By
      */
     created_by: string | null;
+    /**
+     * Suggested By Run
+     */
+    suggested_by_run?: string | null;
+    /**
+     * Reviewed At
+     */
+    reviewed_at?: string | null;
+    /**
+     * Reviewed By
+     */
+    reviewed_by?: string | null;
 };
 
 /**
@@ -1057,6 +1188,37 @@ export type TagReference = {
      * Name
      */
     name: string;
+};
+
+/**
+ * TagSource
+ *
+ * Which run claimed a tag, and how sure it was — the full stamp F-003/FR-3 asks for.
+ *
+ * The version and model are separate fields on purpose: the same detector at a newer model
+ * version is a different claim, and reprocessing eligibility is decided on exactly that.
+ */
+export type TagSource = {
+    /**
+     * Extractor
+     */
+    extractor: string;
+    /**
+     * Extractor Version
+     */
+    extractor_version: string | null;
+    /**
+     * Model Version
+     */
+    model_version: string | null;
+    /**
+     * Generation
+     */
+    generation: number;
+    /**
+     * Confidence
+     */
+    confidence: number | null;
 };
 
 /**
@@ -2901,6 +3063,48 @@ export type TagFileResponses = {
 
 export type TagFileResponse = TagFileResponses[keyof TagFileResponses];
 
+export type ConfirmFileTagData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/files/{file_id}/tags/{tag_id}/confirm';
+};
+
+export type ConfirmFileTagErrors = {
+    /**
+     * No such file, or nothing claims that tag on it
+     */
+    404: unknown;
+    /**
+     * That tag is not part of the vocabulary yet
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ConfirmFileTagError = ConfirmFileTagErrors[keyof ConfirmFileTagErrors];
+
+export type ConfirmFileTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: AppliedTag;
+};
+
+export type ConfirmFileTagResponse = ConfirmFileTagResponses[keyof ConfirmFileTagResponses];
+
 export type UntagFileData = {
     body?: never;
     path: {
@@ -2981,6 +3185,258 @@ export type ReadFileContentResponses = {
      * The requested byte range
      */
     206: unknown;
+};
+
+export type ReadFileThumbnailData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: {
+        /**
+         * Size
+         */
+        size?: number | null;
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/thumbnail';
+};
+
+export type ReadFileThumbnailErrors = {
+    /**
+     * No such file, or nothing to render for it
+     */
+    404: unknown;
+    /**
+     * The file is in the trash
+     */
+    410: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileThumbnailError = ReadFileThumbnailErrors[keyof ReadFileThumbnailErrors];
+
+export type ReadFileThumbnailResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ReadFilePreviewData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: {
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/preview';
+};
+
+export type ReadFilePreviewErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFilePreviewError = ReadFilePreviewErrors[keyof ReadFilePreviewErrors];
+
+export type ReadFilePreviewResponses = {
+    /**
+     * Successful Response
+     */
+    200: PreviewDescriptor;
+};
+
+export type ReadFilePreviewResponse = ReadFilePreviewResponses[keyof ReadFilePreviewResponses];
+
+export type ReadFilePageData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Page
+         */
+        page: number;
+    };
+    query?: {
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/preview/pages/{page}';
+};
+
+export type ReadFilePageErrors = {
+    /**
+     * No such file or page, or nothing can render pages here
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFilePageError = ReadFilePageErrors[keyof ReadFilePageErrors];
+
+export type ReadFilePageResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+    /**
+     * Being rendered; retry after the interval in `Retry-After`
+     */
+    202: unknown;
+};
+
+export type ReadFilePreviewAssetData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Asset Id
+         */
+        asset_id: string;
+    };
+    query?: {
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/preview/assets/{asset_id}';
+};
+
+export type ReadFilePreviewAssetErrors = {
+    /**
+     * No such file or asset
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFilePreviewAssetError = ReadFilePreviewAssetErrors[keyof ReadFilePreviewAssetErrors];
+
+export type ReadFilePreviewAssetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ReadFileRenditionsData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+    };
+    query?: {
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/renditions';
+};
+
+export type ReadFileRenditionsErrors = {
+    /**
+     * No such file, or not yours
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileRenditionsError = ReadFileRenditionsErrors[keyof ReadFileRenditionsErrors];
+
+export type ReadFileRenditionsResponses = {
+    /**
+     * Response Read File Renditions
+     *
+     * Successful Response
+     */
+    200: Array<RenditionInfo>;
+};
+
+export type ReadFileRenditionsResponse = ReadFileRenditionsResponses[keyof ReadFileRenditionsResponses];
+
+export type ReadFileRenditionData = {
+    body?: never;
+    path: {
+        /**
+         * File Id
+         */
+        file_id: string;
+        /**
+         * Kind
+         */
+        kind: string;
+    };
+    query?: {
+        /**
+         * V
+         */
+        v?: string | null;
+    };
+    url: '/api/v1/files/{file_id}/renditions/{kind}';
+};
+
+export type ReadFileRenditionErrors = {
+    /**
+     * No such file, or no such rendition for it
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReadFileRenditionError = ReadFileRenditionErrors[keyof ReadFileRenditionErrors];
+
+export type ReadFileRenditionResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type MoveFileData = {
@@ -3241,3 +3697,87 @@ export type MergeTagResponses = {
 };
 
 export type MergeTagResponse = MergeTagResponses[keyof MergeTagResponses];
+
+export type ApproveTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}/approve';
+};
+
+export type ApproveTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * That tag is not a pending suggestion
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApproveTagError = ApproveTagErrors[keyof ApproveTagErrors];
+
+export type ApproveTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type ApproveTagResponse = ApproveTagResponses[keyof ApproveTagResponses];
+
+export type RejectTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: string;
+    };
+    query?: never;
+    url: '/api/v1/tags/{tag_id}/reject';
+};
+
+export type RejectTagErrors = {
+    /**
+     * Not an administrator
+     */
+    403: unknown;
+    /**
+     * No such tag
+     */
+    404: unknown;
+    /**
+     * That tag is not a pending suggestion
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RejectTagError = RejectTagErrors[keyof RejectTagErrors];
+
+export type RejectTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagDetail;
+};
+
+export type RejectTagResponse = RejectTagResponses[keyof RejectTagResponses];

@@ -34,6 +34,30 @@ Results via `GET /files/{id}/segments`; extraction status via `GET /files/{id}`;
 
 Layout/table structure understanding, handwriting recognition, form-field extraction — candidates for future extractor plugins (the contract already supports them).
 
+## Staging
+
+**Phase 2 delivers FR-1, FR-2, FR-4, FR-6, FR-7 and FR-8** across three extractors: `pdf-text` (the
+per-page decision tree and the `needs_ocr`/`ocr_pages` signal it writes), `text-plain` (text,
+markdown, code and CSV), and `tesseract-ocr` (the OCR half of FR-2, and the `searchable-pdf`
+rendition of FR-8). **FR-3** lands for text, markdown and code with line-range anchors.
+
+Two parts wait for **phase 3**, both because a phase-3 component is what makes them possible:
+
+- **Embeddings** (FR-5): segments feeding `text-v1` needs the `text-embed` extractor and the
+  embedding infrastructure around it.
+- **Office documents** (FR-3's office half) need an anchor that can honestly be used. Reading a `.docx`'s text is a wheel
+  away; saying *where* in it a hit is, is not: the anchor vocabulary is fixed at `page`, `time`,
+  `line`, `sheet`, `region`, `whole` ([02 § Segment](../specs/02-domain-model.md#segment)), and a
+  word-processing document has none of those until something lays it out into pages. This FR's
+  parenthetical "(or section)" invites a kind the domain model does not define — recorded as
+  [Q64](../OPEN-QUESTIONS.md). [05](../specs/05-extractor-contract.md)'s answer is `office-convert`:
+  LibreOffice renders one `pdf` rendition that chains into `pdf-text`, so a hit's page is the page
+  the preview shows — one conversion serving the anchor *and* the preview. It travels with phase
+  3's heavy toolchain, where LibreOffice's ~400 MB image belongs.
+
+So FR-3 is verified for text and stays unverified for office formats rather than being claimed on
+an anchor that would be a guess.
+
 ## Open questions
 
 Routing is per page ([ADR-0020](../decisions/ADR-0020-extractor-dispatch-and-wire-protocol.md): `pdf-text` writes `needs_ocr`/`ocr_pages`, the OCR manifest predicate binds to them); the exact garbled-text thresholds inside `pdf-text`'s decision tree are implementation detail, tuned against corpus fixtures. [Q9](../OPEN-QUESTIONS.md)'s documents part is resolved ([05 § built-in extractors](../specs/05-extractor-contract.md#built-in-extractors-default-installation-all-local)); its embedding/vision/speech part remains for phase 3.

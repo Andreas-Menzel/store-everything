@@ -74,6 +74,60 @@ async function stubbed(page: Page): Promise<void> {
       },
     }),
   );
+  // The tag surfaces: one applied tag on the folder, one word in the vocabulary, and a
+  // suggestion waiting — so the scan sees a populated queue rather than an empty state.
+  await page.route(`**/api/v1/folders/${FOLDER}/tags`, (route) =>
+    route.fulfill({
+      status: 200,
+      json: [
+        {
+          id: '01a02900-0000-7000-8000-000000000t01',
+          name: 'tax',
+          status: 'active',
+          provenance: 'manual',
+          user: IDENTITY.id,
+          source: null,
+          created_at: '2026-08-22T10:00:00Z',
+          updated_at: '2026-08-22T10:00:00Z',
+        },
+      ],
+    }),
+  );
+  await page.route('**/api/v1/tags?**', (route) => {
+    const status = new URL(route.request().url()).searchParams.get('status') ?? 'active';
+    route.fulfill({
+      status: 200,
+      json: {
+        data:
+          status === 'suggested'
+            ? [
+                {
+                  id: '01a02900-0000-7000-8000-000000000t02',
+                  name: 'wombat',
+                  status: 'suggested',
+                  usage: { files: 1, folders: 0 },
+                  parents: [],
+                  matched: null,
+                  matched_alias: false,
+                  created_at: '2026-08-22T10:00:00Z',
+                },
+              ]
+            : [
+                {
+                  id: '01a02900-0000-7000-8000-000000000t01',
+                  name: 'invoice',
+                  status: 'active',
+                  usage: { files: 2, folders: 1 },
+                  parents: [],
+                  matched: null,
+                  matched_alias: false,
+                  created_at: '2026-08-22T10:00:00Z',
+                },
+              ],
+        next_cursor: null,
+      },
+    });
+  });
   await page.route(`**/api/v1/folders/${FOLDER}/children**`, (route) =>
     route.fulfill({
       status: 200,
@@ -196,10 +250,27 @@ test(
       if (focused) reached.push(focused);
     }
 
-    // Everything the frame owns: the app's own link, both sections, and the way out.
+    // Everything the frame owns: the app's own link, every section, and the way out.
     expect(reached).toContain('Store Everything');
     expect(reached).toContain('Workspaces');
+    expect(reached).toContain('Tags');
     expect(reached).toContain('API');
     expect(reached).toContain('Sign out');
+  },
+);
+
+test(
+  'the tag vocabulary has no accessibility violations',
+  { tag: ['@F-027/FR-12'] },
+  async ({ page }) => {
+    await stubbed(page);
+
+    await page.goto('/tags');
+    await expect(page.getByRole('heading', { name: 'Tags', level: 1 })).toBeVisible();
+    // The combobox is the part most likely to be inaccessible — a listbox with no name, an
+    // option with no selected state — so the scan happens with it open.
+    await page.getByLabel('Merge “invoice” into').isHidden();
+
+    await scan(page);
   },
 );

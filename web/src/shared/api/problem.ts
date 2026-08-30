@@ -63,6 +63,13 @@ function asFields(value: unknown): FieldProblem[] {
 export function toFailure(body: unknown, status?: number): Failure {
   const document = asRecord(body);
   const title = asText(document?.title);
+  // Already parsed. A query function throws the `Failure` it made, and a template that renders
+  // `toFailure(query.error)` would otherwise re-read it as a problem document — which keeps the
+  // title and silently loses the field errors, because those live under `errors` in the wire
+  // shape and under `fields` here. Idempotence is cheaper than remembering the difference.
+  if (document !== undefined && Array.isArray(document.fields) && title !== undefined) {
+    return document as unknown as Failure;
+  }
   if (document === undefined || title === undefined) {
     return { ...UNEXPLAINED, status };
   }

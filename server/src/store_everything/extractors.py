@@ -545,6 +545,22 @@ async def authenticate(connection: AsyncConnection, *, token: str) -> ExtractorC
 # --------------------------------------------------------------------------- registration
 
 
+async def claimant(connection: AsyncConnection, *, claim_type: str, kind: str) -> str | None:
+    """Which extractor produces this kind — the single-provider rule read back (ADR-0020).
+
+    `None` means nothing installed produces it, which is a deployment fact rather than an error:
+    an instance without an OCR container simply cannot make a searchable PDF, and the surface
+    that was asked has to say so.
+    """
+    rows = await connection.execute(
+        select(extractor_claim.c.extractor_id).where(
+            extractor_claim.c.claim_type == claim_type, extractor_claim.c.kind == kind
+        )
+    )
+    row = rows.first()
+    return None if row is None else row.extractor_id
+
+
 def claims_of(manifest: Manifest) -> tuple[Claim, ...]:
     """The exclusive output names this manifest asserts ownership of."""
     return (
@@ -684,6 +700,7 @@ __all__ = [
     "Registration",
     "UnsupportedContractVersionError",
     "authenticate",
+    "claimant",
     "claims_of",
     "get",
     "list_extractors",

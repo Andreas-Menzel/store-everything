@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, metadata
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: core is (ADR-0016). Development tooling in either package is not.
 PYTHON_ROOTS = (REPO_ROOT / "server", REPO_ROOT / "extractors")
 POLICY_PATH = REPO_ROOT / "license-allowlist.json"
+
+#: Where a published image installs operating-system packages. Those are distributed too — a
+#: Debian package baked into an image we push is an artifact we ship — and no lockfile mentions
+#: them, so the Dockerfiles are the inventory (ADR-0016).
+DOCKERFILES = ("server/Dockerfile", "extractors/Dockerfile", "extractors/Dockerfile.ocr")
+
+#: `apt-get install` with its flags, up to the end of the command. Flags are dropped, package
+#: names are kept; a name pinned as `pkg=1.2` keeps only the name.
+_APT_INSTALL = re.compile(r"apt-get\s+install\b(?P<arguments>[^&|;]*)", re.DOTALL)
 
 UNKNOWN = "UNKNOWN"
 
@@ -58,28 +67,78 @@ def _run(command: list[str], cwd: Path) -> str:
     return result.stdout
 
 
-def _python_license(distribution: str) -> str:
+#: Dumps the licence fields of everything installed, as JSON. Run *inside* each package's own
+#: environment: a dependency of the extractor image is not installed in the core's virtualenv,
+#: and asking the wrong environment answers `UNKNOWN` for a package that states its licence
+#: perfectly well. One script, three fields, no policy — the verdict stays in this file.
+_METADATA_DUMP = """
+import json
+import re
+import re
+from importlib.metadata import distributions
+
+found = {}
+for distribution in distributions():
+    md = distribution.metadata
+    # PEP 503 normalisation, because a wheel calls itself `pydantic_core` while a lockfile
+    # calls it `pydantic-core`, and looking the wrong one up answers "unknown licence".
+    name = re.sub(r"[-_.]+", "-", (md["Name"] or "")).lower()
+    if not name:
+        continue
+    found[name] = {
+        "expression": md.get("License-Expression") or "",
+        "classifiers": [c for c in md.get_all("Classifier") or [] if c.startswith("License ::")],
+        "declared": md.get("License") or "",
+    }
+print(json.dumps(found))
+"""
+
+
+def _normalized(name: str) -> str:
+    """PEP 503's project-name normalisation, so both sides of the lookup spell it the same."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _installed_licences(root: Path) -> dict[str, dict[str, Any]]:
+    """The licence fields of every package installed for one project.
+
+    The environment is **synced first**, with every extra. A checkout only ever has the
+    environments somebody happened to build — CI provisions the core and nothing else — and
+    metadata that cannot be read comes back as `UNKNOWN`. That is the failure this gate reported
+    on its first real run: twelve dependencies "outside the licence policy", every one of them
+    permissively licensed, because the extractors project had no virtualenv to ask.
+
+    `sync` without `--no-dev` only ever *adds* to an environment, so running the gate cannot take
+    a developer's test tooling away from them.
+    """
+    _run(["uv", "sync", "--frozen", "--all-extras", "--quiet"], cwd=root)
+    found = json.loads(_run(["uv", "run", "--no-sync", "python", "-c", _METADATA_DUMP], cwd=root))
+    if not found:
+        # Belt and braces: an empty environment would otherwise be reported as every dependency
+        # having an unreadable licence, which sends the reader looking in entirely the wrong place.
+        raise RuntimeError(
+            f"{root.name}: nothing is installed in its environment, so no licence can be read "
+            f"(try `uv sync --directory {root.name} --all-extras`)"
+        )
+    return found
+
+
+def _statement(fields: dict[str, Any] | None) -> str:
     """Best available licence statement, preferring the machine-readable forms."""
-    try:
-        md = metadata(distribution)
-    except PackageNotFoundError:
+    if fields is None:
         return UNKNOWN
 
-    expression = md.get("License-Expression")
+    expression = str(fields.get("expression") or "").strip()
     if expression:
-        return expression.strip()
+        return expression
 
     classifiers = sorted(
-        {
-            classifier.split("::")[-1].strip()
-            for classifier in md.get_all("Classifier") or []
-            if classifier.startswith("License ::")
-        }
+        {str(classifier).split("::")[-1].strip() for classifier in fields.get("classifiers") or []}
     )
     if classifiers:
         return "; ".join(classifiers)
 
-    declared = (md.get("License") or "").strip()
+    declared = str(fields.get("declared") or "").strip()
     if declared:
         # Some projects paste the whole licence text into this field.
         return declared.splitlines()[0][:100]
@@ -90,11 +149,17 @@ def python_dependencies() -> list[Dependency]:
     """Runtime dependencies of every distributed Python package, as the lockfiles resolve them."""
     dependencies: list[Dependency] = []
     for root in PYTHON_ROOTS:
+        installed = _installed_licences(root)
         exported = _run(
             [
                 "uv",
                 "export",
                 "--no-dev",
+                # Extras included: an optional dependency an official image installs is one this
+                # repository distributes, whatever the manifest calls it. `preview-gen`'s imaging
+                # stack is an extra precisely so third-party SDK users do not inherit it, and it
+                # would be exactly the wrong thing to hide from the licence gate (ADR-0016).
+                "--all-extras",
                 "--no-emit-project",
                 "--no-hashes",
                 "--no-annotate",
@@ -112,8 +177,47 @@ def python_dependencies() -> list[Dependency]:
             name = name.split("[", 1)[0].strip()
             # `uv export` appends the environment marker: `tzdata==2026.3 ; sys_platform == ...`
             version = remainder.split(";", 1)[0].strip()
-            dependencies.append(Dependency("python", name, version, _python_license(name)))
+            licence = _statement(installed.get(_normalized(name)))
+            dependencies.append(Dependency("python", name, version, licence))
     return sorted(set(dependencies))
+
+
+def system_packages(dockerfiles: tuple[str, ...] = DOCKERFILES) -> list[Dependency]:
+    """Every OS package a published image installs, read out of the Dockerfiles that install it.
+
+    There is no metadata to read here — an apt package's licence lives in the distribution, not in
+    anything we can query offline — so the policy carries the statement and this only finds the
+    names. That is the useful half: a package added to an image without a licence decision is
+    exactly what the gate is for, and it is the failure that would otherwise ship silently.
+    """
+    found: list[Dependency] = []
+    for relative in dockerfiles:
+        path = REPO_ROOT / relative
+        if path.exists():
+            found += [
+                Dependency("system", name, "", UNKNOWN)
+                for name in apt_packages(path.read_text(encoding="utf-8"))
+            ]
+    return sorted(set(found))
+
+
+def apt_packages(dockerfile: str) -> list[str]:
+    """The package names an `apt-get install` in this Dockerfile names.
+
+    A real one is a line continuation carrying flags, so the continuations are joined first and
+    the flags dropped; `pkg=1.2` keeps the name, because the name is what a licence is declared
+    against.
+    """
+    names: list[str] = []
+    joined = dockerfile.replace("\\\n", " ")
+    for match in _APT_INSTALL.finditer(joined):
+        for word in match.group("arguments").split():
+            if word.startswith(("-", "#")):
+                continue
+            name = word.split("=", 1)[0].strip()
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 def javascript_dependencies(pnpm: str = "pnpm") -> list[Dependency]:
@@ -157,6 +261,13 @@ def load_policy(path: Path = POLICY_PATH) -> tuple[set[str], dict[str, str]]:
         if not license_name:
             raise PolicyError(f"package exception {key!r} must declare a licence")
         declared[str(key)] = license_name
+    # System packages are declared the same way, under their own section so a reader can see at a
+    # glance what the images install beyond the wheels.
+    for key, value in document.get("systemPackages", {}).items():
+        license_name = str(value.get("license", "")).strip()
+        if not license_name:
+            raise PolicyError(f"system package {key!r} must declare a licence")
+        declared[f"system:{key}"] = license_name
 
     if not allowed:
         raise PolicyError(f"{path} allows nothing; that cannot be intended")
@@ -188,12 +299,12 @@ def render_notice(dependencies: list[Dependency]) -> str:
         "with Store Everything, which is itself licensed under AGPL-3.0-only.",
         "",
     ]
-    for ecosystem in ("python", "javascript"):
+    for ecosystem in ("python", "javascript", "system"):
         in_ecosystem = [d for d in dependencies if d.ecosystem == ecosystem]
         if not in_ecosystem:
             continue
         lines += [f"## {ecosystem}", "", "| Package | Version | Licence |", "|---|---|---|"]
-        lines += [f"| {d.name} | {d.version} | {d.license} |" for d in in_ecosystem]
+        lines += [f"| {d.name} | {d.version or '—'} | {d.license} |" for d in in_ecosystem]
         lines += [""]
     return "\n".join(lines)
 
@@ -201,7 +312,7 @@ def render_notice(dependencies: list[Dependency]) -> str:
 def collect(pnpm: str = "pnpm", policy_path: Path = POLICY_PATH) -> list[Dependency]:
     """Every distributed dependency, with human-declared licences applied."""
     _, declared = load_policy(policy_path)
-    found = python_dependencies() + javascript_dependencies(pnpm)
+    found = python_dependencies() + javascript_dependencies(pnpm) + system_packages()
     return [resolve(dependency, declared) for dependency in found]
 
 

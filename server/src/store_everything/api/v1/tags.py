@@ -111,6 +111,13 @@ class TagDetail(BaseSchema):
     created_by: UUID | None
     """The admin who added the word. Absent for one a machine suggested."""
 
+    suggested_by_run: UUID | None = None
+    """The run that proposed it, for a suggestion — where an admin looks to see what asked."""
+
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
+    """Who decided about the suggestion, and when. Both absent until somebody has."""
+
 
 class TagCreateRequest(BaseSchema):
     name: str = Field(min_length=1, max_length=MAX_TAG_NAME_LENGTH)
@@ -144,6 +151,29 @@ class TagMergeResult(BaseSchema):
     moved_folders: int
 
 
+class TagSource(BaseSchema):
+    """Which run claimed a tag, and how sure it was — the full stamp F-003/FR-3 asks for.
+
+    The version and model are separate fields on purpose: the same detector at a newer model
+    version is a different claim, and reprocessing eligibility is decided on exactly that."""
+
+    extractor: str
+    extractor_version: str | None
+    model_version: str | None
+    generation: int
+    confidence: float | None
+
+    @classmethod
+    def of(cls, source: tagging.Source) -> TagSource:
+        return cls(
+            extractor=source.extractor,
+            extractor_version=source.extractor_version,
+            model_version=source.model_version,
+            generation=source.generation,
+            confidence=source.confidence,
+        )
+
+
 class AppliedTag(BaseSchema):
     """One tag as it sits on a file or a folder.
 
@@ -166,6 +196,10 @@ class AppliedTag(BaseSchema):
     """The person behind a `manual` or `confirmed` tag — Bob's id on Alice's file, which is what
     makes shared curation legible."""
 
+    source: TagSource | None = None
+    """The machine claim behind it: present for an `auto` tag, and kept for a `confirmed` one so
+    a user can still see which model found it and how sure it was."""
+
     created_at: datetime
     updated_at: datetime
 
@@ -177,6 +211,7 @@ class AppliedTag(BaseSchema):
             status=applied.tag.status,  # pyright: ignore[reportArgumentType]
             provenance=applied.provenance,  # pyright: ignore[reportArgumentType]
             user=applied.user_id,
+            source=None if applied.source is None else TagSource.of(applied.source),
             created_at=applied.created_at,
             updated_at=applied.updated_at,
         )
@@ -312,6 +347,9 @@ async def _detail(connection: DatabaseConnection, found: tags.Tag, *, owner_id: 
         usage=_usage(usage.get(found.id)),
         created_at=found.created_at,
         created_by=found.created_by,
+        suggested_by_run=found.suggested_by_run_id,
+        reviewed_at=found.reviewed_at,
+        reviewed_by=found.reviewed_by,
     )
 
 
@@ -538,6 +576,71 @@ async def merge_tag(
         moved_files=merged.files,
         moved_folders=merged.folders,
     )
+
+
+@router.post(
+    "/{tag_id}/approve",
+    summary="Admit a suggested tag to the vocabulary",
+    response_model=TagDetail,
+    responses={
+        403: {"description": "Not an administrator"},
+        404: {"description": "No such tag"},
+        409: {"description": "That tag is not a pending suggestion"},
+    },
+)
+async def approve_tag(
+    tag_id: UUID, credential: AdminCredential, connection: DatabaseConnection
+) -> TagDetail:
+    """Approve a machine's proposal (F-003/FR-12): the word becomes vocabulary.
+
+    Nothing about the files changes — the claims recorded against it were always there, and
+    approving is what makes them searchable, completable and countable. That is the whole point
+    of quarantining rather than dropping: a suggestion keeps its evidence while it waits.
+    """
+    return await _review(connection, tag_id=tag_id, approved=True, credential=credential)
+
+
+@router.post(
+    "/{tag_id}/reject",
+    summary="Turn a suggested tag down",
+    response_model=TagDetail,
+    responses={
+        403: {"description": "Not an administrator"},
+        404: {"description": "No such tag"},
+        409: {"description": "That tag is not a pending suggestion"},
+    },
+)
+async def reject_tag(
+    tag_id: UUID, credential: AdminCredential, connection: DatabaseConnection
+) -> TagDetail:
+    """Turn a proposal down, and keep the refusal.
+
+    The claims go with it; the row and its name stay as a **suppression record**, so a later run
+    proposing the same word finds it already refused instead of creating the suggestion again
+    (ADR-0006). That is why this is not a delete.
+    """
+    return await _review(connection, tag_id=tag_id, approved=False, credential=credential)
+
+
+async def _review(
+    connection: DatabaseConnection, *, tag_id: UUID, approved: bool, credential: AdminCredential
+) -> TagDetail:
+    try:
+        reviewed = await tags.review(
+            connection,
+            tag_id=tag_id,
+            approved=approved,
+            reviewer=credential.user.id,
+            actor=Actor.user(credential.user.id),
+        )
+    except tags.UnknownTagError as unknown:
+        raise _not_found() from unknown
+    except tags.NotASuggestionError as refused:
+        raise _conflict(
+            f"That tag is {refused.status}, not a pending suggestion. Approving and rejecting "
+            "are answers to a machine's proposal."
+        ) from refused
+    return await _detail(connection, reviewed, owner_id=credential.user.id)
 
 
 @router.delete(

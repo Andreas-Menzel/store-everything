@@ -71,6 +71,12 @@ Rules worth knowing before you write the handler:
 - **Being killed is normal.** Nothing is lost: your lease lapses and the job is claimed again.
   Do not try to be clever about shutdown.
 - **Do not retry a bad input forever.** If the file will never work, raise `PermanentFailure`.
+- **Send tag *labels*, not tag ids.** `{"tags": [{"name": "cat", "confidence": 0.87}]}` is all you
+  owe: the core maps each label into its own vocabulary, through synonyms where one fits and into
+  an administrator's review queue where none does
+  ([ADR-0006](../decisions/ADR-0006-hierarchical-tags-dag.md)). A label the instance has already
+  turned down is dropped, and the result response tells you how many were kept — so your model's
+  vocabulary can drift without the instance's taxonomy drifting with it.
 
 ## Running the reference extractor
 

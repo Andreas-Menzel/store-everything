@@ -26,22 +26,27 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import Field
 
 from store_everything import (
     aggregates,
+    derived,
     extraction,
     files,
     filestore,
     folders,
     mediatypes,
     names,
+    previews,
     results,
     tagging,
+    tags,
     trash,
     workspaces,
 )
+from store_everything.api import API_V1_PREFIX
 from store_everything.api.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -55,7 +60,7 @@ from store_everything.db import DatabaseConnection
 from store_everything.events import Actor
 from store_everything.problems import FieldProblem, ProblemException
 from store_everything.schemas import BaseSchema
-from store_everything.security import CurrentCredential
+from store_everything.security import CurrentCredential, settings_of
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -121,6 +126,15 @@ class FileSummary(BaseSchema):
     behind `/tags` because a file's tags are part of what a file *is*, and a detail view that
     needed a second request to show them would show it late."""
 
+    placeholder_hash: str | None = None
+    """The same few dozen bytes a listing row carries
+    ([F-028/FR-5](../../../../features/F-028-thumbnails-and-previews.md)), so a detail view can
+    paint the space the image will occupy while it loads."""
+
+    has_thumbnail: bool = False
+    """Whether a thumbnail request will produce one. A client shows a type icon otherwise,
+    rather than learning it from a failed image request (FR-3)."""
+
     @classmethod
     def of(
         cls,
@@ -130,6 +144,8 @@ class FileSummary(BaseSchema):
         extraction_status: extraction.Status,
         trash: TrashInfo | None = None,
         applied: list[tagging.Applied] | None = None,
+        placeholder: str | None = None,
+        has_thumbnail: bool = False,
     ) -> FileSummary:
         return cls(
             id=found.id,
@@ -147,7 +163,18 @@ class FileSummary(BaseSchema):
             modified_at=version.modified_at,
             trash=trash,
             tags=[AppliedTag.of(one) for one in applied or []],
+            placeholder_hash=placeholder,
+            has_thumbnail=has_thumbnail,
         )
+
+
+class RenditionInfo(BaseSchema):
+    """One alternative form of the whole file, ready to download (ADR-0008)."""
+
+    kind: str
+    media_type: str
+    size_bytes: int
+    url: str
 
 
 class SegmentInfo(BaseSchema):
@@ -251,6 +278,8 @@ async def summarize(connection: DatabaseConnection, found: files.File) -> FileSu
         extraction.status_of(await extraction.runs_for(connection, version.id)),
         await _trash_info(connection, found),
         await tagging.tags_of_file(connection, found.id),
+        placeholder=(await previews.placeholders(connection, [version.id])).get(version.id),
+        has_thumbnail=version.id in await previews.with_thumbnails(connection, [version.id]),
     )
 
 
@@ -483,6 +512,44 @@ async def tag_file(
     return AppliedTag.of(applied)
 
 
+@router.post(
+    "/{file_id}/tags/{tag_id}/confirm",
+    summary="Confirm a machine's tag",
+    response_model=AppliedTag,
+    responses={
+        404: {"description": "No such file, or nothing claims that tag on it"},
+        409: {"description": "That tag is not part of the vocabulary yet"},
+    },
+)
+async def confirm_file_tag(
+    file_id: UUID,
+    tag_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+) -> AppliedTag:
+    """Agree with an `auto` tag (F-003/FR-4): from here it is user truth.
+
+    The difference that matters is not cosmetic — a confirmed tag survives every reprocessing,
+    because what carries it is a person's record rather than a generation's output. The model's
+    stamp stays visible alongside, so "which detector found this, and how sure was it" remains
+    answerable after the fact.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    try:
+        applied = await tagging.confirm_on_file(
+            connection,
+            file_id=found.id,
+            tag_id=tag_id,
+            user_id=credential.user.id,
+            actor=Actor.user(credential.user.id),
+        )
+    except (tagging.NothingToConfirmError, tags.UnknownTagError) as absent:
+        raise not_found() from absent
+    except tagging.NotVocabularyError as refused:
+        raise not_vocabulary(refused) from refused
+    return AppliedTag.of(applied)
+
+
 @router.delete(
     "/{file_id}/tags/{tag_id}",
     summary="Remove a tag from a file",
@@ -495,10 +562,19 @@ async def untag_file(
     credential: CurrentCredential,
     connection: DatabaseConnection,
 ) -> None:
-    """Take a tag off a file. `404` when the file does not carry it — there is nothing to undo."""
+    """Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.
+
+    Removing a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,
+    so no later generation puts the word back. Removing one a person applied is just a removal —
+    there is nothing to suppress.
+    """
     found, _ = await readable(connection, file_id=file_id, credential=credential)
     removed = await tagging.remove_from_file(
-        connection, file_id=found.id, tag_id=tag_id, actor=Actor.user(credential.user.id)
+        connection,
+        file_id=found.id,
+        tag_id=tag_id,
+        user_id=credential.user.id,
+        actor=Actor.user(credential.user.id),
     )
     if not removed:
         raise not_found()
@@ -576,6 +652,423 @@ async def read_file_content(
         content_disposition_type=_disposition(version.media_type),
         headers=headers,
     )
+
+
+@router.get(
+    "/{file_id}/thumbnail",
+    summary="A file's thumbnail at one of the fixed sizes",
+    response_class=FileResponse,
+    response_model=None,
+    responses={
+        404: {"description": "No such file, or nothing to render for it"},
+        410: {"description": "The file is in the trash"},
+    },
+)
+async def read_file_thumbnail(
+    file_id: UUID,
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    size: Annotated[int | None, Query(ge=1, le=8192)] = None,
+    v: UUID | None = None,
+) -> Response:
+    """A WebP thumbnail, at the nearest size **at or above** what was asked for (F-028/FR-1).
+
+    Three things make this endpoint worth its own code rather than a generic asset route:
+
+    - **`size` snaps into a fixed set.** Ask for 300, get 512. No free-form resizing, so the set
+      of derived files stays bounded and every URL is cacheable.
+    - **`v` pins a version, and only then is the answer immutable** (FR-4). A pinned URL can be
+      cached for a year because that version's thumbnail can never change; the unpinned URL
+      follows the current version and must be revalidated.
+    - **No thumbnail is a typed answer, not a broken image** (FR-3). A client gets
+      `problem+json` with its own slug and renders a type icon — never a placeholder graphic
+      pretending to be the file.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    if not found.is_live:
+        raise ProblemException(
+            status=410,
+            slug="gone",
+            title="Gone",
+            detail="This file is in the trash; its thumbnail is not served while it is there.",
+        )
+
+    version = await _pinned_version(connection, found=found, pinned=v)
+    tier = previews.snap(size)
+    stored = await previews.thumbnail(connection, file_version_id=version.id, size=tier)
+    if stored is None:
+        raise ProblemException(
+            status=404,
+            slug="no-thumbnail",
+            title="No thumbnail",
+            detail=(
+                "Nothing has been rendered for this file. Either its type has no visual "
+                "representation, or analysis has not finished yet — `GET /files/{id}/extraction` "
+                "says which."
+            ),
+        )
+
+    store = derived.DerivedStore(settings_of(request).derived_root)
+    absolute = store.path_for(stored.source_hash, stored.name)
+    if not await asyncio.to_thread(absolute.is_file):
+        # The row promises bytes the derived store does not have. Regenerable by definition
+        # (02 § invariants #5), so the honest answer is "not now" rather than a `500`.
+        raise ProblemException(
+            status=404,
+            slug="no-thumbnail",
+            title="No thumbnail",
+            detail="This file's thumbnail is missing from the derived store; it will be rebuilt.",
+        )
+
+    etag = f'"{stored.source_hash}-{tier}"'
+    headers = {
+        "ETag": etag,
+        # The whole reason for a fixed size set: a pinned URL identifies bytes that can never
+        # change, so a client may keep them for a year without asking again (FR-4).
+        "Cache-Control": (
+            "private, max-age=31536000, immutable" if v is not None else "private, no-cache"
+        ),
+        # It is an image *we* produced, but it is still an image: the same policy as content,
+        # because a WebP decoder is a decoder.
+        "Content-Security-Policy": _CONTENT_SECURITY,
+    }
+    if etag in {tag.strip() for tag in (request.headers.get("if-none-match") or "").split(",")}:
+        return Response(status_code=304, headers=headers)
+
+    return FileResponse(
+        absolute,
+        media_type=stored.media_type,
+        content_disposition_type="inline",
+        headers=headers,
+    )
+
+
+class PreviewAsset(BaseSchema):
+    """One thing a client can render or download, named by the descriptor."""
+
+    kind: str
+    """`thumbnail`, `image-preview`, `page` — an open vocabulary on purpose: a plugin's new kind
+    appears here without a core change (F-028/FR-6)."""
+
+    media_type: str
+    url: str
+    """Where to get it. Absolute-path, version-pinned, and therefore cacheable forever."""
+
+    params: dict[str, Any]
+    """What distinguishes it from its siblings: `{"size": 512}`, `{"page": 3}`."""
+
+    size_bytes: int
+
+
+class PreviewDescriptor(BaseSchema):
+    """What exists, and what can be made, for one file (F-028/FR-6).
+
+    A client renders from this rather than from the MIME type. That is the difference between a
+    viewer that has to know about every format the instance might grow and one that shows what
+    the server says is there — including kinds that did not exist when the client shipped.
+    """
+
+    version: UUID
+    media_type: str
+    media_class: Literal["image", "video", "audio", "document", "archive", "other"]
+    placeholder_hash: str | None
+    thumbnail_sizes: list[int]
+    """The fixed set, so a client need not hard-code it."""
+
+    assets: list[PreviewAsset]
+    pages: int | None = None
+    """How many pages a document has, when something has counted them. Every page is
+    retrievable at `pages_url` whether or not it has been rendered yet (FR-7)."""
+
+    pages_url: str | None = None
+    """The pattern for one page, with `{page}` to substitute — named rather than assumed, which
+    is the point of a descriptor."""
+
+    renditions: list[str] = Field(default_factory=list)
+    """Downloadable alternative forms of the whole file that exist for it (ADR-0008)."""
+
+
+@router.get(
+    "/{file_id}/preview",
+    summary="What can be rendered for this file",
+    response_model=PreviewDescriptor,
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_preview(
+    file_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    v: UUID | None = None,
+) -> PreviewDescriptor:
+    """The descriptor: every preview asset this file has, and the URLs to fetch them.
+
+    Deliberately *not* a guess from the media type. A client that renders what this says will
+    show a 3D model's turntable the day an extractor starts producing one, and will not try to
+    paint a PDF page for a file that has none.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await _pinned_version(connection, found=found, pinned=v)
+    assets = await previews.assets_of(connection, file_version_id=version.id)
+
+    described = [
+        PreviewAsset(
+            kind=asset.kind,
+            media_type=asset.media_type,
+            url=_asset_url(file_id, asset, version.id),
+            params=asset.params,
+            size_bytes=asset.size_bytes,
+        )
+        for asset in assets
+        if asset.rendition_kind is None
+    ]
+    pages = await previews.fact(connection, file_version_id=version.id, key="page_count")
+    return PreviewDescriptor(
+        version=version.id,
+        media_type=version.media_type,
+        media_class=version.media_class,  # pyright: ignore[reportArgumentType]
+        placeholder_hash=(await previews.placeholders(connection, [version.id])).get(version.id),
+        thumbnail_sizes=list(previews.THUMBNAIL_SIZES),
+        assets=described,
+        pages=int(pages) if pages is not None else None,
+        pages_url=(
+            f"{API_V1_PREFIX}/files/{file_id}/preview/pages/{{page}}?v={version.id}"
+            if pages is not None
+            else None
+        ),
+        renditions=sorted(
+            {asset.rendition_kind for asset in assets if asset.rendition_kind is not None}
+        ),
+    )
+
+
+def _asset_url(file_id: UUID, asset: previews.Asset, version: UUID) -> str:
+    """Where a client asks for one asset — the endpoint that serves that kind.
+
+    Every URL carries the version, because that is what makes it cacheable forever (FR-4): the
+    descriptor is the one place a client learns them, so it hands out the pinned form.
+    """
+    base = f"{API_V1_PREFIX}/files/{file_id}"
+    if asset.kind == previews.THUMBNAIL_KIND:
+        return f"{base}/thumbnail?size={asset.params.get('size')}&v={version}"
+    if asset.kind == previews.PAGE_KIND:
+        return f"{base}/preview/pages/{asset.params.get('page')}?v={version}"
+    return f"{base}/preview/assets/{asset.id}?v={version}"
+
+
+@router.get(
+    "/{file_id}/preview/pages/{page}",
+    summary="One page of a document, rendered",
+    response_class=FileResponse,
+    response_model=None,
+    responses={
+        202: {"description": "Being rendered; retry after the interval in `Retry-After`"},
+        404: {"description": "No such file or page, or nothing can render pages here"},
+    },
+)
+async def read_file_page(
+    file_id: UUID,
+    page: Annotated[int, PathParam(ge=1, le=10_000)],
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    v: UUID | None = None,
+) -> Response:
+    """A page image, rendered on first request and stored (F-028/FR-7).
+
+    Page 1 arrives with the thumbnail; anything else is rendered when somebody asks, which is the
+    difference between storing three images for a three-page document and storing three hundred
+    for a book nobody opened past the cover. The first request for a page answers `202` with a
+    `Retry-After` and queues the work at interactive priority; the second serves the stored bytes.
+
+    A `202` rather than a blocked request: holding an HTTP connection open across a queue, a
+    lease and a container's render is how a proxy timeout becomes a mystery.
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await _pinned_version(connection, found=found, pinned=v)
+
+    stored = await previews.page(connection, file_version_id=version.id, number=page)
+    if stored is None:
+        pages = await previews.fact(connection, file_version_id=version.id, key="page_count")
+        if pages is None or page > int(pages):
+            # Either nothing has counted this file's pages — it is not a paginated document — or
+            # it has fewer than that. Both are "no such page".
+            raise not_found()
+        try:
+            await extraction.request(
+                connection,
+                file_version_id=version.id,
+                generation=1,
+                claim_type="derived_asset",
+                kind=previews.PAGE_KIND,
+                variant=f"page:{page}",
+                params={"page": page},
+            )
+        except extraction.NoProviderError as absent:
+            # Nothing installed renders pages. An honest 404 rather than a 202 that will never
+            # come true.
+            raise ProblemException(
+                status=404,
+                slug="no-page-renderer",
+                title="No page renderer",
+                detail=(
+                    "This instance has no extractor that produces page images, so pages of this "
+                    "document cannot be rendered."
+                ),
+            ) from absent
+        return Response(
+            status_code=202,
+            headers={"Retry-After": "1", "Cache-Control": "no-store"},
+        )
+
+    return _serve_asset(request, version=version, asset=stored, pinned=v is not None)
+
+
+@router.get(
+    "/{file_id}/preview/assets/{asset_id}",
+    summary="One preview asset by id",
+    response_class=FileResponse,
+    response_model=None,
+    responses={404: {"description": "No such file or asset"}},
+)
+async def read_file_preview_asset(
+    file_id: UUID,
+    asset_id: UUID,
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    v: UUID | None = None,
+) -> Response:
+    """Whatever the descriptor pointed at — an image preview today, a plugin's kind tomorrow."""
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await _pinned_version(connection, found=found, pinned=v)
+    for asset in await previews.assets_of(connection, file_version_id=version.id):
+        if asset.id == asset_id:
+            return _serve_asset(request, version=version, asset=asset, pinned=v is not None)
+    raise not_found()
+
+
+@router.get(
+    "/{file_id}/renditions",
+    summary="Alternative downloadable forms of this file",
+    response_model=list[RenditionInfo],
+    responses={404: {"description": "No such file, or not yours"}},
+)
+async def read_file_renditions(
+    file_id: UUID,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    v: UUID | None = None,
+) -> list[RenditionInfo]:
+    """What else this file can be downloaded as (F-028/FR-8, ADR-0008).
+
+    A rendition is the whole file in another form — a searchable PDF, a subtitled video — and it
+    never replaces the original: `/content` serves the bytes that were uploaded, always (FR-9).
+    """
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await _pinned_version(connection, found=found, pinned=v)
+    return [
+        RenditionInfo(
+            kind=asset.rendition_kind or "",
+            media_type=asset.media_type,
+            size_bytes=asset.size_bytes,
+            url=f"{API_V1_PREFIX}/files/{file_id}/renditions/{asset.rendition_kind}?v={version.id}",
+        )
+        for asset in await previews.assets_of(connection, file_version_id=version.id)
+        if asset.rendition_kind is not None
+    ]
+
+
+@router.get(
+    "/{file_id}/renditions/{kind}",
+    summary="Download one rendition",
+    response_class=FileResponse,
+    response_model=None,
+    responses={404: {"description": "No such file, or no such rendition for it"}},
+)
+async def read_file_rendition(
+    file_id: UUID,
+    kind: str,
+    request: Request,
+    credential: CurrentCredential,
+    connection: DatabaseConnection,
+    v: UUID | None = None,
+) -> Response:
+    """The rendition's bytes, as a download. The original is never served from here."""
+    found, _ = await readable(connection, file_id=file_id, credential=credential)
+    version = await _pinned_version(connection, found=found, pinned=v)
+    for asset in await previews.assets_of(connection, file_version_id=version.id):
+        if asset.rendition_kind == kind:
+            return _serve_asset(
+                request,
+                version=version,
+                asset=asset,
+                pinned=v is not None,
+                filename=f"{found.name}.{asset.name.rpartition('.')[2]}",
+            )
+    raise not_found()
+
+
+def _serve_asset(
+    request: Request,
+    *,
+    version: files.Version,
+    asset: previews.Asset,
+    pinned: bool,
+    filename: str | None = None,
+) -> Response:
+    """Serve one derived asset from the derived store, with the caching a pin allows.
+
+    The same rules as the thumbnail endpoint, in one place: an `ETag` from the source hash and the
+    asset's own name, `immutable` only when the caller pinned a version, and the content-security
+    policy every byte we serve carries whether we produced it or not.
+    """
+    store = derived.DerivedStore(settings_of(request).derived_root)
+    absolute = store.path_for(asset.source_hash, asset.name)
+    if not absolute.is_file():
+        raise ProblemException(
+            status=404,
+            slug="not-found",
+            title="Not found",
+            detail="This asset is missing from the derived store; it will be rebuilt.",
+        )
+
+    etag = f'"{asset.source_hash}-{asset.name}"'
+    headers = {
+        "ETag": etag,
+        "Cache-Control": (
+            "private, max-age=31536000, immutable" if pinned else "private, no-cache"
+        ),
+        "Content-Security-Policy": _CONTENT_SECURITY,
+    }
+    if etag in {tag.strip() for tag in (request.headers.get("if-none-match") or "").split(",")}:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(
+        absolute,
+        media_type=asset.media_type,
+        filename=filename,
+        content_disposition_type="attachment" if filename else "inline",
+        headers=headers,
+    )
+
+
+async def _pinned_version(
+    connection: DatabaseConnection, *, found: files.File, pinned: UUID | None
+) -> files.Version:
+    """The version a request is about: the one it pinned, or the current one.
+
+    A pinned version has to belong to *this* file — otherwise `?v=` would be a way to read one
+    file's assets through another file's permission check.
+    """
+    if pinned is None:
+        version = await files.current_version(connection, found.id)
+        if version is None:  # pragma: no cover - see `summarize`
+            raise RuntimeError(f"file {found.id} has no current version")
+        return version
+    version = await files.version(connection, pinned)
+    if version is None or version.file_id != found.id:
+        raise not_found()
+    return version
 
 
 def _disposition(media_type: str) -> str:

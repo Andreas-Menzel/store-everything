@@ -20,7 +20,7 @@ help: ## Show this help
 
 install: ## Install all dependencies from the lockfiles
 	$(UV) sync --all-groups
-	$(UVX) sync --all-groups
+	$(UVX) sync --all-groups --all-extras
 	$(PNPM) install
 
 lint: ## Check lint rules and formatting

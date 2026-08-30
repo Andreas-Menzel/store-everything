@@ -32,17 +32,24 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from store_everything import operations, results
+from store_everything import extractors as extractors_registry
+from store_everything import operations, results, tagging
 from store_everything.derived import DerivedStore
 from store_everything.extractors import Manifest
 from store_everything.ids import new_id
-from store_everything.operations import PRIORITY_PRESENCE, PRIORITY_SEARCHABILITY, Operation
+from store_everything.operations import (
+    PRIORITY_INTERACTIVE,
+    PRIORITY_PRESENCE,
+    PRIORITY_SEARCHABILITY,
+    Operation,
+)
 from store_everything.tables import (
     FIRST_GENERATION,
     TERMINAL_OPERATION_STATES,
     derived_asset,
     extraction_run,
     extractor,
+    file_auto_tag,
     file_version,
     metadata_entry,
     operation,
@@ -90,6 +97,10 @@ class Run:
     model_version: str | None
     input_asset_id: UUID | None
     """The derived asset this run is about, or `None` for the file's own bytes."""
+
+    variant: str | None
+    """What was asked for, when this run is on-demand work: `page:3`. `None` for routing's own
+    jobs, which is nearly all of them."""
 
     reused_from: UUID | None
     """Set when these rows were copied from a run over byte-identical content (F-009/FR-8)."""
@@ -152,6 +163,7 @@ _RUN_COLUMNS = (
     extraction_run.c.extractor_version,
     extraction_run.c.model_version,
     extraction_run.c.input_asset_id,
+    extraction_run.c.variant,
     extraction_run.c.reused_from,
     extraction_run.c.started_at,
     extraction_run.c.finished_at,
@@ -201,9 +213,16 @@ async def route(
     3. **A derived input** — one job per matching asset, because a video's fifty keyframes are
        fifty pieces of work (12 § job atomicity).
     """
+    # Keyed by *this* generation's work, which is what makes the idempotence above true: a run
+    # from an earlier generation is history, not a reason to skip the reprocessing that was
+    # asked for. Without the generation in the key, `route(generation=2)` would look at
+    # generation 1's rows and conclude there was nothing to do (F-003/FR-6, F-009).
     existing = {
         (run.extractor_id, run.input_asset_id): run
         for run in await runs_for(connection, file_version_id)
+        # On-demand work is not routing's work: a run that rendered page 3 must not make routing
+        # believe this extractor has already done its job over the file (F-028/FR-7).
+        if run.generation == generation and run.variant is None
     }
     assets = await _assets_of(connection, file_version_id)
     created: list[Run] = []
@@ -249,6 +268,69 @@ async def route(
                 )
 
     return [*existing.values(), *created]
+
+
+class NoProviderError(Exception):
+    """Nothing installed can produce what was asked for.
+
+    Carries the kind so the answer can name it: "no extractor produces `page` images" is a
+    deployment fact an operator can act on, and it is not the same as "not yet".
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
+async def request(
+    connection: AsyncConnection,
+    *,
+    file_version_id: UUID,
+    generation: int,
+    claim_type: str,
+    kind: str,
+    variant: str,
+    params: dict[str, Any],
+) -> Run:
+    """Ask for one specific derived asset, now — the on-demand half of generation (09).
+
+    Eager generation covers what every file needs; this covers what *somebody is waiting for*:
+    page 40 of a 300-page PDF, a rendition somebody pressed a button for. Two things follow from
+    that and are the reason this is not just `route()`:
+
+    - **it is priority `PRIORITY_INTERACTIVE`** — a person is looking at a spinner, so this
+      jumps the queue of work nobody asked for (04 § prioritization);
+    - **the variant is part of the job's identity**, so asking for page 3 and page 40 creates two
+      jobs while asking for page 3 twice converges on one (F-028/FR-7's caching, upstream of the
+      cache).
+
+    Who does the work is not the caller's choice: the registry records exactly one provider per
+    derived-asset kind (ADR-0020), and that is the extractor this asks.
+    """
+    provider = await extractors_registry.claimant(connection, claim_type=claim_type, kind=kind)
+    if provider is None:
+        raise NoProviderError(kind)
+    manifest = await _manifest_of(connection, provider)
+    if manifest is None:
+        raise NoProviderError(kind)
+    return await _create_job(
+        connection,
+        extractor_id=provider,
+        manifest=manifest,
+        file_version_id=file_version_id,
+        generation=generation,
+        params=params,
+        variant=variant,
+        priority=PRIORITY_INTERACTIVE,
+    )
+
+
+async def _manifest_of(connection: AsyncConnection, extractor_id: str) -> Manifest | None:
+    """The manifest of one enabled, registered extractor."""
+    for candidate, manifest in await _candidates(connection):
+        if candidate == extractor_id:
+            return manifest
+    return None
 
 
 async def _assets_of(connection: AsyncConnection, file_version_id: UUID) -> list[tuple[UUID, str]]:
@@ -369,11 +451,14 @@ def idempotency_key(
     model_version: str | None,
     generation: int,
     input_asset_id: UUID | None = None,
+    variant: str | None = None,
 ) -> str:
     """Deterministic, so re-detecting the same work converges instead of duplicating it (05).
 
     The input is part of it, because a job over a keyframe is not the same work as a job over the
-    file: without it, chaining would converge fifty keyframes onto one job.
+    file: without it, chaining would converge fifty keyframes onto one job. The variant is part of
+    it for the same reason one level down — page 3 and page 40 of one PDF are two requests, and
+    they must not become one job (F-028/FR-7).
 
     Readable rather than hashed: this string turns up in the operation table when somebody is
     working out why a job exists, and a digest would answer that question with nothing.
@@ -387,6 +472,7 @@ def idempotency_key(
             model_version or "-",
             str(generation),
             str(input_asset_id) if input_asset_id is not None else "-",
+            variant or "-",
         )
     )
 
@@ -400,6 +486,8 @@ async def _create_job(
     generation: int,
     input_asset_id: UUID | None = None,
     params: dict[str, Any] | None = None,
+    variant: str | None = None,
+    priority: int | None = None,
 ) -> Run:
     model = manifest.declared_model
     key = idempotency_key(
@@ -409,12 +497,13 @@ async def _create_job(
         model_version=model.version if model is not None else None,
         generation=generation,
         input_asset_id=input_asset_id,
+        variant=variant,
     )
     queued = await operations.enqueue(
         connection,
         kind=kind_of(extractor_id),
         max_attempts=MAX_ATTEMPTS,
-        priority=_priority(manifest),
+        priority=priority if priority is not None else _priority(manifest),
         idempotency_key=key,
         payload={
             "file_version": str(file_version_id),
@@ -424,6 +513,7 @@ async def _create_job(
             "idempotency_key": key,
             "params": dict(params or {}),
             "input_asset": str(input_asset_id) if input_asset_id is not None else None,
+            "variant": variant,
         },
         subject_type="file_version",
         subject_id=file_version_id,
@@ -440,6 +530,7 @@ async def _create_job(
             file_version_id=file_version_id,
             generation=generation,
             input_asset_id=input_asset_id,
+            variant=variant,
         )
         .on_conflict_do_nothing(index_elements=["id"])
     )
@@ -529,6 +620,9 @@ async def _reuse(
             ),
         ),
         (segment, ("ordinal", "text", "anchor_kind", "anchor", "confidence", "language")),
+        # The claims come along too: identical bytes mean the same tags, and a duplicate file
+        # that arrived with metadata but no tags would be a hole a reader cannot explain.
+        (file_auto_tag, ("tag_id", "confidence")),
         (
             derived_asset,
             (
@@ -562,6 +656,10 @@ async def _reuse(
             # One statement per table rather than per row: a long document is thousands of
             # segments, and reuse exists to be cheaper than the work it replaces.
             await connection.execute(insert(table), rows)
+
+    # The copy is of somebody else's analysis, and this file may have refused some of it: a tag
+    # the user rejected here must not arrive through the back door (F-003/FR-5).
+    await tagging.drop_rejected_claims(connection, run_id=run_id)
 
     _logger.info("reused run %s for version %s (%s)", donor, file_version_id, extractor_id)
     found = await get_run(connection, run_id)
@@ -870,6 +968,7 @@ async def complete(
     applied = await results.apply(
         connection,
         run_id=run.id,
+        file_id=version.file_id,
         file_version_id=run.file_version_id,
         source_hash=version.content_hash,
         generation=run.generation,

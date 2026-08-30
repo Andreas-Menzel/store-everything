@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
+import type { AppendToUploadData, AppendToUploadErrors, AppendToUploadResponses, ApproveTagData, ApproveTagErrors, ApproveTagResponses, CancelUploadData, CancelUploadErrors, CancelUploadResponses, ConfirmFileTagData, ConfirmFileTagErrors, ConfirmFileTagResponses, CreateExtractorTokenData, CreateExtractorTokenErrors, CreateExtractorTokenResponses, CreateFolderData, CreateFolderErrors, CreateFolderResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTokenData, CreateTokenErrors, CreateTokenResponses, CreateUploadData, CreateUploadErrors, CreateUploadResponses, CreateUserData, CreateUserErrors, CreateUserResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, CurrentIdentityData, CurrentIdentityResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, HealthzData, HealthzResponses, ImportStatusData, ImportStatusErrors, ImportStatusResponses, ListChildrenData, ListChildrenErrors, ListChildrenResponses, ListExtractorsData, ListExtractorsResponses, ListExtractorTokensData, ListExtractorTokensErrors, ListExtractorTokensResponses, ListSessionsData, ListSessionsResponses, ListTagsData, ListTagsErrors, ListTagsResponses, ListTokensData, ListTokensResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, MergeTagData, MergeTagErrors, MergeTagResponses, MoveFileData, MoveFileErrors, MoveFileResponses, MoveFolderData, MoveFolderErrors, MoveFolderResponses, OpenapiSchemaData, OpenapiSchemaResponses, ProvisionExtractorData, ProvisionExtractorErrors, ProvisionExtractorResponses, ReadExtractorData, ReadExtractorErrors, ReadExtractorResponses, ReadFileContentData, ReadFileContentErrors, ReadFileContentResponses, ReadFileData, ReadFileErrors, ReadFileExtractionData, ReadFileExtractionErrors, ReadFileExtractionResponses, ReadFileMetadataData, ReadFileMetadataErrors, ReadFileMetadataResponses, ReadFilePageData, ReadFilePageErrors, ReadFilePageResponses, ReadFilePreviewAssetData, ReadFilePreviewAssetErrors, ReadFilePreviewAssetResponses, ReadFilePreviewData, ReadFilePreviewErrors, ReadFilePreviewResponses, ReadFileRenditionData, ReadFileRenditionErrors, ReadFileRenditionResponses, ReadFileRenditionsData, ReadFileRenditionsErrors, ReadFileRenditionsResponses, ReadFileResponses, ReadFileSegmentsData, ReadFileSegmentsErrors, ReadFileSegmentsResponses, ReadFileTagsData, ReadFileTagsErrors, ReadFileTagsResponses, ReadFileThumbnailData, ReadFileThumbnailErrors, ReadFileThumbnailResponses, ReadFolderData, ReadFolderErrors, ReadFolderResponses, ReadFolderTagsData, ReadFolderTagsErrors, ReadFolderTagsResponses, ReadTagData, ReadTagErrors, ReadTagResponses, ReadUserData, ReadUserErrors, ReadUserResponses, ReadWorkspaceData, ReadWorkspaceErrors, ReadWorkspaceResponses, ReadyzData, ReadyzErrors, ReadyzResponses, RejectTagData, RejectTagErrors, RejectTagResponses, RescanWorkspaceData, RescanWorkspaceErrors, RescanWorkspaceResponses, RevokeExtractorTokenData, RevokeExtractorTokenErrors, RevokeExtractorTokenResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, RevokeTokenData, RevokeTokenErrors, RevokeTokenResponses, TagFileData, TagFileErrors, TagFileResponses, TagFolderData, TagFolderErrors, TagFolderResponses, UntagFileData, UntagFileErrors, UntagFileResponses, UntagFolderData, UntagFolderErrors, UntagFolderResponses, UpdateExtractorData, UpdateExtractorErrors, UpdateExtractorResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UploadLimitsData, UploadLimitsErrors, UploadLimitsResponses, UploadOffsetData, UploadOffsetErrors, UploadOffsetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -455,9 +455,25 @@ export const tagFile = <ThrowOnError extends boolean = false>(options: Options<T
 });
 
 /**
+ * Confirm a machine's tag
+ *
+ * Agree with an `auto` tag (F-003/FR-4): from here it is user truth.
+ *
+ * The difference that matters is not cosmetic — a confirmed tag survives every reprocessing,
+ * because what carries it is a person's record rather than a generation's output. The model's
+ * stamp stays visible alongside, so "which detector found this, and how sure was it" remains
+ * answerable after the fact.
+ */
+export const confirmFileTag = <ThrowOnError extends boolean = false>(options: Options<ConfirmFileTagData, ThrowOnError>): RequestResult<ConfirmFileTagResponses, ConfirmFileTagErrors, ThrowOnError> => (options.client ?? client).post<ConfirmFileTagResponses, ConfirmFileTagErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags/{tag_id}/confirm', ...options });
+
+/**
  * Remove a tag from a file
  *
  * Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.
+ *
+ * Removing a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,
+ * so no later generation puts the word back. Removing one a person applied is just a removal —
+ * there is nothing to suppress.
  */
 export const untagFile = <ThrowOnError extends boolean = false>(options: Options<UntagFileData, ThrowOnError>): RequestResult<UntagFileResponses, UntagFileErrors, ThrowOnError> => (options.client ?? client).delete<UntagFileResponses, UntagFileErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/tags/{tag_id}', ...options });
 
@@ -465,6 +481,74 @@ export const untagFile = <ThrowOnError extends boolean = false>(options: Options
  * Download a file's content
  */
 export const readFileContent = <ThrowOnError extends boolean = false>(options: Options<ReadFileContentData, ThrowOnError>): RequestResult<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError> => (options.client ?? client).get<ReadFileContentResponses, ReadFileContentErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/content', ...options });
+
+/**
+ * A file's thumbnail at one of the fixed sizes
+ *
+ * A WebP thumbnail, at the nearest size **at or above** what was asked for (F-028/FR-1).
+ *
+ * Three things make this endpoint worth its own code rather than a generic asset route:
+ *
+ * - **`size` snaps into a fixed set.** Ask for 300, get 512. No free-form resizing, so the set
+ * of derived files stays bounded and every URL is cacheable.
+ * - **`v` pins a version, and only then is the answer immutable** (FR-4). A pinned URL can be
+ * cached for a year because that version's thumbnail can never change; the unpinned URL
+ * follows the current version and must be revalidated.
+ * - **No thumbnail is a typed answer, not a broken image** (FR-3). A client gets
+ * `problem+json` with its own slug and renders a type icon — never a placeholder graphic
+ * pretending to be the file.
+ */
+export const readFileThumbnail = <ThrowOnError extends boolean = false>(options: Options<ReadFileThumbnailData, ThrowOnError>): RequestResult<ReadFileThumbnailResponses, ReadFileThumbnailErrors, ThrowOnError> => (options.client ?? client).get<ReadFileThumbnailResponses, ReadFileThumbnailErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/thumbnail', ...options });
+
+/**
+ * What can be rendered for this file
+ *
+ * The descriptor: every preview asset this file has, and the URLs to fetch them.
+ *
+ * Deliberately *not* a guess from the media type. A client that renders what this says will
+ * show a 3D model's turntable the day an extractor starts producing one, and will not try to
+ * paint a PDF page for a file that has none.
+ */
+export const readFilePreview = <ThrowOnError extends boolean = false>(options: Options<ReadFilePreviewData, ThrowOnError>): RequestResult<ReadFilePreviewResponses, ReadFilePreviewErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePreviewResponses, ReadFilePreviewErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview', ...options });
+
+/**
+ * One page of a document, rendered
+ *
+ * A page image, rendered on first request and stored (F-028/FR-7).
+ *
+ * Page 1 arrives with the thumbnail; anything else is rendered when somebody asks, which is the
+ * difference between storing three images for a three-page document and storing three hundred
+ * for a book nobody opened past the cover. The first request for a page answers `202` with a
+ * `Retry-After` and queues the work at interactive priority; the second serves the stored bytes.
+ *
+ * A `202` rather than a blocked request: holding an HTTP connection open across a queue, a
+ * lease and a container's render is how a proxy timeout becomes a mystery.
+ */
+export const readFilePage = <ThrowOnError extends boolean = false>(options: Options<ReadFilePageData, ThrowOnError>): RequestResult<ReadFilePageResponses, ReadFilePageErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePageResponses, ReadFilePageErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview/pages/{page}', ...options });
+
+/**
+ * One preview asset by id
+ *
+ * Whatever the descriptor pointed at — an image preview today, a plugin's kind tomorrow.
+ */
+export const readFilePreviewAsset = <ThrowOnError extends boolean = false>(options: Options<ReadFilePreviewAssetData, ThrowOnError>): RequestResult<ReadFilePreviewAssetResponses, ReadFilePreviewAssetErrors, ThrowOnError> => (options.client ?? client).get<ReadFilePreviewAssetResponses, ReadFilePreviewAssetErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/preview/assets/{asset_id}', ...options });
+
+/**
+ * Alternative downloadable forms of this file
+ *
+ * What else this file can be downloaded as (F-028/FR-8, ADR-0008).
+ *
+ * A rendition is the whole file in another form — a searchable PDF, a subtitled video — and it
+ * never replaces the original: `/content` serves the bytes that were uploaded, always (FR-9).
+ */
+export const readFileRenditions = <ThrowOnError extends boolean = false>(options: Options<ReadFileRenditionsData, ThrowOnError>): RequestResult<ReadFileRenditionsResponses, ReadFileRenditionsErrors, ThrowOnError> => (options.client ?? client).get<ReadFileRenditionsResponses, ReadFileRenditionsErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/renditions', ...options });
+
+/**
+ * Download one rendition
+ *
+ * The rendition's bytes, as a download. The original is never served from here.
+ */
+export const readFileRendition = <ThrowOnError extends boolean = false>(options: Options<ReadFileRenditionData, ThrowOnError>): RequestResult<ReadFileRenditionResponses, ReadFileRenditionErrors, ThrowOnError> => (options.client ?? client).get<ReadFileRenditionResponses, ReadFileRenditionErrors, ThrowOnError>({ url: '/api/v1/files/{file_id}/renditions/{kind}', ...options });
 
 /**
  * Rename or move a file
@@ -573,3 +657,25 @@ export const mergeTag = <ThrowOnError extends boolean = false>(options: Options<
         ...options.headers
     }
 });
+
+/**
+ * Admit a suggested tag to the vocabulary
+ *
+ * Approve a machine's proposal (F-003/FR-12): the word becomes vocabulary.
+ *
+ * Nothing about the files changes — the claims recorded against it were always there, and
+ * approving is what makes them searchable, completable and countable. That is the whole point
+ * of quarantining rather than dropping: a suggestion keeps its evidence while it waits.
+ */
+export const approveTag = <ThrowOnError extends boolean = false>(options: Options<ApproveTagData, ThrowOnError>): RequestResult<ApproveTagResponses, ApproveTagErrors, ThrowOnError> => (options.client ?? client).post<ApproveTagResponses, ApproveTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}/approve', ...options });
+
+/**
+ * Turn a suggested tag down
+ *
+ * Turn a proposal down, and keep the refusal.
+ *
+ * The claims go with it; the row and its name stay as a **suppression record**, so a later run
+ * proposing the same word finds it already refused instead of creating the suggestion again
+ * (ADR-0006). That is why this is not a delete.
+ */
+export const rejectTag = <ThrowOnError extends boolean = false>(options: Options<RejectTagData, ThrowOnError>): RequestResult<RejectTagResponses, RejectTagErrors, ThrowOnError> => (options.client ?? client).post<RejectTagResponses, RejectTagErrors, ThrowOnError>({ url: '/api/v1/tags/{tag_id}/reject', ...options });

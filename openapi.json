@@ -2131,13 +2131,73 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/tags/{tag_id}/confirm": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Confirm a machine's tag",
+        "description": "Agree with an `auto` tag (F-003/FR-4): from here it is user truth.\n\nThe difference that matters is not cosmetic — a confirmed tag survives every reprocessing,\nbecause what carries it is a person's record rather than a generation's output. The model's\nstamp stays visible alongside, so \"which detector found this, and how sure was it\" remains\nanswerable after the fact.",
+        "operationId": "confirm_file_tag",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedTag"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or nothing claims that tag on it"
+          },
+          "409": {
+            "description": "That tag is not part of the vocabulary yet"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/tags/{tag_id}": {
       "delete": {
         "tags": [
           "files"
         ],
         "summary": "Remove a tag from a file",
-        "description": "Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.",
+        "description": "Take a tag off a file. `404` when the file does not carry it — there is nothing to undo.\n\nRemoving a machine's tag is a **rejection** (F-003/FR-5): the claim goes and a record stays,\nso no later generation puts the word back. Removing one a person applied is just a removal —\nthere is nothing to suppress.",
         "operationId": "untag_file",
         "parameters": [
           {
@@ -2221,6 +2281,420 @@
           },
           "416": {
             "description": "The requested range lies outside the file"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/thumbnail": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "A file's thumbnail at one of the fixed sizes",
+        "description": "A WebP thumbnail, at the nearest size **at or above** what was asked for (F-028/FR-1).\n\nThree things make this endpoint worth its own code rather than a generic asset route:\n\n- **`size` snaps into a fixed set.** Ask for 300, get 512. No free-form resizing, so the set\n  of derived files stays bounded and every URL is cacheable.\n- **`v` pins a version, and only then is the answer immutable** (FR-4). A pinned URL can be\n  cached for a year because that version's thumbnail can never change; the unpinned URL\n  follows the current version and must be revalidated.\n- **No thumbnail is a typed answer, not a broken image** (FR-3). A client gets\n  `problem+json` with its own slug and renders a type icon — never a placeholder graphic\n  pretending to be the file.",
+        "operationId": "read_file_thumbnail",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 8192,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Size"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such file, or nothing to render for it"
+          },
+          "410": {
+            "description": "The file is in the trash"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/preview": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "What can be rendered for this file",
+        "description": "The descriptor: every preview asset this file has, and the URLs to fetch them.\n\nDeliberately *not* a guess from the media type. A client that renders what this says will\nshow a 3D model's turntable the day an extractor starts producing one, and will not try to\npaint a PDF page for a file that has none.",
+        "operationId": "read_file_preview",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewDescriptor"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/preview/pages/{page}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "One page of a document, rendered",
+        "description": "A page image, rendered on first request and stored (F-028/FR-7).\n\nPage 1 arrives with the thumbnail; anything else is rendered when somebody asks, which is the\ndifference between storing three images for a three-page document and storing three hundred\nfor a book nobody opened past the cover. The first request for a page answers `202` with a\n`Retry-After` and queues the work at interactive priority; the second serves the stored bytes.\n\nA `202` rather than a blocked request: holding an HTTP connection open across a queue, a\nlease and a container's render is how a proxy timeout becomes a mystery.",
+        "operationId": "read_file_page",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "202": {
+            "description": "Being rendered; retry after the interval in `Retry-After`"
+          },
+          "404": {
+            "description": "No such file or page, or nothing can render pages here"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/preview/assets/{asset_id}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "One preview asset by id",
+        "description": "Whatever the descriptor pointed at — an image preview today, a plugin's kind tomorrow.",
+        "operationId": "read_file_preview_asset",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such file or asset"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/renditions": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Alternative downloadable forms of this file",
+        "description": "What else this file can be downloaded as (F-028/FR-8, ADR-0008).\n\nA rendition is the whole file in another form — a searchable PDF, a subtitled video — and it\nnever replaces the original: `/content` serves the bytes that were uploaded, always (FR-9).",
+        "operationId": "read_file_renditions",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RenditionInfo"
+                  },
+                  "title": "Response Read File Renditions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file, or not yours"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/renditions/{kind}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Download one rendition",
+        "description": "The rendition's bytes, as a download. The original is never served from here.",
+        "operationId": "read_file_rendition",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "V"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such file, or no such rendition for it"
           },
           "422": {
             "description": "Validation Error",
@@ -2618,6 +3092,112 @@
           }
         }
       }
+    },
+    "/api/v1/tags/{tag_id}/approve": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Admit a suggested tag to the vocabulary",
+        "description": "Approve a machine's proposal (F-003/FR-12): the word becomes vocabulary.\n\nNothing about the files changes — the claims recorded against it were always there, and\napproving is what makes them searchable, completable and countable. That is the whole point\nof quarantining rather than dropping: a suggestion keeps its evidence while it waits.",
+        "operationId": "approve_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "That tag is not a pending suggestion"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag_id}/reject": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Turn a suggested tag down",
+        "description": "Turn a proposal down, and keep the refusal.\n\nThe claims go with it; the row and its name stay as a **suppression record**, so a later run\nproposing the same word finds it already refused instead of creating the suggestion again\n(ADR-0006). That is why this is not a delete.",
+        "operationId": "reject_tag",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator"
+          },
+          "404": {
+            "description": "No such tag"
+          },
+          "409": {
+            "description": "That tag is not a pending suggestion"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2662,6 +3242,16 @@
               }
             ],
             "title": "User"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "type": "string",
@@ -2750,6 +3340,22 @@
           },
           "extraction_status": {
             "$ref": "#/components/schemas/Status"
+          },
+          "placeholder_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder Hash"
+          },
+          "has_thumbnail": {
+            "type": "boolean",
+            "title": "Has Thumbnail",
+            "default": false
           },
           "modified_at": {
             "anyOf": [
@@ -3400,6 +4006,22 @@
             },
             "type": "array",
             "title": "Tags"
+          },
+          "placeholder_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder Hash"
+          },
+          "has_thumbnail": {
+            "type": "boolean",
+            "title": "Has Thumbnail",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -3968,6 +4590,133 @@
         ],
         "title": "Page[WorkspaceSummary]"
       },
+      "PreviewAsset": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "media_type",
+          "url",
+          "params",
+          "size_bytes"
+        ],
+        "title": "PreviewAsset",
+        "description": "One thing a client can render or download, named by the descriptor."
+      },
+      "PreviewDescriptor": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "media_class": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "document",
+              "archive",
+              "other"
+            ],
+            "title": "Media Class"
+          },
+          "placeholder_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder Hash"
+          },
+          "thumbnail_sizes": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Thumbnail Sizes"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewAsset"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "pages_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages Url"
+          },
+          "renditions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Renditions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "media_type",
+          "media_class",
+          "placeholder_hash",
+          "thumbnail_sizes",
+          "assets"
+        ],
+        "title": "PreviewDescriptor",
+        "description": "What exists, and what can be made, for one file (F-028/FR-6).\n\nA client renders from this rather than from the MIME type. That is the difference between a\nviewer that has to know about every format the instance might grow and one that shows what\nthe server says is there — including kinds that did not exist when the client shipped."
+      },
       "ReadyResponse": {
         "properties": {
           "status": {
@@ -3982,6 +4731,36 @@
           "status"
         ],
         "title": "ReadyResponse"
+      },
+      "RenditionInfo": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "media_type",
+          "size_bytes",
+          "url"
+        ],
+        "title": "RenditionInfo",
+        "description": "One alternative form of the whole file, ready to download (ADR-0008)."
       },
       "RescanAccepted": {
         "properties": {
@@ -4464,6 +5243,42 @@
               }
             ],
             "title": "Created By"
+          },
+          "suggested_by_run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested By Run"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
           }
         },
         "additionalProperties": false,
@@ -4539,6 +5354,62 @@
           "name"
         ],
         "title": "TagReference"
+      },
+      "TagSource": {
+        "properties": {
+          "extractor": {
+            "type": "string",
+            "title": "Extractor"
+          },
+          "extractor_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor Version"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "extractor",
+          "extractor_version",
+          "model_version",
+          "generation",
+          "confidence"
+        ],
+        "title": "TagSource",
+        "description": "Which run claimed a tag, and how sure it was — the full stamp F-003/FR-3 asks for.\n\nThe version and model are separate fields on purpose: the same detector at a newer model\nversion is a different claim, and reprocessing eligibility is decided on exactly that."
       },
       "TagSummary": {
         "properties": {
